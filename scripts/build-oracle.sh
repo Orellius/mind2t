@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds libghostty-vt out of the RUUAH checkout and installs it into vtr/vendor.
+# Builds libghostty-vt out of the RUUAH checkout and installs it into ruuah-vt/vendor.
 #
 # RUUAH is read-only. Its whole economics are a near-zero rebase tax against upstream
 # Ghostty, so both zig's install prefix and its cache are redirected here; the checkout
@@ -10,12 +10,12 @@ readonly ZIG=/opt/homebrew/opt/zig/bin/zig
 readonly REQUIRED_ZIG=0.16.0
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-ruuah=${VTR_RUUAH_DIR:-$(cd "$root/../ruuah" 2>/dev/null && pwd || true)}
+ruuah=${RUUAH_VT_ORACLE_SRC:-$(cd "$root/../ruuah" 2>/dev/null && pwd || true)}
 prefix="$root/vendor/libghostty-vt"
 cache="$root/vendor/.zig-cache"
 
 if [[ -z "$ruuah" || ! -f "$ruuah/build.zig" ]]; then
-  echo "error: no Ghostty checkout found. Set VTR_RUUAH_DIR to one." >&2
+  echo "error: no Ghostty checkout found. Set RUUAH_VT_ORACLE_SRC to one." >&2
   exit 1
 fi
 

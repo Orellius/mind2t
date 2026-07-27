@@ -1,4 +1,4 @@
-//! The vtr terminal core.
+//! The ruuah-vt terminal core.
 //!
 //! Slice 0 has no terminal implementation. What lives here is a stub whose only job is
 //! to be the second input to the differential harness, so the harness can be shown to

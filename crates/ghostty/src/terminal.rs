@@ -2,7 +2,7 @@
 //! Public surface: `Terminal::new`, `Terminal::write`, `Terminal::snapshot`, `Error`.
 //! Why this file: the oracle side of the differential harness. Every unsafe call to the
 //!   C ABI is confined here, so the rest of the workspace is ordinary safe Rust.
-//! NOT responsible for: judging correctness (`vtr-snapshot::diff` does that), PTY, or
+//! NOT responsible for: judging correctness (`ruuah-vt-snapshot::diff` does that), PTY, or
 //!   any behaviour of its own. It observes; it never interprets.
 //! Test strategy: `tests/oracle.rs` drives it with known byte streams; `tests/abi_layout.rs`
 //!   pins every struct layout against the library's own `ghostty_type_json()` report.
@@ -10,7 +10,7 @@
 use std::ffi::c_void;
 use std::mem;
 
-use vtr_snapshot::{Cell, Color, Cursor, Row, Screen, Snapshot, Style, Underline, Wide};
+use ruuah_vt_snapshot::{Cell, Color, Cursor, Row, Screen, Snapshot, Style, Underline, Wide};
 
 use crate::sys;
 

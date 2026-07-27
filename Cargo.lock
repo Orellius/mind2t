@@ -220,6 +220,39 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
 
 [[package]]
+name = "ruuah-vt-core"
+version = "0.1.0"
+dependencies = [
+ "ruuah-vt-snapshot",
+]
+
+[[package]]
+name = "ruuah-vt-difftest"
+version = "0.1.0"
+dependencies = [
+ "ruuah-vt-core",
+ "ruuah-vt-ghostty",
+ "ruuah-vt-snapshot",
+ "serde",
+ "thiserror",
+ "toml",
+]
+
+[[package]]
+name = "ruuah-vt-ghostty"
+version = "0.1.0"
+dependencies = [
+ "bindgen",
+ "ruuah-vt-snapshot",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "ruuah-vt-snapshot"
+version = "0.1.0"
+
+[[package]]
 name = "serde"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -363,39 +396,6 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
-
-[[package]]
-name = "vtr-core"
-version = "0.1.0"
-dependencies = [
- "vtr-snapshot",
-]
-
-[[package]]
-name = "vtr-difftest"
-version = "0.1.0"
-dependencies = [
- "serde",
- "thiserror",
- "toml",
- "vtr-core",
- "vtr-ghostty",
- "vtr-snapshot",
-]
-
-[[package]]
-name = "vtr-ghostty"
-version = "0.1.0"
-dependencies = [
- "bindgen",
- "serde_json",
- "thiserror",
- "vtr-snapshot",
-]
-
-[[package]]
-name = "vtr-snapshot"
-version = "0.1.0"
 
 [[package]]
 name = "windows-link"

@@ -7,8 +7,8 @@
 //! NOT responsible for: the correctness of either terminal. It asserts the harness.
 //! Test strategy: run every declared case and compare the verdict to its expectation.
 
-use vtr_difftest::case::{DEFAULT_CORPUS, Expectation, load};
-use vtr_difftest::run::{Verdict, run};
+use ruuah_vt_difftest::case::{DEFAULT_CORPUS, Expectation, load};
+use ruuah_vt_difftest::run::{Verdict, run};
 
 #[test]
 fn every_case_produces_the_verdict_the_corpus_declares() {

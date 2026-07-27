@@ -1,7 +1,7 @@
-# CLAUDE.md — vtr (project child config)
+# CLAUDE.md — ruuah-vt (project child config)
 
 > **Parent stack layer:** `../CLAUDE.md` (tools/ 2026 stack, auto-inherited; don't restate it).
-> Chain: `~/.claude/CLAUDE.md` (contract) → `Studio/CLAUDE.md` (index) → `tools/CLAUDE.md` (stack) → **this file (vtr specifics)**.
+> Chain: `~/.claude/CLAUDE.md` (contract) → `Studio/CLAUDE.md` (index) → `tools/CLAUDE.md` (stack) → **this file (ruuah-vt specifics)**.
 > This file = project specifics only. Last update stamp: 2026-07-28 (IDT).
 > Posture: the global proactive co-pilot rule (initiative, three-steps-ahead, extreme ownership) is in force here via `~/.claude/CLAUDE.md`.
 
@@ -12,7 +12,7 @@ A terminal core in Rust implementing the C ABI Ghostty already publishes as
 and craft, not speed — Rust and Zig are peers here and there is no performance win waiting.
 
 The consumer is **RUUAH** (`../ruuah`, branch `ruuah`, config in `RUUAH.md` **not**
-`CLAUDE.md`). RUUAH's Swift app links `libghostty-vt` today; if vtr ever wins, RUUAH swaps
+`CLAUDE.md`). RUUAH's Swift app links `libghostty-vt` today; if ruuah-vt ever wins, RUUAH swaps
 one link flag.
 
 **The one architectural rule: the core is a pure, deterministic state machine.** Bytes in,
@@ -29,7 +29,7 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 project is real. Nothing downstream is built yet — that was the instruction.
 
 - `[tested]` 32 tests green, `cargo test --workspace` exit 0.
-- `[tested]` `vtr-difftest` over 13 corpus cases: 4 MATCH, 9 DIFF, 13/13 met expectation.
+- `[tested]` `ruuah-vt-difftest` over 13 corpus cases: 4 MATCH, 9 DIFF, 13/13 met expectation.
   Both directions demonstrated — the harness detects agreement *and* disagreement.
 - `[tested]` The oracle readout itself: grapheme clusters, wide cells + spacer tails, the
   autowrap phantom state, alt screen, palette and RGB SGR, resumability across a write
@@ -66,7 +66,7 @@ reported path (`cell[0,1].style`, `row[0].wrap`, `cursor.pending_wrap`) is a thi
   bindings can be trusted rather than hoped about. `tests/abi_layout.rs` compares every
   offset this crate touches against it, which also catches the vendored headers drifting
   from the linked archive — something bindgen alone cannot see.
-- **A corpus `expect = "diff"` is a to-do, not a pass.** When vtr implements that behaviour
+- **A corpus `expect = "diff"` is a to-do, not a pass.** When ruuah-vt implements that behaviour
   the case *fails*, and it gets promoted to `expect = "match"`. That is the mechanism, not a
   nuisance: a harness that cannot be wrong is not evidence. `tests/corpus.rs` additionally
   refuses a corpus that has drifted to a single direction.
@@ -74,17 +74,29 @@ reported path (`cell[0,1].style`, `row[0].wrap`, `cursor.pending_wrap`) is a thi
   arrives with slice 3; do not read `GHOSTTY_POINT_TAG_SCREEN` before then.
 - Cell text is a **grapheme cluster**, not a codepoint — encoded in `Snapshot` from day one
   because it is ranked failure mode 2 and 32 bits per cell is structurally insufficient.
+- **The shipped artifact is `libruuah-vt.a`, but cargo cannot name it that.** Measured
+  2026-07-28: a package called `libruuah-vt` emits `lib`**`lib`**`ruuah_vt.a`, and
+  `[lib] name = "ruuah-vt"` is a hard cargo error — *"library target names cannot contain
+  hyphens"*. Ghostty gets the hyphen in `libghostty-vt` because zig names artifacts freely.
+  So the project is `ruuah-vt` (no `lib` prefix in a directory name — Ghostty's own project
+  dir is `ghostty`), cargo emits `libruuah_vt.a`, and **slice 6 renames it to
+  `libruuah-vt.a` in the build step** so RUUAH's link flag mirrors `-lghostty-vt` exactly.
+  Do not try to make cargo produce the hyphen directly.
 
 ## Toolchain
 
 Rust 1.93.1, edition 2024, resolver 3. `cargo test --workspace` is the gate.
 
 ```sh
-./scripts/build-oracle.sh        # build libghostty-vt into vendor/ (ruuah stays clean)
-cargo test --workspace           # 32 tests
-cargo run -p vtr-difftest        # the corpus report
-cargo run -p vtr-difftest -- --dump   # plus both grids, rendered, per case
+./scripts/build-oracle.sh      # build libghostty-vt into vendor/ (../ruuah stays clean)
+cargo test --workspace         # 32 tests
+cargo run -p ruuah-vt-difftest            # the corpus report (binary is `difftest`)
+cargo run -p ruuah-vt-difftest -- --dump  # plus both grids, rendered, per case
 ```
+
+Env overrides: `RUUAH_VT_ORACLE_SRC` (the Ghostty checkout to build the oracle from,
+defaults to `../ruuah`) and `RUUAH_VT_ORACLE_PREFIX` (a prebuilt prefix with `include/`
+and `lib/`, bypassing the build script).
 
 `vendor/` and `target/` are gitignored; the oracle is rebuilt from RUUAH, never committed.
 

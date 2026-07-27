@@ -1,0 +1,318 @@
+//! Purpose: decide whether two snapshots agree, and name precisely where they do not.
+//! Public surface: `Difference` and `diff`.
+//! Why this file: a differential harness is only as useful as the specificity of its
+//!   report. "the grids differ" is worthless; `cell[3,12].text` is a lead.
+//! NOT responsible for: deciding which side is right. The oracle is right by definition
+//!   here, but this function is symmetric and does not encode that.
+//! Test strategy: unit tests below, covering agreement, each field class, and the
+//!   short-circuit when dimensions disagree.
+
+use crate::grid::{Cell, Row, Snapshot, Style, describe_style};
+
+/// One named disagreement between two snapshots.
+///
+/// `path` is a stable, greppable locator such as `cursor.x`, `row[3].wrap`, or
+/// `cell[3,12].style.bold`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Difference {
+    pub path: String,
+    pub oracle: String,
+    pub candidate: String,
+}
+
+impl Difference {
+    fn new(path: impl Into<String>, oracle: impl ToString, candidate: impl ToString) -> Difference {
+        Difference {
+            path: path.into(),
+            oracle: oracle.to_string(),
+            candidate: candidate.to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for Difference {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: oracle={} candidate={}", self.path, self.oracle, self.candidate)
+    }
+}
+
+/// Every way `candidate` disagrees with `oracle`, in reading order.
+///
+/// Mismatched dimensions short-circuit: comparing cells across different geometries
+/// produces thousands of derived differences that all restate the one real cause.
+pub fn diff(oracle: &Snapshot, candidate: &Snapshot) -> Vec<Difference> {
+    let mut out = Vec::new();
+
+    if oracle.cols != candidate.cols {
+        out.push(Difference::new("dims.cols", oracle.cols, candidate.cols));
+    }
+    if oracle.rows != candidate.rows {
+        out.push(Difference::new("dims.rows", oracle.rows, candidate.rows));
+    }
+    if !out.is_empty() {
+        return out;
+    }
+
+    if oracle.screen != candidate.screen {
+        out.push(Difference::new(
+            "screen",
+            format!("{:?}", oracle.screen),
+            format!("{:?}", candidate.screen),
+        ));
+    }
+
+    diff_cursor(oracle, candidate, &mut out);
+
+    for (y, (o_row, c_row)) in oracle.grid.iter().zip(candidate.grid.iter()).enumerate() {
+        diff_row(y, o_row, c_row, &mut out);
+    }
+    if oracle.grid.len() != candidate.grid.len() {
+        out.push(Difference::new(
+            "grid.len",
+            oracle.grid.len(),
+            candidate.grid.len(),
+        ));
+    }
+
+    out
+}
+
+fn diff_cursor(oracle: &Snapshot, candidate: &Snapshot, out: &mut Vec<Difference>) {
+    let (o, c) = (&oracle.cursor, &candidate.cursor);
+    if o.x != c.x {
+        out.push(Difference::new("cursor.x", o.x, c.x));
+    }
+    if o.y != c.y {
+        out.push(Difference::new("cursor.y", o.y, c.y));
+    }
+    if o.pending_wrap != c.pending_wrap {
+        out.push(Difference::new(
+            "cursor.pending_wrap",
+            o.pending_wrap,
+            c.pending_wrap,
+        ));
+    }
+    if o.visible != c.visible {
+        out.push(Difference::new("cursor.visible", o.visible, c.visible));
+    }
+    diff_style("cursor.style", &o.style, &c.style, out);
+}
+
+fn diff_row(y: usize, oracle: &Row, candidate: &Row, out: &mut Vec<Difference>) {
+    if oracle.wrap != candidate.wrap {
+        out.push(Difference::new(
+            format!("row[{y}].wrap"),
+            oracle.wrap,
+            candidate.wrap,
+        ));
+    }
+    if oracle.wrap_continuation != candidate.wrap_continuation {
+        out.push(Difference::new(
+            format!("row[{y}].wrap_continuation"),
+            oracle.wrap_continuation,
+            candidate.wrap_continuation,
+        ));
+    }
+    for (x, (o_cell, c_cell)) in oracle.cells.iter().zip(candidate.cells.iter()).enumerate() {
+        diff_cell(y, x, o_cell, c_cell, out);
+    }
+    if oracle.cells.len() != candidate.cells.len() {
+        out.push(Difference::new(
+            format!("row[{y}].cells.len"),
+            oracle.cells.len(),
+            candidate.cells.len(),
+        ));
+    }
+}
+
+fn diff_cell(y: usize, x: usize, oracle: &Cell, candidate: &Cell, out: &mut Vec<Difference>) {
+    if oracle.text != candidate.text {
+        out.push(Difference::new(
+            format!("cell[{y},{x}].text"),
+            quote(&oracle.text),
+            quote(&candidate.text),
+        ));
+    }
+    if oracle.wide != candidate.wide {
+        out.push(Difference::new(
+            format!("cell[{y},{x}].wide"),
+            format!("{:?}", oracle.wide),
+            format!("{:?}", candidate.wide),
+        ));
+    }
+    diff_style(&format!("cell[{y},{x}].style"), &oracle.style, &candidate.style, out);
+}
+
+/// Reports the whole style as one difference rather than one per attribute: a single
+/// SGR mistake flips several flags at once, and eight lines saying the same thing
+/// buries the next real finding.
+fn diff_style(path: &str, oracle: &Style, candidate: &Style, out: &mut Vec<Difference>) {
+    if oracle == candidate {
+        return;
+    }
+    out.push(Difference::new(
+        path,
+        describe_style(oracle),
+        describe_style(candidate),
+    ));
+}
+
+/// Renders cell text so an empty cell and a cell holding a space are distinguishable,
+/// and so a codepoint that does not render legibly still appears in the report.
+fn quote(text: &str) -> String {
+    if text.is_empty() {
+        return "<empty>".to_string();
+    }
+    let escaped: String = text
+        .chars()
+        .map(|c| {
+            if c.is_control() || !c.is_ascii() {
+                format!("\\u{{{:04x}}}", c as u32)
+            } else {
+                c.to_string()
+            }
+        })
+        .collect();
+    format!("'{escaped}'")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::grid::{Color, Cursor, Screen, Underline, Wide, describe_color};
+
+    fn snapshot(cols: u16, rows: u16) -> Snapshot {
+        Snapshot {
+            cols,
+            rows,
+            screen: Screen::Primary,
+            cursor: Cursor {
+                x: 0,
+                y: 0,
+                pending_wrap: false,
+                visible: true,
+                style: Style::DEFAULT,
+            },
+            grid: (0..rows)
+                .map(|_| Row {
+                    wrap: false,
+                    wrap_continuation: false,
+                    cells: (0..cols).map(|_| Cell::blank()).collect(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn identical_snapshots_agree() {
+        let a = snapshot(10, 3);
+        let b = a.clone();
+        assert_eq!(diff(&a, &b), vec![]);
+    }
+
+    #[test]
+    fn a_changed_cell_is_named_by_coordinate() {
+        let a = snapshot(10, 3);
+        let mut b = a.clone();
+        b.grid[1].cells[4].text = "x".to_string();
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "cell[1,4].text");
+        assert_eq!(found[0].oracle, "<empty>");
+        assert_eq!(found[0].candidate, "'x'");
+    }
+
+    #[test]
+    fn an_empty_cell_is_distinguishable_from_a_space() {
+        let a = snapshot(4, 1);
+        let mut b = a.clone();
+        b.grid[0].cells[0].text = " ".to_string();
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].oracle, "<empty>");
+        assert_eq!(found[0].candidate, "' '");
+    }
+
+    #[test]
+    fn cursor_fields_are_reported_separately() {
+        let a = snapshot(10, 3);
+        let mut b = a.clone();
+        b.cursor.x = 5;
+        b.cursor.pending_wrap = true;
+
+        let paths: Vec<String> = diff(&a, &b).into_iter().map(|d| d.path).collect();
+        assert_eq!(paths, ["cursor.x", "cursor.pending_wrap"]);
+    }
+
+    #[test]
+    fn a_style_mismatch_is_one_difference_not_one_per_attribute() {
+        let a = snapshot(4, 1);
+        let mut b = a.clone();
+        b.grid[0].cells[0].style.bold = true;
+        b.grid[0].cells[0].style.italic = true;
+        b.grid[0].cells[0].style.fg = Color::Palette(3);
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "cell[0,0].style");
+        assert_eq!(found[0].oracle, "default");
+        assert_eq!(found[0].candidate, "fg=palette(3) bold italic");
+    }
+
+    #[test]
+    fn mismatched_dimensions_short_circuit() {
+        let a = snapshot(10, 3);
+        let b = snapshot(20, 3);
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "must not cascade into per-cell noise");
+        assert_eq!(found[0].path, "dims.cols");
+    }
+
+    #[test]
+    fn row_wrap_flags_are_compared() {
+        let a = snapshot(4, 2);
+        let mut b = a.clone();
+        b.grid[0].wrap = true;
+        b.grid[1].wrap_continuation = true;
+
+        let paths: Vec<String> = diff(&a, &b).into_iter().map(|d| d.path).collect();
+        assert_eq!(paths, ["row[0].wrap", "row[1].wrap_continuation"]);
+    }
+
+    #[test]
+    fn wide_and_underline_survive_the_round_trip() {
+        let a = snapshot(4, 1);
+        let mut b = a.clone();
+        b.grid[0].cells[0].wide = Wide::SpacerTail;
+        b.grid[0].cells[1].style.underline = Underline::Curly;
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found[0].path, "cell[0,0].wide");
+        assert_eq!(found[0].candidate, "SpacerTail");
+        assert_eq!(found[1].candidate, "underline=Curly");
+    }
+
+    #[test]
+    fn non_ascii_cell_text_is_escaped_legibly() {
+        let a = snapshot(4, 1);
+        let mut b = a.clone();
+        b.grid[0].cells[0].text = "\u{5d0}".to_string();
+
+        let found = diff(&a, &b);
+        assert_eq!(found[0].candidate, "'\\u{05d0}'");
+    }
+
+    #[test]
+    fn describe_color_covers_every_variant() {
+        assert_eq!(describe_color(Color::Default), "default");
+        assert_eq!(describe_color(Color::Palette(9)), "palette(9)");
+        assert_eq!(
+            describe_color(Color::Rgb { r: 1, g: 2, b: 255 }),
+            "#0102ff"
+        );
+    }
+}

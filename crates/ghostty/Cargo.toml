@@ -1,0 +1,16 @@
+[package]
+name = "vtr-ghostty"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+vtr-snapshot.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+bindgen = "0.72"
+
+[dev-dependencies]
+serde_json = "1"

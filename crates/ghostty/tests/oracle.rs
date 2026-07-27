@@ -1,0 +1,178 @@
+//! Purpose: prove the oracle reads a real grid correctly, before anything is compared to it.
+//! Public surface: none, this is a test.
+//! Why this file: `abi_layout.rs` proves the struct offsets are right; this proves the
+//!   readout built on them is right. Both are needed: correct offsets read in the wrong
+//!   order still produce a confident wrong answer.
+//! NOT responsible for: vtr's own behaviour, or any comparison between the two.
+//! Test strategy: drive libghostty-vt with byte streams whose correct outcome is fixed by
+//!   the VT spec, and assert on the snapshot rather than on internal state.
+
+use vtr_ghostty::Terminal;
+use vtr_snapshot::{Color, Screen, Style, Underline, Wide};
+
+fn snapshot_of(cols: u16, rows: u16, bytes: &[u8]) -> vtr_snapshot::Snapshot {
+    let mut terminal = Terminal::new(cols, rows).expect("terminal creation");
+    terminal.write(bytes);
+    terminal.snapshot().expect("snapshot")
+}
+
+#[test]
+fn a_fresh_terminal_is_blank_with_the_cursor_at_the_origin() {
+    let snap = snapshot_of(20, 5, b"");
+
+    assert_eq!((snap.cols, snap.rows), (20, 5));
+    assert_eq!(snap.screen, Screen::Primary);
+    assert_eq!((snap.cursor.x, snap.cursor.y), (0, 0));
+    assert!(!snap.cursor.pending_wrap);
+    assert_eq!(snap.grid.len(), 5);
+    assert!(snap.grid.iter().all(|row| row.cells.len() == 20));
+    assert!(
+        snap.grid
+            .iter()
+            .flat_map(|row| &row.cells)
+            .all(|cell| cell.text.is_empty() && cell.style.is_default())
+    );
+}
+
+#[test]
+fn printable_text_lands_in_cells_and_advances_the_cursor() {
+    let snap = snapshot_of(20, 3, b"hello");
+
+    assert_eq!(snap.row_text(0), "hello");
+    assert_eq!(snap.grid[0].cells[0].text, "h");
+    assert_eq!(snap.grid[0].cells[4].text, "o");
+    assert!(snap.grid[0].cells[5].text.is_empty());
+    assert_eq!((snap.cursor.x, snap.cursor.y), (5, 0));
+}
+
+#[test]
+fn carriage_return_and_line_feed_move_the_cursor_without_erasing() {
+    let snap = snapshot_of(20, 3, b"one\r\ntwo");
+
+    assert_eq!(snap.row_text(0), "one");
+    assert_eq!(snap.row_text(1), "two");
+    assert_eq!((snap.cursor.x, snap.cursor.y), (3, 1));
+}
+
+#[test]
+fn sgr_bold_applies_to_the_cells_written_while_it_is_active() {
+    let snap = snapshot_of(20, 2, b"a\x1b[1mB\x1b[0mc");
+
+    assert_eq!(snap.row_text(0), "aBc");
+    assert!(!snap.grid[0].cells[0].style.bold, "plain before SGR");
+    assert!(snap.grid[0].cells[1].style.bold, "bold while SGR 1 active");
+    assert!(!snap.grid[0].cells[2].style.bold, "reset by SGR 0");
+}
+
+#[test]
+fn sgr_colours_are_read_back_as_palette_and_rgb() {
+    // SGR 31 is palette 1; SGR 38;2;R;G;B is direct RGB.
+    let snap = snapshot_of(20, 2, b"\x1b[31mp\x1b[38;2;10;20;30mr");
+
+    assert_eq!(snap.grid[0].cells[0].style.fg, Color::Palette(1));
+    assert_eq!(
+        snap.grid[0].cells[1].style.fg,
+        Color::Rgb {
+            r: 10,
+            g: 20,
+            b: 30
+        }
+    );
+}
+
+#[test]
+fn sgr_curly_underline_survives_the_conversion() {
+    let snap = snapshot_of(20, 2, b"\x1b[4:3mx");
+
+    assert_eq!(snap.grid[0].cells[0].style.underline, Underline::Curly);
+}
+
+#[test]
+fn cursor_position_sequences_are_reflected() {
+    // CUP moves to row 3, column 5 (both 1-indexed in the sequence).
+    let snap = snapshot_of(20, 10, b"\x1b[3;5H");
+
+    assert_eq!((snap.cursor.x, snap.cursor.y), (4, 2));
+}
+
+#[test]
+fn writing_the_last_column_sets_pending_wrap_without_moving_the_cursor() {
+    // The DEC phantom state: the cursor stays on the last column and the wrap is deferred
+    // until the next printable character. This is failure mode 5 in the plan and the
+    // oracle must expose it, or slice 2 has nothing to test against.
+    let snap = snapshot_of(5, 3, b"abcde");
+
+    assert_eq!(snap.cursor.x, 4, "cursor stays on the last column");
+    assert_eq!(snap.cursor.y, 0, "and has not moved down yet");
+    assert!(snap.cursor.pending_wrap, "the wrap is pending");
+
+    let after = snapshot_of(5, 3, b"abcdef");
+    assert_eq!((after.cursor.x, after.cursor.y), (1, 1), "next print wraps");
+    assert!(!after.cursor.pending_wrap);
+    assert!(after.grid[0].wrap, "row 0 is marked soft-wrapped");
+    assert!(after.grid[1].wrap_continuation, "row 1 is its continuation");
+}
+
+#[test]
+fn a_wide_character_occupies_two_cells_with_a_spacer_tail() {
+    // A cell is not a codepoint. Failure mode 2 in the plan; the snapshot must carry it.
+    let snap = snapshot_of(10, 2, "\u{4e16}x".as_bytes());
+
+    assert_eq!(snap.grid[0].cells[0].text, "\u{4e16}");
+    assert_eq!(snap.grid[0].cells[0].wide, Wide::Wide);
+    assert_eq!(snap.grid[0].cells[1].wide, Wide::SpacerTail);
+    assert_eq!(snap.grid[0].cells[2].text, "x");
+    assert_eq!(snap.cursor.x, 3, "the wide cell advanced the cursor by two");
+}
+
+#[test]
+fn a_combining_mark_stays_in_one_cell_as_one_cluster() {
+    // e + U+0301 combining acute is a single grapheme cluster in a single cell.
+    let snap = snapshot_of(10, 2, "e\u{301}!".as_bytes());
+
+    assert_eq!(snap.grid[0].cells[0].text, "e\u{301}");
+    assert_eq!(snap.grid[0].cells[1].text, "!");
+    assert_eq!(snap.cursor.x, 2);
+}
+
+#[test]
+fn the_alternate_screen_is_reported_as_such() {
+    let snap = snapshot_of(10, 3, b"\x1b[?1049h");
+
+    assert_eq!(snap.screen, Screen::Alternate);
+}
+
+#[test]
+fn a_space_is_distinguishable_from_an_untouched_cell() {
+    // The differ relies on this: erasing to a space is not the same state as never
+    // having written. If the oracle collapsed them, whole classes of erase bugs would
+    // be invisible to the harness.
+    let snap = snapshot_of(5, 2, b"a b");
+
+    assert_eq!(snap.grid[0].cells[1].text, " ", "explicit space");
+    assert_eq!(snap.grid[0].cells[3].text, "", "never written");
+}
+
+#[test]
+fn the_cursor_carries_the_style_that_the_next_write_will_use() {
+    let snap = snapshot_of(10, 2, b"\x1b[1;3m");
+
+    assert!(snap.cursor.style.bold);
+    assert!(snap.cursor.style.italic);
+    assert_ne!(snap.cursor.style, Style::DEFAULT);
+}
+
+#[test]
+fn a_terminal_can_be_written_in_several_chunks() {
+    // The corpus feeds whole streams, but a real pty arrives in fragments and the parser
+    // must be resumable across a write boundary mid-sequence.
+    let mut whole = Terminal::new(10, 2).unwrap();
+    whole.write(b"\x1b[1mbold");
+
+    let mut split = Terminal::new(10, 2).unwrap();
+    split.write(b"\x1b[1");
+    split.write(b"mbo");
+    split.write(b"ld");
+
+    assert_eq!(whole.snapshot().unwrap(), split.snapshot().unwrap());
+}

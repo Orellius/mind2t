@@ -1,0 +1,21 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/snapshot",
+    "crates/ghostty",
+    "crates/core",
+    "crates/difftest",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+[workspace.dependencies]
+vtr-snapshot = { path = "crates/snapshot" }
+vtr-ghostty = { path = "crates/ghostty" }
+vtr-core = { path = "crates/core" }
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"

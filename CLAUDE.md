@@ -1,0 +1,100 @@
+# CLAUDE.md — vtr (project child config)
+
+> **Parent stack layer:** `../CLAUDE.md` (tools/ 2026 stack, auto-inherited; don't restate it).
+> Chain: `~/.claude/CLAUDE.md` (contract) → `Studio/CLAUDE.md` (index) → `tools/CLAUDE.md` (stack) → **this file (vtr specifics)**.
+> This file = project specifics only. Last update stamp: 2026-07-28 (IDT).
+> Posture: the global proactive co-pilot rule (initiative, three-steps-ahead, extreme ownership) is in force here via `~/.claude/CLAUDE.md`.
+
+## What this is
+
+A terminal core in Rust implementing the C ABI Ghostty already publishes as
+**`libghostty-vt`**, so it can drop in behind an existing native GUI. The point is control
+and craft, not speed — Rust and Zig are peers here and there is no performance win waiting.
+
+The consumer is **RUUAH** (`../ruuah`, branch `ruuah`, config in `RUUAH.md` **not**
+`CLAUDE.md`). RUUAH's Swift app links `libghostty-vt` today; if vtr ever wins, RUUAH swaps
+one link flag.
+
+**The one architectural rule: the core is a pure, deterministic state machine.** Bytes in,
+grid mutations out. No PTY, no GPU, no clock, no I/O. Everything else hangs off this,
+because it is what makes headless CI and differential testing possible at all. Ghostty
+enforces the same split physically (`src/terminal/` knows nothing about `src/renderer/`).
+
+Plan of record: `~/.claude/plans/2026-07-28-rust-terminal-core.md`.
+Architecture research it came from: `~/Desktop/claude-html/terminal-architecture-20260728-0132.html`.
+
+## Status / current slice
+
+**Slice 0 (the gate) is done and passed.** The differential oracle harness runs, and the
+project is real. Nothing downstream is built yet — that was the instruction.
+
+- `[tested]` 32 tests green, `cargo test --workspace` exit 0.
+- `[tested]` `vtr-difftest` over 13 corpus cases: 4 MATCH, 9 DIFF, 13/13 met expectation.
+  Both directions demonstrated — the harness detects agreement *and* disagreement.
+- `[tested]` The oracle readout itself: grapheme clusters, wide cells + spacer tails, the
+  autowrap phantom state, alt screen, palette and RGB SGR, resumability across a write
+  that splits a sequence mid-escape.
+- `[tested]` Struct layouts pinned against the library's own `ghostty_type_json()`.
+- `[tested]` `../ruuah` byte-identical and `git status` clean after a from-scratch oracle build.
+
+**`crates/core` is a stub, not a design.** Printable ASCII, CR, LF, BS. It exists solely so
+the harness has a second input. Slice 1 replaces it with the `vte` crate driving a real cell
+grid; do not grow the stub instead.
+
+Next: **slice 1 — parser + cell grid**. The nine DIFF cases are its specification; each
+reported path (`cell[0,1].style`, `row[0].wrap`, `cursor.pending_wrap`) is a thing to build.
+
+## Project rules & gotchas
+
+- **`../ruuah` is read-only, including build artifacts.** Never run `zig build` in it with
+  default paths — that writes `zig-out/` and `.zig-cache/`. `scripts/build-oracle.sh`
+  redirects both `--prefix` and `--cache-dir` here and then *verifies* the checkout is still
+  clean, failing if it is not. Its whole economics are a near-zero rebase tax upstream.
+- **Zig must be exactly `0.16.0` at `/opt/homebrew/opt/zig/bin/zig`**, called by absolute
+  path. The machine default is 0.15.2 and refuses. The build script hard-checks the version.
+- **Link the static archive, never the dylib.** `libghostty-vt.dylib` ships with **no
+  LC_RPATH**, so anything linking it aborts in dyld at startup unless `DYLD_LIBRARY_PATH`
+  is set. Worse: with both `.a` and `.dylib` on one search path, `-l static=` held for every
+  target *except* the lib test harness, which silently picked the dylib. `build.rs` therefore
+  symlinks only the archive into `OUT_DIR/link` and searches there. Cost: one confusing
+  SIGABRT on 2026-07-28 — do not re-derive it.
+- **Sized structs must have `.size` set before the library sees them.** `GhosttyGridRef` and
+  `GhosttyStyle` lead with a `size_t size` (the `GHOSTTY_INIT_SIZED` mechanism); leaving it
+  zero claims to be compiled against a zero-byte struct. Every construction site in
+  `terminal.rs` sets it.
+- **`ghostty_type_json()` is the library describing its own ABI**, and it is the reason the
+  bindings can be trusted rather than hoped about. `tests/abi_layout.rs` compares every
+  offset this crate touches against it, which also catches the vendored headers drifting
+  from the linked archive — something bindgen alone cannot see.
+- **A corpus `expect = "diff"` is a to-do, not a pass.** When vtr implements that behaviour
+  the case *fails*, and it gets promoted to `expect = "match"`. That is the mechanism, not a
+  nuisance: a harness that cannot be wrong is not evidence. `tests/corpus.rs` additionally
+  refuses a corpus that has drifted to a single direction.
+- **The oracle is only the *active area*.** `max_scrollback = 0`. Scrollback comparison
+  arrives with slice 3; do not read `GHOSTTY_POINT_TAG_SCREEN` before then.
+- Cell text is a **grapheme cluster**, not a codepoint — encoded in `Snapshot` from day one
+  because it is ranked failure mode 2 and 32 bits per cell is structurally insufficient.
+
+## Toolchain
+
+Rust 1.93.1, edition 2024, resolver 3. `cargo test --workspace` is the gate.
+
+```sh
+./scripts/build-oracle.sh        # build libghostty-vt into vendor/ (ruuah stays clean)
+cargo test --workspace           # 32 tests
+cargo run -p vtr-difftest        # the corpus report
+cargo run -p vtr-difftest -- --dump   # plus both grids, rendered, per case
+```
+
+`vendor/` and `target/` are gitignored; the oracle is rebuilt from RUUAH, never committed.
+
+## In-repo docs (source of truth)
+
+- `corpus/cases.toml` — every byte stream and the verdict it is asserted to produce.
+- `crates/snapshot/src/grid.rs` — what "the grid" means for comparison. The contract both
+  implementations satisfy; neither owns it.
+- `crates/snapshot/src/difference.rs` — how disagreement is located and reported.
+- `crates/ghostty/tests/abi_layout.rs` — the ABI pin. Read before touching `sys`.
+- `crates/ghostty/tests/oracle.rs` — what the oracle is known to read correctly.
+- Conformance canon (not yet wired in): xterm ctlseqs, DEC STD 070, esctest2 (the CI
+  target), wraptest (line-wrapping specifically), vttest (interactive, final pass only).

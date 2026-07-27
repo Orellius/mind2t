@@ -1,0 +1,101 @@
+# Differential corpus: byte streams fed identically to libghostty-vt and to vtr.
+#
+# `expect` is the verdict the case is asserted to produce today, not the verdict it
+# should eventually produce. A `diff` case is a to-do list entry: when vtr implements
+# the behaviour, this file fails and the case gets promoted to `match`. That is the
+# point -- the harness is only evidence if it can be wrong.
+#
+# `bytes` is a TOML basic string, so control characters use TOML escapes.
+# ESC is \u001B.
+
+# ---------------------------------------------------------------------------
+# Expected to MATCH. These are what the slice 0 stub already implements, and they
+# prove the harness can detect agreement rather than only ever crying difference.
+# ---------------------------------------------------------------------------
+
+[[case]]
+name = "empty-stream"
+expect = "match"
+bytes = ""
+note = "A terminal that has been written nothing agrees on geometry, cursor and blankness."
+
+[[case]]
+name = "plain-ascii"
+expect = "match"
+bytes = "hello world"
+note = "Printable ASCII lands in cells and advances the cursor."
+
+[[case]]
+name = "plain-multiline"
+expect = "match"
+bytes = "one\r\ntwo\r\nthree"
+note = "CR and LF move the cursor without erasing, while there is room below."
+
+[[case]]
+name = "backspace-overwrite"
+expect = "match"
+bytes = "abc\b\bX"
+note = "BS moves left and the next print overwrites in place."
+
+# ---------------------------------------------------------------------------
+# Expected to DIFF. Everything the stub does not implement. Each one is a slice
+# ahead, and the reported paths are the specification for that slice.
+# ---------------------------------------------------------------------------
+
+[[case]]
+name = "sgr-bold"
+expect = "diff"
+bytes = "a\u001B[1mB\u001B[0mc"
+note = "Slice 1: no parser, so SGR lands as literal text and no cell is bold."
+
+[[case]]
+name = "sgr-colours"
+expect = "diff"
+bytes = "\u001B[31mred\u001B[38;2;10;20;30mrgb"
+note = "Slice 1: palette and direct-RGB foreground."
+
+[[case]]
+name = "cursor-position"
+expect = "diff"
+bytes = "\u001B[3;5Hx"
+note = "Slice 1: CUP absolute cursor movement."
+
+[[case]]
+name = "autowrap-phantom"
+expect = "diff"
+cols = 5
+rows = 3
+bytes = "abcdef"
+note = "Slice 2: writing the last column defers the wrap; ranked failure mode 5."
+
+[[case]]
+name = "wide-character"
+expect = "diff"
+bytes = "世界x"
+note = "Slice 1: a cell is not a codepoint; wide cells claim two and leave a spacer tail."
+
+[[case]]
+name = "combining-mark"
+expect = "diff"
+bytes = "é!"
+note = "Slice 1: a grapheme cluster is one cell; ranked failure mode 2."
+
+[[case]]
+name = "erase-in-line"
+expect = "diff"
+bytes = "abcdef\u001B[2K"
+note = "Slice 2: erase operations."
+
+[[case]]
+name = "alternate-screen"
+expect = "diff"
+bytes = "\u001B[?1049h"
+note = "Slice 2: the alternate screen is a separate buffer."
+
+[[case]]
+name = "scroll-past-bottom"
+expect = "diff"
+cols = 10
+rows = 3
+bytes = "1\r\n2\r\n3\r\n4\r\n5"
+note = "Slice 2: writing past the last row scrolls rather than clamping."

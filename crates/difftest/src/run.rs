@@ -7,7 +7,7 @@
 //!   declared expectation, checked by the caller) or formatting (`main.rs`).
 //! Test strategy: `tests/corpus.rs` runs every case and asserts the declared expectation.
 
-use vtr_snapshot::{Difference, Snapshot, diff};
+use ruuah_vt_snapshot::{Difference, Snapshot, diff};
 
 use crate::case::Case;
 
@@ -17,7 +17,7 @@ pub enum RunError {
     Oracle {
         case: String,
         #[source]
-        source: vtr_ghostty::Error,
+        source: ruuah_vt_ghostty::Error,
     },
 }
 
@@ -57,7 +57,7 @@ impl Outcome {
     }
 }
 
-/// Runs one case through libghostty-vt and through vtr, and diffs the results.
+/// Runs one case through libghostty-vt and through ruuah-vt, and diffs the results.
 ///
 /// The byte stream is written in a single call to each side. Chunking is a separate
 /// property and is covered by the oracle's own tests, not here.
@@ -65,7 +65,7 @@ pub fn run(case: &Case) -> Result<Outcome, RunError> {
     let bytes = case.bytes.as_bytes();
 
     let mut oracle_terminal =
-        vtr_ghostty::Terminal::new(case.cols, case.rows).map_err(|source| RunError::Oracle {
+        ruuah_vt_ghostty::Terminal::new(case.cols, case.rows).map_err(|source| RunError::Oracle {
             case: case.name.clone(),
             source,
         })?;
@@ -77,7 +77,7 @@ pub fn run(case: &Case) -> Result<Outcome, RunError> {
             source,
         })?;
 
-    let mut candidate_terminal = vtr_core::Terminal::new(case.cols, case.rows);
+    let mut candidate_terminal = ruuah_vt_core::Terminal::new(case.cols, case.rows);
     candidate_terminal.write(bytes);
     let candidate = candidate_terminal.snapshot();
 

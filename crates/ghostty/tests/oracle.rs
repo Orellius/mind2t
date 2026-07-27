@@ -3,14 +3,14 @@
 //! Why this file: `abi_layout.rs` proves the struct offsets are right; this proves the
 //!   readout built on them is right. Both are needed: correct offsets read in the wrong
 //!   order still produce a confident wrong answer.
-//! NOT responsible for: vtr's own behaviour, or any comparison between the two.
+//! NOT responsible for: ruuah-vt's own behaviour, or any comparison between the two.
 //! Test strategy: drive libghostty-vt with byte streams whose correct outcome is fixed by
 //!   the VT spec, and assert on the snapshot rather than on internal state.
 
-use vtr_ghostty::Terminal;
-use vtr_snapshot::{Color, Screen, Style, Underline, Wide};
+use ruuah_vt_ghostty::Terminal;
+use ruuah_vt_snapshot::{Color, Screen, Style, Underline, Wide};
 
-fn snapshot_of(cols: u16, rows: u16, bytes: &[u8]) -> vtr_snapshot::Snapshot {
+fn snapshot_of(cols: u16, rows: u16, bytes: &[u8]) -> ruuah_vt_snapshot::Snapshot {
     let mut terminal = Terminal::new(cols, rows).expect("terminal creation");
     terminal.write(bytes);
     terminal.snapshot().expect("snapshot")

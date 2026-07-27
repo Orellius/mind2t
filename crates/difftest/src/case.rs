@@ -3,7 +3,7 @@
 //! Why this file: a harness that is never wrong about anything is not evidence. Declaring
 //!   the expected verdict per case makes the harness itself testable -- if the stub starts
 //!   agreeing with Ghostty on SGR, that is a corpus failure demanding an explanation.
-//! NOT responsible for: running anything (`run.rs`) or comparing anything (`vtr-snapshot`).
+//! NOT responsible for: running anything (`run.rs`) or comparing anything (`ruuah-vt-snapshot`).
 //! Test strategy: the corpus round-trip is covered by `tests/corpus.rs`, which loads the
 //!   real file rather than a fixture.
 
@@ -36,9 +36,9 @@ pub enum CorpusError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Expectation {
-    /// vtr already agrees with Ghostty here. A regression makes this case fail.
+    /// ruuah-vt already agrees with Ghostty here. A regression makes this case fail.
     Match,
-    /// vtr does not implement this yet. When it does, this case fails and gets promoted.
+    /// ruuah-vt does not implement this yet. When it does, this case fails and gets promoted.
     Diff,
 }
 

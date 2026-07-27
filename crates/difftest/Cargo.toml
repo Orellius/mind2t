@@ -1,14 +1,18 @@
 [package]
-name = "vtr-difftest"
+name = "ruuah-vt-difftest"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-vtr-snapshot.workspace = true
-vtr-ghostty.workspace = true
-vtr-core.workspace = true
+ruuah-vt-snapshot.workspace = true
+ruuah-vt-ghostty.workspace = true
+ruuah-vt-core.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 toml.workspace = true
+
+[[bin]]
+name = "difftest"
+path = "src/main.rs"

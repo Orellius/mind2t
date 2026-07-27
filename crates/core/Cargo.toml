@@ -1,9 +1,9 @@
 [package]
-name = "vtr-core"
+name = "ruuah-vt-core"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-vtr-snapshot.workspace = true
+ruuah-vt-snapshot.workspace = true

@@ -9,7 +9,7 @@
 //!   omissions, not oversights: the corpus expects the resulting diffs.
 //! Test strategy: none of its own. It is measured only against the oracle, by the corpus.
 
-use vtr_snapshot::{Cell, Cursor, Row, Screen, Snapshot, Style};
+use ruuah_vt_snapshot::{Cell, Cursor, Row, Screen, Snapshot, Style};
 
 /// A stub terminal handling printable ASCII, CR, LF and BS.
 ///

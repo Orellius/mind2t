@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 /// Where `scripts/build-oracle.sh` installs libghostty-vt, unless overridden.
 const DEFAULT_VENDOR: &str = "vendor/libghostty-vt";
-const OVERRIDE_ENV: &str = "VTR_LIBGHOSTTY_VT_DIR";
+const OVERRIDE_ENV: &str = "RUUAH_VT_ORACLE_PREFIX";
 
 fn main() {
     let vendor = locate_vendor();

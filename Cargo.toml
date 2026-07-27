@@ -13,9 +13,9 @@ rust-version = "1.85"
 publish = false
 
 [workspace.dependencies]
-vtr-snapshot = { path = "crates/snapshot" }
-vtr-ghostty = { path = "crates/ghostty" }
-vtr-core = { path = "crates/core" }
+ruuah-vt-snapshot = { path = "crates/snapshot" }
+ruuah-vt-ghostty = { path = "crates/ghostty" }
+ruuah-vt-core = { path = "crates/core" }
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"

@@ -1,5 +1,5 @@
 [package]
-name = "vtr-snapshot"
+name = "ruuah-vt-snapshot"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true

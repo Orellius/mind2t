@@ -1,16 +1,16 @@
 //! Purpose: run the corpus and print a report a human can act on.
-//! Public surface: the `vtr-difftest` binary.
+//! Public surface: the `ruuah-vt-difftest` binary.
 //! Why this file: the harness has to be readable at a glance or it will not be run. The
 //!   report names the exact cell and field of every disagreement, because "the grids
 //!   differ" is not a lead.
-//! NOT responsible for: any comparison logic (`run.rs`, `vtr-snapshot`).
+//! NOT responsible for: any comparison logic (`run.rs`, `ruuah-vt-snapshot`).
 //! Test strategy: the logic it drives is covered by `tests/corpus.rs`; this file is
 //!   formatting and process exit only.
 
 use std::process::ExitCode;
 
-use vtr_difftest::case::{DEFAULT_CORPUS, load};
-use vtr_difftest::run::{Outcome, Verdict, run};
+use ruuah_vt_difftest::case::{DEFAULT_CORPUS, load};
+use ruuah_vt_difftest::run::{Outcome, Verdict, run};
 
 /// Differences printed per case before truncating. The total is always reported, so a
 /// truncated list never reads as a complete one.
@@ -28,14 +28,14 @@ fn main() -> ExitCode {
     let cases = match load(&path) {
         Ok(cases) => cases,
         Err(err) => {
-            eprintln!("vtr-difftest: {err}");
+            eprintln!("ruuah-vt-difftest: {err}");
             return ExitCode::FAILURE;
         }
     };
 
-    println!("vtr differential oracle");
+    println!("ruuah-vt differential oracle");
     println!("  oracle    libghostty-vt (Ghostty terminal core, C ABI)");
-    println!("  candidate vtr-core");
+    println!("  candidate ruuah-vt-core");
     println!("  corpus    {path} ({} cases)\n", cases.len());
 
     let mut matched = 0usize;
@@ -45,7 +45,7 @@ fn main() -> ExitCode {
         let outcome = match run(case) {
             Ok(outcome) => outcome,
             Err(err) => {
-                eprintln!("vtr-difftest: {err}");
+                eprintln!("ruuah-vt-difftest: {err}");
                 return ExitCode::FAILURE;
             }
         };
@@ -77,7 +77,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn report(case: &vtr_difftest::Case, outcome: &Outcome, ok: bool, dump: bool) {
+fn report(case: &ruuah_vt_difftest::Case, outcome: &Outcome, ok: bool, dump: bool) {
     let flag = if ok { "ok" } else { "UNEXPECTED" };
     println!(
         "{:<6} {:<26} {}x{}  expected {:<5} {flag}",

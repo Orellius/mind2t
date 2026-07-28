@@ -208,16 +208,19 @@ fn text_actually_puts_ink_on_the_canvas_where_the_cell_is() {
 }
 
 #[test]
-fn hebrew_is_drawn_in_logical_order_today_and_slice_5_5_must_flip_this() {
-    // Pinning the pre-bidi contract rather than assuming it, because eyeballing a Hebrew
-    // screenshot is exactly how you convince yourself of the wrong thing: the reader's eye
-    // runs right to left and the renderer does not.
+fn hebrew_is_reordered_so_its_last_logical_character_is_leftmost() {
+    // Flipped deliberately in slice 5.5. Until then this asserted the opposite -- that column
+    // 0 held the FIRST logical character -- and reordering made it fail, which was the whole
+    // point of writing it that way round.
     //
-    // The claim, decided by pixels: column 0 holds the FIRST logical character. Proven by
-    // rendering the whole word and rendering only its first character, and comparing that
-    // one column. When 5.5 reorders, this test fails -- and that failure is the feature.
+    // Decided by pixels rather than by eye, because eyeballing a Hebrew screenshot is exactly
+    // how you convince yourself of the wrong thing: the reader's eye runs right to left and
+    // the renderer does not. Rendering the whole word and rendering one character in
+    // isolation, then comparing a single column, is a claim a person cannot fool themselves
+    // about.
     let word = "\u{05E9}\u{05DC}\u{05D5}\u{05DD}";
     let first: String = word.chars().next().unwrap().to_string();
+    let last: String = word.chars().next_back().unwrap().to_string();
 
     let column_zero = |content: &str| -> Vec<u8> {
         let mut terminal = Terminal::new(COLS, ROWS);
@@ -242,8 +245,13 @@ fn hebrew_is_drawn_in_logical_order_today_and_slice_5_5_must_flip_this() {
 
     assert_eq!(
         column_zero(word),
+        column_zero(&last),
+        "the leftmost column of a Hebrew word must hold its LAST logical character"
+    );
+    assert_ne!(
+        column_zero(word),
         column_zero(&first),
-        "column 0 of a Hebrew word does not hold its first logical character"
+        "the word is not reordered at all -- this is the pre-5.5 behaviour returning"
     );
 }
 

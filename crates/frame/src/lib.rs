@@ -12,20 +12,22 @@
 //! decides when to come back.
 //!
 //! **The renderer sees runs, not cells.** `Frame::runs` yields spans that carry a starting
-//! column and a `Direction`, and a renderer asks the run where each cell goes. Nothing
-//! produces a right-to-left run yet. The seam exists now so that when slice 5.5 does, it
-//! changes the run builder and not one line of drawing code.
+//! column and a `Direction`, and a renderer asks the run where each cell goes. Slice 5.5
+//! turned right-to-left runs on and the renderer was not touched: reordering changed `runs`
+//! and `bidi.rs` and nothing else, which is what the seam was for.
 //!
 //! No `unsafe`, no volatile reads. The shared payload is `AtomicU64` accessed `Relaxed`,
 //! which is defined under concurrent access; the generation counter's `Acquire`/`Release`
 //! pair is what makes a set of atomic words into a single consistent frame.
 
+pub mod bidi;
 pub mod frame;
 pub mod packed;
 pub mod publish;
 pub mod seqlock;
 
-pub use frame::{Direction, Frame, FrameCursor, Run, Runs, cell_width};
+pub use bidi::{BaseDirection, VisualSpan, visual_spans};
+pub use frame::{Direction, Frame, FrameCursor, Run, cell_width};
 pub use packed::{CLUSTER_BYTES, PackedCell, pack_style, unpack_style};
 pub use publish::Publisher;
 pub use seqlock::{CapacityExceeded, FrameReader, FrameWriter, Publish, ReadOutcome, channel};

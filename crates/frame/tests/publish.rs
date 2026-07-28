@@ -97,7 +97,7 @@ fn a_wide_cell_keeps_its_spacer_and_its_columns() {
     terminal.write("\u{4F60}\u{597D}".as_bytes());
 
     let (frame, _reader) = published(&mut terminal, 6, 1);
-    let runs: Vec<_> = frame.runs(0).collect();
+    let runs = frame.runs(0);
 
     assert_eq!(frame.cell(0, 0).wide(), ruuah_vt_snapshot::Wide::Wide);
     assert_eq!(frame.cell(1, 0).wide(), ruuah_vt_snapshot::Wide::SpacerTail);

@@ -12,7 +12,7 @@
 //!   agreement with the core is tested end to end in `tests/publish.rs`; the layout is
 //!   measured against 91,707 Unicode cases in `tests/bidi_conformance.rs`.
 
-use ruuah_vt_snapshot::{Style, Wide};
+use ruuah_vt_snapshot::{Semantic, Style, Wide};
 
 use crate::bidi::{BaseDirection, visual_spans};
 use crate::packed::{PackedCell, unpack_style};
@@ -33,6 +33,10 @@ pub enum Direction {
 pub struct Run<'a> {
     /// Leftmost column the run occupies, in screen coordinates.
     pub start: u16,
+    /// Column of the run's first cell in the row's LOGICAL order, which is the coordinate
+    /// space the program addresses and the cursor is reported in. Equal to `start` only in a
+    /// left-to-right row.
+    pub logical_start: u16,
     pub direction: Direction,
     pub style: Style,
     /// The run's cells in logical order. `column_of` maps an index to its screen column.
@@ -206,6 +210,7 @@ impl Frame {
                         Direction::LeftToRight => span.column + before,
                         Direction::RightToLeft => span.column + span_width - before - piece,
                     },
+                    logical_start: u16::try_from(span.logical.start + offset).unwrap_or(u16::MAX),
                     direction: span.direction,
                     style: self.style(style_id),
                     cells: &cells[offset..end_offset],
@@ -215,6 +220,91 @@ impl Frame {
         }
         runs
     }
+
+    /// Where the cell at logical column `x` is actually painted.
+    ///
+    /// The caret has to follow its cell, not its index. On a reordered row the cell the
+    /// program addressed as column 5 can be drawn anywhere, so a caret placed at column 5
+    /// highlights an unrelated glyph -- and the glyph it highlights is the one the renderer
+    /// was already drawing there, which is why the mistake looks plausible on screen.
+    ///
+    /// Falls back to `x` for a column no run covers, which is what an all-blank row gives.
+    pub fn visual_column(&self, x: u16, y: u16) -> u16 {
+        for run in self.runs(y) {
+            let start = run.logical_start;
+            let end = start.saturating_add(run.cells.len() as u16);
+            if x >= start && x < end {
+                return run.column_of(usize::from(x - start));
+            }
+        }
+        x
+    }
+
+    /// The logical column of whichever cell is painted at screen column `column`.
+    ///
+    /// The inverse of `visual_column`, and the same function a click has to go through to
+    /// land on the character under the pointer. A wide cell answers for both of its columns;
+    /// a zero-width spacer answers for none, because it owns no column of its own.
+    pub fn logical_column(&self, column: u16, y: u16) -> Option<u16> {
+        for run in self.runs(y) {
+            for index in 0..run.cells.len() {
+                let width = cell_width(run.cells[index]);
+                if width == 0 {
+                    continue;
+                }
+                let left = run.column_of(index);
+                if column >= left && column < left + width {
+                    return Some(run.logical_start + index as u16);
+                }
+            }
+        }
+        None
+    }
+
+    /// The logical column an arrow key should move the caret to, moving one cell as the eye
+    /// sees it rather than as the buffer stores it.
+    ///
+    /// Inside a right-to-left run these disagree: logically-next is visually-leftward. A
+    /// caller handling a key event asks for the visual motion and gets back the logical
+    /// column to aim at, which for a shell means deciding whether to send Left or Right.
+    ///
+    /// This is deliberately not gated on the cell being input: the gate is `is_input`, and it
+    /// belongs where the key event is handled. Outside an input region the cursor is the
+    /// running program's to place, and stepping it visually would fight the program.
+    ///
+    /// Returns `x` unchanged at the row's edge, so a caller can detect "nowhere to go".
+    pub fn step_visually(&self, x: u16, y: u16, motion: Motion) -> u16 {
+        let mut column = self.visual_column(x, y);
+        loop {
+            column = match motion {
+                Motion::Left if column == 0 => return x,
+                Motion::Left => column - 1,
+                Motion::Right if column + 1 >= self.cols => return x,
+                Motion::Right => column + 1,
+            };
+            if let Some(logical) = self.logical_column(column, y)
+                && logical != x
+            {
+                return logical;
+            }
+        }
+    }
+
+    /// Whether the cell at a logical position is part of user input, per OSC 133.
+    ///
+    /// The gate for visual caret motion. A shell marks its own input region, so this is the
+    /// terminal knowing where the user is typing rather than guessing from the cursor.
+    pub fn is_input(&self, x: u16, y: u16) -> bool {
+        self.cell(x, y).semantic() == Semantic::Input
+    }
+}
+
+/// A direction on screen, as the eye sees it. Distinct from `Direction`, which is how a run
+/// advances: a caller pressing the left arrow means this, never that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Motion {
+    Left,
+    Right,
 }
 
 #[cfg(test)]
@@ -239,11 +329,142 @@ mod tests {
         }
     }
 
+    /// A row of `text` at one style, so a caret test can be written in one line.
+    fn row(text: &str) -> Frame {
+        frame_with(
+            text.chars()
+                .map(|c| PackedCell::new(&c.to_string(), 0, Wide::Narrow, Semantic::Output))
+                .collect(),
+            vec![[0, 0]],
+        )
+    }
+
+    #[test]
+    fn a_left_to_right_caret_sits_where_its_index_says() {
+        let frame = row("abcd");
+        for x in 0..4 {
+            assert_eq!(frame.visual_column(x, 0), x);
+        }
+    }
+
+    /// The case the whole mapping exists for. `שלום` reverses, so the cell the program calls
+    /// column 0 is painted at the right-hand end of the run.
+    #[test]
+    fn a_right_to_left_caret_follows_its_cell_to_the_other_end() {
+        let frame = row("שלום");
+
+        assert_eq!(frame.visual_column(0, 0), 3);
+        assert_eq!(frame.visual_column(1, 0), 2);
+        assert_eq!(frame.visual_column(2, 0), 1);
+        assert_eq!(frame.visual_column(3, 0), 0);
+    }
+
+    #[test]
+    fn visual_and_logical_columns_are_inverses() {
+        for text in ["abcd", "שלום", "ab גד", "גיל 42"] {
+            let frame = row(text);
+            for x in 0..frame.cols {
+                let column = frame.visual_column(x, 0);
+                assert_eq!(
+                    frame.logical_column(column, 0),
+                    Some(x),
+                    "{text:?} column {x} landed at {column}"
+                );
+            }
+        }
+    }
+
+    /// Inside a right-to-left run, visually-left is logically-forward. A caller that sent a
+    /// Left key straight through would walk the caret the wrong way along Hebrew.
+    #[test]
+    fn stepping_left_inside_a_right_to_left_run_moves_logically_forward() {
+        let frame = row("שלום");
+
+        assert_eq!(frame.step_visually(1, 0, Motion::Left), 2);
+        assert_eq!(frame.step_visually(1, 0, Motion::Right), 0);
+    }
+
+    #[test]
+    fn stepping_in_a_left_to_right_run_is_the_ordinary_thing() {
+        let frame = row("abcd");
+
+        assert_eq!(frame.step_visually(1, 0, Motion::Left), 0);
+        assert_eq!(frame.step_visually(1, 0, Motion::Right), 2);
+    }
+
+    /// Crossing the boundary between a Latin and a Hebrew run: the caret keeps moving one
+    /// column at a time on screen even though the logical column jumps.
+    #[test]
+    fn stepping_crosses_a_direction_boundary_by_screen_column() {
+        let frame = row("ab גד");
+        let width = frame.cols;
+
+        let mut seen = Vec::new();
+        let mut x = frame.logical_column(0, 0).expect("leftmost cell");
+        seen.push(x);
+        for _ in 1..width {
+            let next = frame.step_visually(x, 0, Motion::Right);
+            assert_ne!(next, x, "stepping stalled at logical {x}");
+            x = next;
+            seen.push(x);
+        }
+
+        let mut columns: Vec<u16> = seen.iter().map(|x| frame.visual_column(*x, 0)).collect();
+        columns.sort_unstable();
+        assert_eq!(
+            columns,
+            (0..width).collect::<Vec<_>>(),
+            "every screen column visited exactly once"
+        );
+    }
+
+    #[test]
+    fn stepping_stops_at_the_edges() {
+        let frame = row("abcd");
+
+        assert_eq!(frame.step_visually(0, 0, Motion::Left), 0);
+        assert_eq!(frame.step_visually(3, 0, Motion::Right), 3);
+    }
+
+    #[test]
+    fn a_wide_cell_answers_for_both_of_its_columns() {
+        let frame = frame_with(
+            vec![
+                PackedCell::new("\u{4F60}", 0, Wide::Wide, Semantic::Output),
+                PackedCell::new("", 0, Wide::SpacerTail, Semantic::Output),
+                PackedCell::new("x", 0, Wide::Narrow, Semantic::Output),
+            ],
+            vec![[0, 0]],
+        );
+
+        assert_eq!(frame.logical_column(0, 0), Some(0));
+        assert_eq!(frame.logical_column(1, 0), Some(0));
+        assert_eq!(frame.logical_column(2, 0), Some(2));
+        // Stepping off the wide cell lands past its tail, not on it.
+        assert_eq!(frame.step_visually(0, 0, Motion::Right), 2);
+    }
+
+    #[test]
+    fn the_input_gate_reads_the_cells_own_mark() {
+        let frame = frame_with(
+            vec![
+                PackedCell::new("$", 0, Wide::Narrow, Semantic::Prompt),
+                PackedCell::new("a", 0, Wide::Narrow, Semantic::Input),
+                PackedCell::new("o", 0, Wide::Narrow, Semantic::Output),
+            ],
+            vec![[0, 0]],
+        );
+
+        assert!(!frame.is_input(0, 0));
+        assert!(frame.is_input(1, 0));
+        assert!(!frame.is_input(2, 0));
+    }
+
     #[test]
     fn a_uniform_row_is_one_run() {
         let frame = frame_with(
             (0..4)
-                .map(|_| PackedCell::new("a", 0, Wide::Narrow))
+                .map(|_| PackedCell::new("a", 0, Wide::Narrow, Semantic::Output))
                 .collect(),
             vec![[0, 0]],
         );
@@ -261,9 +482,9 @@ mod tests {
         };
         let frame = frame_with(
             vec![
-                PackedCell::new("a", 0, Wide::Narrow),
-                PackedCell::new("b", 0, Wide::Narrow),
-                PackedCell::new("c", 1, Wide::Narrow),
+                PackedCell::new("a", 0, Wide::Narrow, Semantic::Output),
+                PackedCell::new("b", 0, Wide::Narrow, Semantic::Output),
+                PackedCell::new("c", 1, Wide::Narrow, Semantic::Output),
             ],
             vec![[0, 0], pack_style(&red)],
         );
@@ -279,9 +500,9 @@ mod tests {
     fn a_wide_cell_and_its_spacer_stay_in_one_run_and_claim_two_columns() {
         let frame = frame_with(
             vec![
-                PackedCell::new("\u{4F60}", 0, Wide::Wide),
-                PackedCell::new("", 0, Wide::SpacerTail),
-                PackedCell::new("x", 0, Wide::Narrow),
+                PackedCell::new("\u{4F60}", 0, Wide::Wide, Semantic::Output),
+                PackedCell::new("", 0, Wide::SpacerTail, Semantic::Output),
+                PackedCell::new("x", 0, Wide::Narrow, Semantic::Output),
             ],
             vec![[0, 0]],
         );
@@ -302,10 +523,11 @@ mod tests {
         // and the reason a renderer must ask `column_of` instead of adding to `start`.
         let cells: Vec<PackedCell> = "\u{05D0}\u{05D1}\u{05D2}"
             .chars()
-            .map(|c| PackedCell::new(&c.to_string(), 0, Wide::Narrow))
+            .map(|c| PackedCell::new(&c.to_string(), 0, Wide::Narrow, Semantic::Output))
             .collect();
         let run = Run {
             start: 4,
+            logical_start: 0,
             direction: Direction::RightToLeft,
             style: Style::DEFAULT,
             cells: &cells,

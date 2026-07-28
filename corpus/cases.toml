@@ -857,3 +857,221 @@ rows = 4
 bytes = "\u001B]133;A\u0007$ \u001B]133;B\u0007abcdefgh"
 resize = { cols = 3, rows = 4 }
 note = "Two source rows re-split into three. This is the case the simple last-source-row rule need not cover, because an earlier destination row could still carry an earlier source row's mark."
+
+# ---------------------------------------------------------------------------
+# Behaviour the first 97 cases could not ask about. Found by reading
+# ../ruuah/src/terminal/*.zig rather than by probing, then measured: every
+# `diff` below was predicted from the upstream source and confirmed against the
+# real library. Each note cites the line that defines the rule.
+#
+# These are to-do entries in the documented sense -- when this core implements
+# the behaviour the case fails and gets promoted to `match`.
+# ---------------------------------------------------------------------------
+
+[[case]]
+name = "osc133-trailing-garbage-invalidates-the-command"
+expect = "diff"
+cols = 12
+rows = 3
+bytes = "\u001B]133;A\u0007$ \u001B]133;Cextra\u0007ok"
+note = "Upstream's OSC 133 parser requires the byte after the action letter to be a semicolon or nothing (osc/parsers/semantic_prompt.zig:352); anything else sets parser.state = .invalid and drops the whole command. This core reads params[1][0] and fires on the letter, so ok is Output here and Prompt upstream."
+
+[[case]]
+name = "osc133-prompt-kind-must-be-one-byte"
+expect = "diff"
+cols = 12
+rows = 3
+bytes = "\u001B]133;A;k=cc\u0007$ "
+note = "readOption(.prompt_kind) takes the value only when its length is 1 (semantic_prompt.zig:203), and the null falls back to .initial, so the row is a plain prompt upstream. prompt_mark() here reads the first byte and marks a continuation."
+
+[[case]]
+name = "osc133-fresh-line-takes-no-options"
+expect = "diff"
+cols = 12
+rows = 3
+bytes = "xy\u001B]133;L;1\u0007Z"
+note = "L is the one action upstream rejects outright when anything follows it (semantic_prompt.zig:367), so no fresh line happens and Z lands at column 2 of row 0. This core dispatches on the letter and moves down."
+
+[[case]]
+name = "osc133-redraw-opt-in-clears-the-prompt-on-resize"
+expect = "diff"
+cols = 20
+rows = 3
+resize = { cols = 8, rows = 3 }
+bytes = "\u001B]133;A;redraw=1\u0007$ \u001B]133;B\u0007abcdefghij"
+note = "The C ABI builds terminals with shell_redraws_prompt = .false (c/terminal.zig:376), which is why every other reflow-semantic case matches. redraw=1 turns it back on, and then Screen.resize calls clearPromptForRedraw (Screen.zig:2068, 2161), which blanks every prompt row from the prompt start down because the cursor is in an input region. The option is dropped here."
+
+[[case]]
+name = "osc133-state-does-not-follow-back-out-of-the-alt-screen"
+expect = "diff"
+cols = 12
+rows = 2
+after = "ls"
+bytes = "\u001B]133;A\u0007$ \u001B]133;B\u0007\u001B[?1049h\u001B]133;C\u0007\u001B[?1049l"
+note = "semantic_content lives on Screen.cursor upstream. 1049-enter copies the whole cursor across (Terminal.zig:4383), which semantic-alt-screen-inherits-the-cursor-state already pins, but 1049-exit calls restoreCursor (Terminal.zig:1872), which restores style, charset, origin and pending_wrap and NOT semantic_content. This core shares one State::semantic_content between screens, so the C issued on the alt screen leaks back."
+
+[[case]]
+name = "osc133-spacer-head-carries-the-cursor-semantic"
+expect = "diff"
+cols = 4
+rows = 3
+bytes = "\u001B]133;A\u0007$ \u001B]133;B\u0007a\u4E16"
+note = "A wide cell that cannot fit leaves a spacer head, and upstream writes it through the ordinary cell path (Terminal.zig:1411 into the write at 1565), so it takes the cursor's semantic_content. This core writes the erase blank, which is Semantic::Output."
+
+[[case]]
+name = "spacer-head-carries-the-pen-not-the-erase-blank"
+expect = "diff"
+cols = 4
+rows = 2
+bytes = "\u001B[1;31mabc\u4E16"
+note = "The same write seen through style instead of semantics. Upstream's spacer head takes cursor.style_id, so bold and red; ours carries only the pen's background, because it reuses the erase blank. Upstream carries a TODO saying spacers should be background-only, which is the proof they are not today."
+
+[[case]]
+name = "ed2-at-a-prompt-scrolls-instead-of-clearing"
+expect = "diff"
+cols = 10
+rows = 3
+scrollback = 50
+bytes = "a\r\nb\r\n\u001B]133;A\u0007$ \u001B[2J"
+note = "eraseDisplay(.complete) checks the bottom active row for a prompt mark and, on the primary screen, runs scrollClear() first (Terminal.zig:3310-3336) -- the clear-at-a-prompt behaviour that keeps history. This core always blanks in place."
+
+[[case]]
+name = "ed3-clears-the-scrollback"
+expect = "diff"
+cols = 10
+rows = 2
+scrollback = 50
+bytes = "l1\r\nl2\r\nl3\r\nl4\u001B[3J"
+note = "EraseDisplay.scrollback = 3 dispatches to eraseHistory (Terminal.zig:3398). erase_in_display here falls through its catch-all and returns."
+
+[[case]]
+name = "reflow-is-gated-on-decawm"
+expect = "diff"
+cols = 10
+rows = 3
+resize = { cols = 5, rows = 3 }
+bytes = "abcdefghijklmno\u001B[?7l"
+note = "Terminal.resize passes reflow = modes.get(.wraparound) (Terminal.zig:3783), so with DECAWM off the primary takes resizeWithoutReflow and rows keep their identity, losing columns only. This core always rejoins."
+
+[[case]]
+name = "reflow-blank-prompt-row-is-content"
+expect = "diff"
+cols = 10
+rows = 4
+resize = { cols = 5, rows = 4 }
+bytes = "\u001B]133;A\u0007\u001B]133;D\u0007\u001B[2;1Hcontent"
+note = "PageList.zig:1573 keeps a blank row alive when it carries a semantic mark, with the mirror rule at 2327. reflow.rs defers it as a blank and re-emits it via blank_row() with a default RowMeta, so the mark is lost even when the row survives. The D stops the row below being marked a continuation."
+
+[[case]]
+name = "reflow-saved-cursor-resolves-its-pending-wrap"
+expect = "diff"
+cols = 10
+rows = 3
+resize = { cols = 20, rows = 3 }
+after = "\u001B8Q"
+bytes = "abcdefghij\u001B7"
+note = "Screen.zig:2094 resolves a saved cursor's deferred wrap after the reflow. The live cursor keeps its wrap verbatim, which reflow-write-through-the-cursor-widened pins; the saved one does not. resize.rs copies pending_wrap unchanged, so DECRC restores a wrap upstream had already resolved."
+
+[[case]]
+name = "resize-rows-only-keeps-custom-tab-stops"
+expect = "diff"
+cols = 20
+rows = 4
+resize = { cols = 20, rows = 2 }
+after = "\tX"
+bytes = "\u001B[4G\u001BH\u001B[1;1H"
+note = "Terminal.zig:3766 rebuilds the tabstop table only when the column count changes, so a rows-only resize preserves HTS stops. terminal.rs rebuilds unconditionally. Also the corpus's first HTS and HT of any kind."
+
+[[case]]
+name = "tab-at-the-last-column-keeps-the-pending-wrap"
+expect = "diff"
+cols = 5
+rows = 3
+bytes = "abcde\tZ"
+note = "horizontalTab (Terminal.zig:2111) is a bare cursorRight loop bounded by the scrolling region and never touches pending_wrap; at the last column it does nothing at all. tab_forward here clears pending_wrap unconditionally, so Z overwrites the e instead of wrapping."
+
+[[case]]
+name = "cursor-up-clamps-at-the-scroll-region-top"
+expect = "diff"
+cols = 10
+rows = 6
+bytes = "\u001B[3;5r\u001B[6;1H\u001B[10AX"
+note = "cursorUp caps the move at y - scrolling_region.top when the cursor is at or below the top margin (Terminal.zig:1703), so CUU cannot leave the region from below it. dispatch.rs uses a plain saturating_sub into goto, which clamps only to the screen."
+
+[[case]]
+name = "cursor-down-clamps-at-the-scroll-region-bottom"
+expect = "diff"
+cols = 10
+rows = 6
+bytes = "\u001B[2;4r\u001B[1;1H\u001B[10BX"
+note = "The mirror rule: cursorDown caps at scrolling_region.bottom - y (Terminal.zig:1721)."
+
+[[case]]
+name = "decrc-without-decsc-homes-and-resets-the-pen"
+expect = "diff"
+cols = 10
+rows = 3
+bytes = "\u001B[2;5H\u001B[31m\u001B8X"
+note = "restoreCursor falls back to a synthetic default cursor when nothing was saved (Terminal.zig:1872), so DECRC with no DECSC is a home plus a pen reset rather than a no-op. Both halves of restore_cursor here are guarded on Some."
+
+[[case]]
+name = "decrc-restores-origin-mode"
+expect = "diff"
+cols = 10
+rows = 6
+bytes = "\u001B[2;4r\u001B[?6h\u001B7\u001B[?6l\u001B8\u001B[1;1HX"
+note = "saveCursor stores the origin mode (Terminal.zig:1856) and restoreCursor sets it back. SavedCursor here holds only x, y and pending_wrap, so CUP 1;1 lands on the top margin upstream and on row 0 here."
+
+[[case]]
+name = "alt-screen-47-neither-clears-nor-strands-the-cursor"
+expect = "diff"
+cols = 10
+rows = 3
+after = "Z"
+bytes = "\u001B[?47habc\u001B[?47l\u001B[?47h"
+note = "switchScreenMode never erases for 47, and 47 and 1047 copy the cursor in both directions (Terminal.zig:4349-4360). This core resets the alternate buffer on every entry and never copies the cursor back out."
+
+[[case]]
+name = "alt-screen-1049h-twice-clears-again"
+expect = "diff"
+cols = 10
+rows = 3
+after = "Z"
+bytes = "\u001B[?1049habc\u001B[?1049h"
+note = "1049 saves the cursor unconditionally on enable and its eraseDisplay sits outside the screen-changed guard (Terminal.zig:4372-4395), so a second 1049h re-clears. switch_screen here returns early when already on the target."
+
+[[case]]
+name = "alt-screen-1049l-on-the-primary-still-restores"
+expect = "diff"
+cols = 10
+rows = 3
+after = "X"
+bytes = "\u001B[2;5H\u001B7\u001B[1;1H\u001B[?1049l"
+note = "The disable arm calls restoreCursor whether or not the screen changed (Terminal.zig:4395), so 1049l on the primary is a DECRC. Also the corpus's first 1049l."
+
+[[case]]
+name = "scroll-region-is-shared-with-the-alternate-screen"
+expect = "diff"
+cols = 10
+rows = 5
+after = "a\r\nb\r\nc\r\nd"
+bytes = "\u001B[2;3r\u001B[?1049h"
+note = "Ghostty keeps one Terminal.scrolling_region for both screens and switchScreenMode never resets it. Here it is per-Screen and entering the alternate screen resets it, so upstream scrolls inside rows 2-3 and this core leaves all four rows untouched."
+
+[[case]]
+name = "semantic-fresh-line-at-the-last-row-scrolls"
+expect = "match"
+cols = 12
+rows = 3
+scrollback = 50
+bytes = "a\r\nb\r\nxy\u001B]133;A\u0007$ "
+note = "A's fresh line taken on the bottom row scrolls the screen, so the row that gets the prompt mark is the new bottom row and the old top row reaches history. index()'s continuation rule fires first and start_prompt overwrites it, in both implementations. A pin, not a hunt."
+
+[[case]]
+name = "semantic-inside-a-scroll-region"
+expect = "match"
+cols = 12
+rows = 5
+scrollback = 50
+bytes = "\u001B[2;4r\u001B[4;1Hxy\u001B]133;A\u0007$ \u001B]133;B\u0007ls"
+note = "The fresh line is taken at the bottom margin of a region that does not start at row 0, so the row pushed out never leaves the screen and must not become history, while the prompt mark still lands on the new bottom row of the region. Two rules crossing that no existing case crosses."

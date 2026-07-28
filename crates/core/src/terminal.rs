@@ -62,6 +62,30 @@ impl Terminal {
     pub fn snapshot(&self) -> Snapshot {
         self.state.snapshot()
     }
+
+    /// The active screen buffer, for a consumer that reads the grid directly.
+    ///
+    /// `snapshot` allocates a `String` per cell, which is right for a corpus case and wrong
+    /// for a renderer reading every frame. This is the same state without the convenience.
+    pub fn screen(&self) -> &Screen {
+        self.state.screen()
+    }
+
+    pub fn cursor(&self) -> Cursor {
+        let screen = self.state.screen();
+        Cursor {
+            x: screen.x,
+            y: screen.y,
+            pending_wrap: screen.pending_wrap,
+            visible: self.state.cursor_visible,
+            style: self.state.pen,
+        }
+    }
+
+    /// Whether the accumulated damage is a whole-frame event rather than a set of rows.
+    pub fn is_wholly_damaged(&self) -> bool {
+        self.state.full_damage
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

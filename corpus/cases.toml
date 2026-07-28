@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 123
+declared_cases = 124
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -943,12 +943,21 @@ note = "eraseDisplay(.complete) checks the bottom active row for a prompt mark a
 
 [[case]]
 name = "ed3-clears-the-scrollback"
-expect = "diff"
+expect = "match"
 cols = 10
 rows = 2
 scrollback = 50
 bytes = "l1\r\nl2\r\nl3\r\nl4\u001B[3J"
-note = "EraseDisplay.scrollback = 3 dispatches to eraseHistory (Terminal.zig:3398). erase_in_display here falls through its catch-all and returns."
+note = "EraseDisplay.scrollback = 3 dispatches to eraseHistory (Terminal.zig:3398). Promoted when erase_in_display learned mode 3."
+
+[[case]]
+name = "ed3-leaves-a-pending-wrap-standing"
+expect = "match"
+cols = 4
+rows = 2
+scrollback = 50
+bytes = "abcd\u001B[3JX"
+note = "Modes 0, 1 and 2 each clear the phantom state; mode 3 dispatches straight to eraseHistory and never touches it (Terminal.zig:3398). So X must still wrap to row 1 rather than overwrite the d. This pins the early return in erase_in_display -- clearing pending_wrap there would fail this case and nothing else."
 
 [[case]]
 name = "reflow-is-gated-on-decawm"

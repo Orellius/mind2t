@@ -97,8 +97,137 @@ impl Grid {
         self.styles.get(id)
     }
 
+    pub fn row_meta(&self, y: u16) -> RowMeta {
+        self.row_meta
+            .get(usize::from(y))
+            .copied()
+            .unwrap_or_default()
+    }
+
     pub fn row_meta_mut(&mut self, y: u16) -> Option<&mut RowMeta> {
         self.row_meta.get_mut(usize::from(y))
+    }
+
+    /// Erases cells `from_x..=to_x` on row `y`, filling with `blank`.
+    ///
+    /// `blank` carries the current background, which is what makes background-colour erase
+    /// work: erasing under `CSI 41m` leaves red cells, not empty ones.
+    pub fn clear_span(&mut self, y: u16, from_x: u16, to_x: u16, blank: Cell) {
+        for x in from_x..=to_x.min(self.cols.saturating_sub(1)) {
+            let index = self.index(x, y);
+            self.write(index, blank);
+        }
+    }
+
+    /// Blanks a whole row and resets its wrap flags. A blanked row is not a continuation of
+    /// anything, so leaving the flags behind would corrupt reflow in slice 4.
+    pub fn blank_row(&mut self, y: u16, blank: Cell) {
+        if self.cols > 0 {
+            self.clear_span(y, 0, self.cols - 1, blank);
+        }
+        if let Some(meta) = self.row_meta_mut(y) {
+            *meta = RowMeta::default();
+        }
+    }
+
+    /// Shifts cells on a row right from `at_x`, discarding what falls off the end (ICH).
+    pub fn shift_right(&mut self, y: u16, at_x: u16, count: u16, blank: Cell) {
+        if self.cols == 0 || at_x >= self.cols {
+            return;
+        }
+        let last = self.cols - 1;
+        let count = count.min(self.cols - at_x);
+        let mut x = last;
+        while x >= at_x + count {
+            let source = self.index(x - count, y);
+            let target = self.index(x, y);
+            self.move_cell(source, target);
+            if x == 0 {
+                break;
+            }
+            x -= 1;
+        }
+        self.clear_span(y, at_x, at_x + count - 1, blank);
+    }
+
+    /// Shifts cells on a row left into `at_x`, blanking the tail (DCH).
+    pub fn shift_left(&mut self, y: u16, at_x: u16, count: u16, blank: Cell) {
+        if self.cols == 0 || at_x >= self.cols {
+            return;
+        }
+        let count = count.min(self.cols - at_x);
+        for x in at_x..(self.cols - count) {
+            let source = self.index(x + count, y);
+            let target = self.index(x, y);
+            self.move_cell(source, target);
+        }
+        self.clear_span(y, self.cols - count, self.cols - 1, blank);
+    }
+
+    /// Moves rows within `top..=bottom` up by `count`, blanking the vacated bottom rows.
+    pub fn scroll_up(&mut self, top: u16, bottom: u16, count: u16, blank: Cell) {
+        let height = bottom.saturating_sub(top) + 1;
+        let count = count.min(height);
+        for y in top..=bottom.saturating_sub(count) {
+            if y + count <= bottom {
+                self.move_row(y + count, y);
+            }
+        }
+        for y in (bottom + 1 - count)..=bottom {
+            self.blank_row(y, blank);
+        }
+    }
+
+    /// Moves rows within `top..=bottom` down by `count`, blanking the vacated top rows.
+    pub fn scroll_down(&mut self, top: u16, bottom: u16, count: u16, blank: Cell) {
+        let height = bottom.saturating_sub(top) + 1;
+        let count = count.min(height);
+        let mut y = bottom;
+        while y >= top + count {
+            self.move_row(y - count, y);
+            if y == 0 {
+                break;
+            }
+            y -= 1;
+        }
+        for y in top..(top + count) {
+            self.blank_row(y, blank);
+        }
+    }
+
+    /// Relocates one cell along with its grapheme continuations.
+    ///
+    /// The continuations must travel with the cell. They are keyed by flat index, so moving
+    /// the cell without rekeying them would leave a combining mark attached to whatever
+    /// lands at the old position -- a corruption that surfaces far from its cause.
+    fn move_cell(&mut self, source: usize, target: usize) {
+        if source >= self.cells.len() || target >= self.cells.len() {
+            return;
+        }
+        self.graphemes.remove(&target);
+        if let Some(continuations) = self.graphemes.remove(&source) {
+            self.graphemes.insert(target, continuations);
+        }
+        self.cells[target] = self.cells[source];
+    }
+
+    /// Relocates a whole row: cells, grapheme continuations and wrap flags.
+    ///
+    /// O(cols) with a map operation per cell. That is the honest cost of a flat array, and
+    /// it is why slice 3 replaces this with a page list where scrolling moves pointers.
+    fn move_row(&mut self, from_y: u16, to_y: u16) {
+        if from_y == to_y {
+            return;
+        }
+        for x in 0..self.cols {
+            let source = self.index(x, from_y);
+            let target = self.index(x, to_y);
+            self.move_cell(source, target);
+        }
+        let meta = self.row_meta(from_y);
+        if let Some(target) = self.row_meta_mut(to_y) {
+            *target = meta;
+        }
     }
 
     /// The full grapheme cluster in a cell, as the snapshot contract wants it: the primary

@@ -172,8 +172,64 @@ impl Terminal {
         Ok(Cell {
             text: read_graphemes(&cell_ref, x, y)?,
             wide: convert_wide(wide)?,
-            style: convert_style(&raw_style)?,
+            style: self.read_style(raw_cell, &raw_style)?,
         })
+    }
+
+    /// Reads a cell's effective style, folding in a background that lives in the cell rather
+    /// than in the style table.
+    ///
+    /// Ghostty stores a cell that has *only* a background colour with a `bg_color` content
+    /// tag, keeping it out of the style map entirely. `ghostty_grid_ref_style` then reports
+    /// the default style for it. Measured 2026-07-28: after `CSI 41m CSI 2K`, the style says
+    /// `bg: Default` while the cell is genuinely red. Reading only the style would leave the
+    /// harness blind to background-colour erase, so an erase implementation that ignored BCE
+    /// would be reported as MATCH. Normalising both representations into `style.bg` costs
+    /// nothing observable: a cell with text is still distinguished by its non-empty `text`.
+    fn read_style(
+        &self,
+        raw_cell: sys::GhosttyCell,
+        raw_style: &sys::GhosttyStyle,
+    ) -> Result<Style, Error> {
+        let mut style = convert_style(raw_style)?;
+
+        let tag: sys::GhosttyCellContentTag = unsafe {
+            cell_get(
+                raw_cell,
+                sys::GhosttyCellData_GHOSTTY_CELL_DATA_CONTENT_TAG,
+                "CONTENT_TAG",
+            )
+        }?;
+
+        match tag {
+            sys::GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE => {
+                let index: u8 = unsafe {
+                    cell_get(
+                        raw_cell,
+                        sys::GhosttyCellData_GHOSTTY_CELL_DATA_COLOR_PALETTE,
+                        "COLOR_PALETTE",
+                    )
+                }?;
+                style.bg = Color::Palette(index);
+            }
+            sys::GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_BG_COLOR_RGB => {
+                let rgb: sys::GhosttyColorRgb = unsafe {
+                    cell_get(
+                        raw_cell,
+                        sys::GhosttyCellData_GHOSTTY_CELL_DATA_COLOR_RGB,
+                        "COLOR_RGB",
+                    )
+                }?;
+                style.bg = Color::Rgb {
+                    r: rgb.r,
+                    g: rgb.g,
+                    b: rgb.b,
+                };
+            }
+            _ => {}
+        }
+
+        Ok(style)
     }
 
     fn grid_ref(&self, x: u16, y: u16) -> Result<sys::GhosttyGridRef, Error> {

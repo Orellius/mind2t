@@ -13,10 +13,11 @@
 
 use ruuah_vt_frame::{Frame, PackedCell, cell_width};
 
-use crate::atlas::{Atlas, GlyphKey};
+use crate::atlas::Atlas;
 use crate::canvas::Canvas;
 use crate::color::{Palette, Rgba};
 use crate::font::FontStack;
+use crate::shape::{PositionedGlyph, Shaper, needs_shaping};
 
 /// Paints frames into a pixel buffer.
 pub struct Renderer {
@@ -24,6 +25,11 @@ pub struct Renderer {
     atlas: Atlas,
     palette: Palette,
     canvas: Canvas,
+    shaper: Shaper,
+    /// Scratch for one cell's positioned glyphs, so drawing allocates nothing per cell.
+    positioned: Vec<PositionedGlyph>,
+    /// Whether combining marks are placed by the font. Off is a test control only.
+    shaping: bool,
     cols: u16,
     rows: u16,
     /// The last generation fully painted. Rows stamped above it are what is owed.
@@ -37,6 +43,9 @@ impl Renderer {
         Renderer {
             fonts,
             atlas: Atlas::new(),
+            shaper: Shaper::new(),
+            positioned: Vec::with_capacity(8),
+            shaping: true,
             palette: Palette::xterm(),
             canvas,
             cols,
@@ -55,6 +64,16 @@ impl Renderer {
 
     pub fn palette(&self) -> &Palette {
         &self.palette
+    }
+
+    /// Turns off font-driven mark placement, so every glyph of a cluster stacks at the pen.
+    ///
+    /// A control, not a feature. `tests/shaping.rs` requires this to put a niqqud somewhere
+    /// the real path does not; a positioning test that has never been seen to fail cannot
+    /// tell a working GPOS lookup from an ignored one.
+    #[doc(hidden)]
+    pub fn set_shaping_for_testing(&mut self, on: bool) {
+        self.shaping = on;
     }
 
     /// Repaints the rows this frame says are stale, and returns how many that was.
@@ -150,28 +169,30 @@ impl Renderer {
         let mut scratch = [0u8; ruuah_vt_frame::CLUSTER_BYTES];
         let cluster = cell.cluster(&mut scratch);
 
-        // One glyph per codepoint, all drawn at the same pen position. Correct for a single
-        // character, and approximate for a cluster: a combining mark relies on its own
-        // bearings to land in the right place instead of on GPOS mark attachment. Real
-        // stacking is shaping, which is slice 5.5 -- this is why niqqud currently sit where
-        // the font's default bearings put them rather than where the font says they belong.
-        for c in cluster.chars() {
-            let Some(resolved) = self.fonts.resolve(c) else {
-                continue;
-            };
-            let key = GlyphKey {
-                font: resolved.font,
-                glyph: resolved.glyph,
-            };
-            let Some(glyph) = self.atlas.glyph(&self.fonts, key) else {
+        // Shaping is what makes a combining mark land where the font says rather than where
+        // its own origin happens to be. Only clusters that actually have marks pay for it:
+        // a single codepoint has nothing to attach, so every character of code and English
+        // takes `place_at_origin`, which for one glyph is not an approximation but the exact
+        // answer.
+        self.positioned.clear();
+        let placed = if self.shaping && needs_shaping(cluster) {
+            self.shaper.shape(&mut self.fonts, cluster)
+        } else {
+            self.shaper.place_at_origin(&mut self.fonts, cluster)
+        };
+        self.positioned.extend_from_slice(placed);
+
+        for placed in 0..self.positioned.len() {
+            let placed = self.positioned[placed];
+            let Some(glyph) = self.atlas.glyph(&self.fonts, placed.key) else {
                 continue;
             };
 
-            let x = left + glyph.left;
-            let y = baseline - glyph.top;
+            // `y` is positive upwards in both the shaper's offsets and the glyph's `top`,
+            // and the canvas grows downwards, so both subtract.
+            let x = left + placed.x.round() as i32 + glyph.left;
+            let y = baseline - placed.y.round() as i32 - glyph.top;
             let (width, height) = (glyph.width, glyph.height);
-            // Copied out because the blend borrows the canvas mutably while the glyph is
-            // borrowed from the atlas.
             let coverage = glyph.coverage.clone();
             self.canvas
                 .blend_mask(x, y, width, height, &coverage, color);

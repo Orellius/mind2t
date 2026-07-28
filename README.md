@@ -42,11 +42,18 @@ possible at all. Ghostty enforces the same split physically between `src/termina
 | 4 | Reflow on resize, including scrollback and cursor mapping | `v0.4.0` |
 | 5 | Damage tracking, frame channel, pty host, and a renderer that draws vim | `v0.5.0` |
 | 5.5a | Display bidi: Hebrew reorders, measured against the Unicode conformance suite | - |
+| 5.5b | Shaping: niqqud placed by the font's GPOS table, not by default bearings | - |
 
-**184 tests green.** Corpus: 78 cases, 71 match / 7 diff, 78/78 met expectation.
+**195 tests green.** Corpus: 78 cases, 71 match / 7 diff, 78/78 met expectation.
 
-Next is the rest of **slice 5.5: shaping**. Reordering has landed and the seam held - the
-renderer was not touched, because it never assumed a direction.
+Hebrew is now correct end to end: reordered by the Unicode algorithm and pointed by the font.
+
+![Hebrew reordering](docs/images/bidi.png)
+
+![niqqud placement, before and after shaping](docs/images/niqqud.png)
+
+Above: shaping off, then on. The marks move from the cell's left edge to where the font's GPOS
+table actually puts them.
 
 ## How correctness is established
 
@@ -180,10 +187,16 @@ Hebrew reaching pixels today, still in logical order:
 
 That ordering is pinned by a pixel-level test which slice 5.5 must deliberately flip.
 
-**What is honestly missing:** shaping. A cluster's codepoints are currently rasterized
-individually and drawn at one pen position, so a niqqud lands on the font's default bearings
-rather than where GPOS says it belongs. `swash` was chosen partly because it also shapes, and
-its Hebrew GSUB/GPOS has been verified, so slice 5.5 adds no new dependency.
+**Shaping.** Each cell's cluster goes through swash, so combining marks are placed by the
+font's GPOS table. Only clusters with more than one codepoint pay for it. One cell is shaped at
+a time on purpose: a terminal cell is addressable, and shaping across cells would let the
+renderer merge or re-space cells the program placed deliberately. The cost is that Arabic
+contextual joining does not cross cells, which every terminal shares.
+
+**What is honestly still missing:** input bidi - a visual caret and visual-order arrow keys
+inside a shell's own prompt (slice 5.6). The caret inside a third-party TUI's editing buffer
+(vim insert mode) is not solvable at this layer at all, because the application owns that
+buffer.
 
 ## Building
 

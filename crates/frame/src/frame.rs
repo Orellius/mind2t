@@ -71,7 +71,10 @@ impl Run<'_> {
 
 /// A cell's contribution to the horizontal advance. Spacer tails are already accounted for
 /// by the wide cell they follow, so they claim nothing of their own.
-fn cell_width(cell: PackedCell) -> u16 {
+///
+/// Public because a renderer needs the same answer when sizing a cell's background, and two
+/// copies of this rule would disagree the first time one of them changed.
+pub fn cell_width(cell: PackedCell) -> u16 {
     match cell.wide() {
         Wide::Wide => 2,
         Wide::SpacerTail => 0,

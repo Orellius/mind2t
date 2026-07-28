@@ -6,6 +6,7 @@ members = [
     "crates/core",
     "crates/frame",
     "crates/pty",
+    "crates/render",
     "crates/difftest",
 ]
 
@@ -20,6 +21,7 @@ ruuah-vt-ghostty = { path = "crates/ghostty" }
 ruuah-vt-core = { path = "crates/core" }
 ruuah-vt-frame = { path = "crates/frame" }
 ruuah-vt-pty = { path = "crates/pty" }
+ruuah-vt-render = { path = "crates/render" }
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"

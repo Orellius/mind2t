@@ -262,14 +262,33 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   a discarded frame into a fault. Sixteen bytes holds a base letter plus roughly seven
   combining marks, which covers Hebrew niqqud with room over; a longer cluster (multi-person
   emoji ZWJ sequences) is **flagged** via `PackedCell::is_truncated`, never silently shortened.
-- **No single macOS system font can draw this terminal.** Measured 2026-07-28 by walking every
-  font in `/System/Library/Fonts` and its `Supplemental`: Menlo maps Hebrew to glyph 0, and
-  Arial Hebrew maps `'A'` to glyph 0. Font fallback is therefore not an enhancement to add
-  later — it is required for the project's stated goal, which is why `FontStack` is plural
-  from its first commit and the atlas keys on **(font, glyph)** rather than glyph. A glyph id
-  without its font is meaningless, and collapsing the two would draw Hebrew using Menlo's
-  glyph numbering. `font.rs` unit-tests both coverage gaps, so a font change on the machine
-  surfaces as a failing test instead of tofu on screen.
+- **No single font can draw this terminal, and the font question is now settled.** Measured
+  2026-07-28 by walking every font in `/System/Library/Fonts`, its `Supplemental`,
+  `/Library/Fonts` and `~/Library/Fonts`, then shaping Hebrew through each candidate.
+  - Menlo maps Hebrew to glyph 0. Arial Hebrew maps `'A'` to glyph 0, and is proportional
+    besides. Fallback is therefore required, not an enhancement — which is why `FontStack`
+    is plural from its first commit and the atlas keys on **(font, glyph)** rather than
+    glyph. A glyph id without its font is meaningless, and collapsing the two would draw
+    Hebrew with Menlo's glyph numbering.
+  - **The Hebrew font is `Miriam Mono CLM`** (Culmus, Maxim Iorsh, GPL v2), installed at
+    `~/Library/Fonts/`. It is the only monospace font found that does Hebrew *correctly*:
+    GSUB composes shin+shin-dot and bet+dagesh into single glyphs, GPOS puts a qamats at
+    exactly half the advance so it is centred under its base, marks carry **zero advance** so
+    a pointed cluster stays ONE cell, and Latin and Hebrew both advance 0.6em — the same as
+    Menlo, so the two share a grid exactly.
+  - **It must not lead the stack**: it covers **0 of 128** box-drawing codepoints, 0 blocks
+    and 0 powerline. Menlo leads, Miriam sits behind it, Arial Hebrew is the last resort so a
+    machine without Culmus still works. `system()` filters to what is installed.
+  - Iosevka and JetBrains Mono have no Hebrew at all, so the popular programming faces are
+    not options. Building a font is not one either — see the note below.
+  - `font.rs` unit-tests the coverage gaps in both directions, so a font change on the
+    machine surfaces as a failing test instead of tofu on screen.
+- **Do not try to build or merge a font.** A Hebrew-plus-Latin monospace face with correct
+  niqqud is person-years of type design, and the shortcut — merging Menlo's Latin and box
+  drawing with Miriam's Hebrew via fontTools — buys nothing the fallback stack does not
+  already give (the advances already match) while creating a licence problem: Menlo is
+  Apple's and not redistributable, and Miriam is GPL v2, so the merged output could never
+  ship. Fallback is the answer, and it is already built.
 - **The renderer has no shaping yet, and that is the honest gap.** A cluster's codepoints are
   rasterized individually and drawn at one pen position, which is right for Latin and only
   approximate for combining marks: a niqqud lands where the font's default bearings put it,

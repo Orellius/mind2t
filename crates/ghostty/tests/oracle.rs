@@ -176,3 +176,44 @@ fn a_terminal_can_be_written_in_several_chunks() {
 
     assert_eq!(whole.snapshot().unwrap(), split.snapshot().unwrap());
 }
+
+#[test]
+fn a_background_only_cell_reports_its_colour_in_the_style() {
+    // Ghostty keeps a cell that has only a background out of the style map, using a
+    // bg_color content tag instead. Reading the style alone reports Default and the harness
+    // would be blind to background-colour erase -- an erase that ignored BCE would pass.
+    // Measured 2026-07-28; this pins the normalisation that closes it.
+    let snap = snapshot_of(8, 2, b"abc\x1b[41m\x1b[2K");
+
+    assert_eq!(snap.grid[0].cells[0].text, "", "the line was erased");
+    assert_eq!(
+        snap.grid[0].cells[0].style.bg,
+        Color::Palette(1),
+        "erased cells must carry the background that erased them"
+    );
+}
+
+#[test]
+fn background_only_and_printed_space_are_both_visible_but_distinguishable() {
+    let erased = snapshot_of(8, 2, b"\x1b[41m\x1b[2K");
+    let printed = snapshot_of(8, 2, b"\x1b[41m ");
+
+    assert_eq!(erased.grid[0].cells[0].style.bg, Color::Palette(1));
+    assert_eq!(printed.grid[0].cells[0].style.bg, Color::Palette(1));
+    assert_eq!(erased.grid[0].cells[0].text, "", "no text");
+    assert_eq!(printed.grid[0].cells[0].text, " ", "a real space");
+}
+
+#[test]
+fn a_direct_rgb_background_survives_erase() {
+    let snap = snapshot_of(8, 2, b"\x1b[48;2;10;20;30m\x1b[2J");
+
+    assert_eq!(
+        snap.grid[1].cells[3].style.bg,
+        Color::Rgb {
+            r: 10,
+            g: 20,
+            b: 30
+        }
+    );
+}

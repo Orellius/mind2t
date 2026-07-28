@@ -1,21 +1,21 @@
-//! Purpose: drive the grid from a byte stream, using `vte` as the parser.
+//! Purpose: drive two screen buffers from a byte stream, using `vte` as the parser.
 //! Public surface: `Terminal::new`, `Terminal::write`, `Terminal::snapshot`.
 //! Why this file: the plan is explicit that VT parsing is solved and must not be rewritten,
-//!   so this is only the `Perform` side -- what each parsed action does to the grid. It is
-//!   the imperative shell over a functional core: no I/O, no clock, fully deterministic.
-//! NOT responsible for: parsing (`vte`), style decoding (`sgr.rs`), storage (`grid.rs`), or
-//!   anything slice 2 owns -- autowrap, scrolling, scroll regions, alt screen, tabs, erase.
-//!   Those are deliberate omissions and the corpus expects the resulting diffs.
-//! Test strategy: measured against libghostty-vt by the differential corpus, not by
+//!   so this is only the `Perform` side -- what each parsed action does. It is the
+//!   imperative shell over a functional core: no I/O, no clock, fully deterministic.
+//! NOT responsible for: parsing (`vte`), control-sequence dispatch (`dispatch.rs`), buffer
+//!   operations (`screen.rs`, `grid.rs`), style decoding (`sgr.rs`), or tabs (`tabs.rs`). Scrollback and reflow are slices 3
+//!   and 4 and are deliberately absent.
+//! Test strategy: measured against libghostty-vt by the differential corpus rather than by
 //!   restating expected cell contents here.
 
-use ruuah_vt_snapshot::{Cursor, Screen, Snapshot, Style};
+use ruuah_vt_snapshot::{Cursor, Screen as SnapshotScreen, Snapshot, Style};
 use unicode_width::UnicodeWidthChar;
 use vte::{Params, Perform};
 
 use crate::cell::{Cell, CellFlags, Wide};
-use crate::grid::Grid;
-use crate::sgr;
+use crate::screen::Screen;
+use crate::tabs::TabStops;
 
 /// A terminal core: bytes in, grid mutations out.
 pub struct Terminal {
@@ -42,64 +42,137 @@ impl Terminal {
     }
 }
 
-struct State {
-    grid: Grid,
-    cursor_x: u16,
-    cursor_y: u16,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Active {
+    Primary,
+    Alternate,
+}
+
+pub(crate) struct State {
+    pub(crate) primary: Screen,
+    pub(crate) alternate: Screen,
+    pub(crate) active: Active,
     /// The style newly printed cells take.
-    pen: Style,
+    pub(crate) pen: Style,
+    pub(crate) saved_pen: Option<Style>,
+    pub(crate) tabs: TabStops,
+    /// DECAWM (mode 7). On by default; when off, the last column overwrites in place.
+    pub(crate) autowrap: bool,
+    /// DECOM (mode 6). When on, row addressing is relative to the scroll region.
+    pub(crate) origin: bool,
+    /// DECTCEM (mode 25).
+    pub(crate) cursor_visible: bool,
     /// Flat index of the last printed cell, so a following zero-width codepoint knows which
     /// cluster it belongs to. Cleared by anything that moves the cursor.
-    last_print: Option<usize>,
+    pub(crate) last_print: Option<usize>,
 }
 
 impl State {
     fn new(cols: u16, rows: u16) -> State {
         State {
-            grid: Grid::new(cols, rows),
-            cursor_x: 0,
-            cursor_y: 0,
+            primary: Screen::new(cols, rows),
+            alternate: Screen::new(cols, rows),
+            active: Active::Primary,
             pen: Style::DEFAULT,
+            saved_pen: None,
+            tabs: TabStops::new(cols),
+            autowrap: true,
+            origin: false,
+            cursor_visible: true,
             last_print: None,
         }
     }
 
-    fn snapshot(&self) -> Snapshot {
-        Snapshot {
-            cols: self.grid.cols(),
-            rows: self.grid.rows(),
-            // Slice 2 owns the alternate screen; there is only one buffer today.
-            screen: Screen::Primary,
-            cursor: Cursor {
-                x: self.cursor_x,
-                y: self.cursor_y,
-                // Slice 2 owns the autowrap phantom state.
-                pending_wrap: false,
-                visible: true,
-                style: self.pen,
-            },
-            grid: self.grid.to_rows(),
+    pub(crate) fn screen(&self) -> &Screen {
+        match self.active {
+            Active::Primary => &self.primary,
+            Active::Alternate => &self.alternate,
         }
     }
 
-    /// Writes a printable character at the cursor and advances.
-    ///
-    /// Past the last column the character is dropped rather than wrapped: autowrap is slice
-    /// 2, and faking a wrap here would produce a grid that looks right while the cursor and
-    /// the row wrap flags do not, which is worse to debug than a clean omission.
-    fn print_char(&mut self, c: char, width: u16) {
-        if self.cursor_x >= self.grid.cols() || self.cursor_y >= self.grid.rows() {
-            return;
+    pub(crate) fn screen_mut(&mut self) -> &mut Screen {
+        match self.active {
+            Active::Primary => &mut self.primary,
+            Active::Alternate => &mut self.alternate,
         }
-        if width == 2 && self.cursor_x + 1 >= self.grid.cols() {
-            self.cursor_x = self.grid.cols();
-            self.last_print = None;
+    }
+
+    /// The cell an erase paints with.
+    ///
+    /// Carries the pen's background and nothing else: background-colour erase fills with the
+    /// current background, and the other attributes are not observable on a cell with no
+    /// text. Interned against the active grid, since style tables are per-grid.
+    pub(crate) fn blank(&mut self) -> Cell {
+        let style = Style {
+            bg: self.pen.bg,
+            ..Style::DEFAULT
+        };
+        let style_id = self.screen_mut().grid.intern_style(style);
+        Screen::blank_with(style_id)
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        let screen = self.screen();
+        Snapshot {
+            cols: screen.cols(),
+            rows: screen.rows(),
+            screen: match self.active {
+                Active::Primary => SnapshotScreen::Primary,
+                Active::Alternate => SnapshotScreen::Alternate,
+            },
+            cursor: Cursor {
+                x: screen.x,
+                y: screen.y,
+                pending_wrap: screen.pending_wrap,
+                visible: self.cursor_visible,
+                style: self.pen,
+            },
+            grid: screen.grid.to_rows(),
+        }
+    }
+
+    fn print_char(&mut self, c: char, width: u16) {
+        let blank = self.blank();
+
+        // A deferred wrap is resolved before the character lands, never after: the whole
+        // point of the phantom state is that the wrap belongs to this character, not the
+        // previous one.
+        if self.screen().pending_wrap {
+            if self.autowrap {
+                self.screen_mut().wrap_line(blank);
+            } else {
+                self.screen_mut().pending_wrap = false;
+            }
+        }
+
+        let cols = self.screen().cols();
+        if cols == 0 {
             return;
         }
 
-        let style_id = self.grid.intern_style(self.pen);
-        let index = self.grid.index(self.cursor_x, self.cursor_y);
-        self.grid.write(
+        // A wide character that cannot fit in the last column leaves a spacer head behind
+        // and starts on the next row, rather than being split across the wrap.
+        if width == 2 && self.screen().x + 1 >= cols {
+            if !self.autowrap {
+                return;
+            }
+            let (x, y) = (self.screen().x, self.screen().y);
+            let index = self.screen().grid.index(x, y);
+            self.screen_mut().grid.write(
+                index,
+                Cell {
+                    wide: Wide::SpacerHead,
+                    ..blank
+                },
+            );
+            self.screen_mut().wrap_line(blank);
+        }
+
+        let pen = self.pen;
+        let style_id = self.screen_mut().grid.intern_style(pen);
+        let (x, y) = (self.screen().x, self.screen().y);
+        let index = self.screen().grid.index(x, y);
+        self.screen_mut().grid.write(
             index,
             Cell {
                 codepoint: c as u32,
@@ -111,7 +184,7 @@ impl State {
         self.last_print = Some(index);
 
         if width == 2 {
-            self.grid.write(
+            self.screen_mut().grid.write(
                 index + 1,
                 Cell {
                     codepoint: 0,
@@ -121,42 +194,94 @@ impl State {
                 },
             );
         }
-        self.cursor_x += width;
+
+        // At the right edge the cursor stays put and the wrap is deferred. Advancing to
+        // `cols` instead would be off the grid and would lose the phantom state.
+        if x + width >= cols {
+            let screen = self.screen_mut();
+            screen.x = cols - 1;
+            screen.pending_wrap = true;
+        } else {
+            self.screen_mut().x = x + width;
+        }
     }
 
-    fn move_to(&mut self, x: u16, y: u16) {
-        self.cursor_x = x.min(self.grid.cols().saturating_sub(1));
-        self.cursor_y = y.min(self.grid.rows().saturating_sub(1));
+    pub(crate) fn cursor_x(&self) -> u16 {
+        self.screen().x
+    }
+
+    pub(crate) fn cursor_y(&self) -> u16 {
+        self.screen().y
+    }
+
+    /// Moves the cursor and invalidates the grapheme anchor: a combining mark arriving after
+    /// a jump belongs to nothing, and attaching it to a stale cell would corrupt that cell.
+    pub(crate) fn goto(&mut self, x: u16, y: u16) {
+        self.screen_mut().move_to(x, y);
         self.last_print = None;
     }
 
-    fn line_feed(&mut self) {
-        // Slice 2 owns scrolling; at the bottom the cursor clamps instead.
-        self.cursor_y = (self.cursor_y + 1).min(self.grid.rows().saturating_sub(1));
+    /// Absolute cursor addressing, honouring DECOM: with origin mode on, row 1 is the top
+    /// margin and the cursor cannot leave the region.
+    pub(crate) fn cursor_position(&mut self, row: u16, col: u16) {
+        let (top, bottom) = if self.origin {
+            (self.screen().scroll_top, self.screen().scroll_bottom)
+        } else {
+            (0, self.screen().rows().saturating_sub(1))
+        };
+        let y = top.saturating_add(row).min(bottom);
+        self.screen_mut().move_to(col, y);
         self.last_print = None;
     }
 
-    fn carriage_return(&mut self) {
-        self.cursor_x = 0;
+    pub(crate) fn save_cursor(&mut self) {
+        self.screen_mut().save_cursor();
+        self.saved_pen = Some(self.pen);
+    }
+
+    pub(crate) fn restore_cursor(&mut self) {
+        self.screen_mut().restore_cursor();
+        if let Some(pen) = self.saved_pen {
+            self.pen = pen;
+        }
         self.last_print = None;
     }
 
-    fn backspace(&mut self) {
-        self.cursor_x = self.cursor_x.saturating_sub(1);
+    pub(crate) fn tab_forward(&mut self, count: u16) {
+        for _ in 0..count.max(1) {
+            let next = self.tabs.next(self.screen().x);
+            self.screen_mut().x = next;
+        }
+        self.screen_mut().pending_wrap = false;
         self.last_print = None;
+    }
+
+    pub(crate) fn tab_backward(&mut self, count: u16) {
+        for _ in 0..count.max(1) {
+            let previous = self.tabs.previous(self.screen().x);
+            self.screen_mut().x = previous;
+        }
+        self.screen_mut().pending_wrap = false;
+        self.last_print = None;
+    }
+
+    pub(crate) fn full_reset(&mut self) {
+        let cols = self.screen().cols();
+        let rows = self.screen().rows();
+        *self = State::new(cols, rows);
     }
 }
 
 impl Perform for State {
     fn print(&mut self, c: char) {
         // A zero-width codepoint continues the previous cell's grapheme cluster rather than
-        // claiming a cell of its own -- ranked failure mode 2, a cell is not a codepoint.
-        // This is the width heuristic, not full UAX #29 incremental segmentation, so ZWJ
-        // emoji sequences still split. The corpus is where that shows up.
+        // claiming a cell -- ranked failure mode 2, a cell is not a codepoint. This is the
+        // width heuristic, which matches Ghostty while DEC mode 2027 is off (verified
+        // 2026-07-28); full UAX #29 segmentation is only needed once 2027 is implemented.
         let width = UnicodeWidthChar::width(c).unwrap_or(0);
         if width == 0 {
             if let Some(index) = self.last_print {
-                self.grid.push_grapheme(index, c);
+                self.screen_mut().grid.push_grapheme(index, c);
             }
             return;
         }
@@ -165,44 +290,32 @@ impl Perform for State {
 
     fn execute(&mut self, byte: u8) {
         match byte {
-            0x08 => self.backspace(),
-            0x0a | 0x0b | 0x0c => self.line_feed(),
-            0x0d => self.carriage_return(),
+            0x08 => {
+                let x = self.screen().x.saturating_sub(1);
+                self.screen_mut().x = x;
+                self.screen_mut().pending_wrap = false;
+                self.last_print = None;
+            }
+            0x09 => self.tab_forward(1),
+            0x0a | 0x0b | 0x0c => {
+                let blank = self.blank();
+                self.screen_mut().line_feed(blank);
+                self.last_print = None;
+            }
+            0x0d => {
+                self.screen_mut().x = 0;
+                self.screen_mut().pending_wrap = false;
+                self.last_print = None;
+            }
             _ => {}
         }
     }
 
     fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], ignore: bool, action: char) {
-        // Private and intermediate-bearing sequences (DEC modes, `CSI ? ... h`) belong to
-        // slice 2. Acting on them half-way would be worse than not acting at all.
-        if ignore || !intermediates.is_empty() {
-            return;
-        }
-
-        match action {
-            'm' => sgr::apply(&mut self.pen, params),
-            'A' => self.move_to(self.cursor_x, self.cursor_y.saturating_sub(arg(params, 0))),
-            'B' => self.move_to(self.cursor_x, self.cursor_y.saturating_add(arg(params, 0))),
-            'C' => self.move_to(self.cursor_x.saturating_add(arg(params, 0)), self.cursor_y),
-            'D' => self.move_to(self.cursor_x.saturating_sub(arg(params, 0)), self.cursor_y),
-            'E' => self.move_to(0, self.cursor_y.saturating_add(arg(params, 0))),
-            'F' => self.move_to(0, self.cursor_y.saturating_sub(arg(params, 0))),
-            'G' | '`' => self.move_to(arg(params, 0) - 1, self.cursor_y),
-            'd' => self.move_to(self.cursor_x, arg(params, 0) - 1),
-            'H' | 'f' => self.move_to(arg(params, 1) - 1, arg(params, 0) - 1),
-            _ => {}
-        }
+        self.csi(params, intermediates, ignore, action);
     }
-}
 
-/// Reads a CSI parameter, applying the VT rule that a missing or zero parameter means 1.
-///
-/// Never returning 0 is what makes `arg(..) - 1` safe at every call site above.
-fn arg(params: &Params, index: usize) -> u16 {
-    params
-        .iter()
-        .nth(index)
-        .and_then(|values| values.first().copied())
-        .filter(|value| *value != 0)
-        .unwrap_or(1)
+    fn esc_dispatch(&mut self, intermediates: &[u8], ignore: bool, byte: u8) {
+        self.esc(intermediates, ignore, byte);
+    }
 }

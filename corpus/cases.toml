@@ -62,11 +62,11 @@ note = "Slice 1: CUP absolute cursor movement."
 
 [[case]]
 name = "autowrap-phantom"
-expect = "diff"
+expect = "match"
 cols = 5
 rows = 3
 bytes = "abcdef"
-note = "Slice 2: writing the last column defers the wrap; ranked failure mode 5."
+note = "Slice 2: the DEC phantom state -- the last column defers its wrap until the next printable."
 
 [[case]]
 name = "wide-character"
@@ -82,23 +82,23 @@ note = "Slice 1: a grapheme cluster stays in one cell; ranked failure mode 2."
 
 [[case]]
 name = "erase-in-line"
-expect = "diff"
+expect = "match"
 bytes = "abcdef\u001B[2K"
-note = "Slice 2: erase operations."
+note = "Slice 2: EL, painting with the current background (BCE)."
 
 [[case]]
 name = "alternate-screen"
-expect = "diff"
+expect = "match"
 bytes = "\u001B[?1049h"
-note = "Slice 2: the alternate screen is a separate buffer."
+note = "Slice 2: the alternate screen is a separate buffer with its own cursor."
 
 [[case]]
 name = "scroll-past-bottom"
-expect = "diff"
+expect = "match"
 cols = 10
 rows = 3
 bytes = "1\r\n2\r\n3\r\n4\r\n5"
-note = "Slice 2: writing past the last row scrolls rather than clamping."
+note = "Slice 2: writing past the last row scrolls the region."
 
 # ---------------------------------------------------------------------------
 # Slice 1 additions. The gate is "diffs clean against the oracle on plain
@@ -159,3 +159,48 @@ name = "emoji-zwj-sequence"
 expect = "match"
 bytes = "\U0001F468\u200D\U0001F469\u200D\U0001F467!"
 note = "Verified 2026-07-28: DEC mode 2027 (grapheme cluster) is off by default, so Ghostty splits a ZWJ family emoji across cells exactly as the zero-width heuristic does. The heuristic is correct for default mode; full UAX #29 segmentation is only needed once mode 2027 is implemented, which is slice 2."
+
+# ---------------------------------------------------------------------------
+# Not built. Slice 2 closed every previous gap, and a corpus where nothing
+# differs cannot demonstrate that the harness detects disagreement -- so these
+# keep the other direction alive AND double as the specification for what is
+# next. Each one is a real, named omission, not a synthetic failure.
+# ---------------------------------------------------------------------------
+
+[[case]]
+name = "decaln-alignment-test"
+expect = "diff"
+bytes = "\u001B#8"
+note = "DECALN fills the screen with E. Sequences carrying a # intermediate are not dispatched."
+
+[[case]]
+name = "selective-erase"
+expect = "diff"
+bytes = "abcdef\u001B[?1K"
+note = "DECSED/DECSEL respect the protection attribute. Private erase variants are not dispatched."
+
+[[case]]
+name = "repeat-character"
+expect = "diff"
+bytes = "x\u001B[4b"
+note = "REP repeats the last graphic character. Not implemented."
+
+[[case]]
+name = "insert-replace-mode"
+expect = "diff"
+bytes = "abcdef\u001B[1G\u001B[4hXY"
+note = "IRM makes printing insert rather than overwrite. Not implemented."
+
+[[case]]
+name = "grapheme-cluster-mode-2027"
+expect = "diff"
+bytes = "\u001B[?2027h\U0001F468\u200D\U0001F469\u200D\U0001F467!"
+note = "With mode 2027 on, a ZWJ sequence is one cluster in one cell. The zero-width heuristic cannot do this; it needs real UAX #29 incremental segmentation."
+
+[[case]]
+name = "reverse-wraparound"
+expect = "diff"
+cols = 6
+rows = 3
+bytes = "\u001B[?45habcdefgh\u001B[1G\u0008"
+note = "Mode 45 lets backspace at column 0 wrap to the end of the previous row. Ghostty has it (modes.zig: reverse_wrap = 45); not implemented here. The first version of this case backspaced on row 0, where there is no previous row, so both sides agreed and it proved nothing."

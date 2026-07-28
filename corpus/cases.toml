@@ -999,11 +999,11 @@ note = "Terminal.zig:3766 rebuilds the tabstop table only when the column count 
 
 [[case]]
 name = "tab-at-the-last-column-keeps-the-pending-wrap"
-expect = "diff"
+expect = "match"
 cols = 5
 rows = 3
 bytes = "abcde\tZ"
-note = "horizontalTab (Terminal.zig:2111) is a bare cursorRight loop bounded by the scrolling region and never touches pending_wrap; at the last column it does nothing at all. tab_forward here clears pending_wrap unconditionally, so Z overwrites the e instead of wrapping."
+note = "horizontalTab (Terminal.zig:2111) is a bare cursorRight loop bounded by the scrolling region and never touches pending_wrap; at the last column it does nothing at all. Promoted by the S2 wave: tab_forward no longer touches pending_wrap, so Z wraps exactly as upstream does."
 
 [[case]]
 name = "cursor-up-clamps-at-the-scroll-region-top"

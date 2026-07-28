@@ -1,9 +1,15 @@
 //! Turning a published frame into pixels.
 //!
-//! A CPU rasterizer, deliberately. The atlas, the run-to-column mapping and the damage logic
-//! are all backend-agnostic; only the final blit is not, and putting the reference backend on
-//! the CPU is what lets "renders vim" be an assertion in CI instead of a screenshot somebody
-//! looked at once. A GPU backend drops in behind the same `Canvas` boundary.
+//! Two backends behind one `Surface` seam, with the CPU one as the reference. The atlas, the
+//! run-to-column mapping and the damage logic are all backend-agnostic; only the four
+//! operations behind `Surface` are not, and putting the reference on the CPU is what lets
+//! "renders vim" be an assertion in CI instead of a screenshot somebody looked at once.
+//!
+//! **The GPU backend is bit-identical to the CPU one, not merely close.** It has no oracle --
+//! there is no third implementation to ask who is right -- so the blend is specified as
+//! integer arithmetic and the shader runs the same expression, which makes agreement a
+//! property of the design rather than of luck. `tests/backend.rs` demands byte equality and
+//! proves it can fail on a one-unit error.
 //!
 //! Two things here are load-bearing beyond this slice.
 //!
@@ -23,12 +29,16 @@ pub mod atlas;
 pub mod canvas;
 pub mod color;
 pub mod font;
+pub mod gpu;
 pub mod renderer;
 pub mod shape;
+pub mod surface;
 
 pub use atlas::{Atlas, Glyph, GlyphKey};
 pub use canvas::Canvas;
 pub use color::{Drawn, Palette, Rgba};
 pub use font::{CellMetrics, FontError, FontStack, Resolved};
+pub use gpu::{GpuError, GpuSurface};
 pub use renderer::Renderer;
 pub use shape::{PositionedGlyph, Shaper, needs_shaping};
+pub use surface::{Surface, TruncatingSurface};

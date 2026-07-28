@@ -554,10 +554,139 @@ note = "NAMED OMISSION. A saved cursor sitting in the blanks past its row's text
 
 [[case]]
 name = "damage-a-write-dirties-only-its-row"
-expect = "diff"
+expect = "match"
 cols = 10
 rows = 3
 damage = true
 bytes = "top\r\nmiddle\r\nbottom"
 after = "\u001B[1;1HX"
-note = "NOT YET IMPLEMENTED, slice 5. The dirty flags are reset after `bytes`, so the damage reported is exactly what `after` changed: one cell on row 0. The core reports no damage at all yet, which is the gap this case exists to hold open."
+note = "The dirty flags are reset after `bytes`, so the damage reported is exactly what `after` changed. One cell on row 0, plus row 2 because the cursor LEFT it -- a cursor that changes rows damages both."
+
+[[case]]
+name = "damage-nothing-changed"
+expect = "match"
+cols = 10
+rows = 3
+damage = true
+bytes = "top\r\nmiddle\r\nbottom"
+note = "An empty second stream must report no damage at all, or every other damage case proves nothing."
+
+[[case]]
+name = "damage-cursor-move-alone"
+expect = "match"
+cols = 10
+rows = 3
+damage = true
+bytes = "top\r\nmiddle\r\nbottom"
+after = "\u001B[2;5H"
+note = "Moving the cursor writes no cell yet damages two rows: the one it left and the one it arrived at."
+
+[[case]]
+name = "damage-cursor-within-a-row-is-free"
+expect = "match"
+cols = 10
+rows = 3
+damage = true
+bytes = "top\r\nmiddle\r\nbottom"
+after = "\u001B[3;7H"
+note = "Moving WITHIN a row damages nothing. The row is the unit; the column is not."
+
+[[case]]
+name = "damage-cursor-there-and-back"
+expect = "match"
+cols = 10
+rows = 3
+damage = true
+bytes = "top\r\nmiddle\r\nbottom"
+after = "\u001B[1;1H\u001B[3;1H"
+note = "A cursor that leaves a row and returns still leaves the row it passed through dirty, so damage is marked per move rather than derived from where it started and ended."
+
+[[case]]
+name = "damage-sgr-alone-is-free"
+expect = "match"
+cols = 10
+rows = 3
+damage = true
+bytes = "top\r\nmiddle\r\nbottom"
+after = "\u001B[31m"
+note = "Changing the pen touches no cell."
+
+[[case]]
+name = "damage-erase-display-is-full"
+expect = "match"
+cols = 10
+rows = 3
+damage = true
+bytes = "top\r\nmiddle\r\nbottom"
+after = "\u001B[2J"
+note = "A COMPLETE erase is a whole-frame event, not a row-level one."
+
+[[case]]
+name = "damage-erase-to-end-is-partial"
+expect = "match"
+cols = 10
+rows = 3
+damage = true
+bytes = "top\r\nmiddle\r\nbottom"
+after = "\u001B[2;3H\u001B[0J"
+note = "ED 0 leaves content behind, so its per-row damage is real information. Only ED 2 is Full."
+
+[[case]]
+name = "damage-erase-line-is-partial"
+expect = "match"
+cols = 10
+rows = 3
+damage = true
+bytes = "top\r\nmiddle\r\nbottom"
+after = "\u001B[2;1H\u001B[2K"
+note = "Erasing one line damages that line, plus the row the cursor left."
+
+[[case]]
+name = "damage-scroll-is-partial-not-full"
+expect = "match"
+cols = 10
+rows = 3
+damage = true
+bytes = "top\r\nmiddle\r\nbottom"
+after = "\u001B[3;1H\r\nnew"
+note = "A scroll dirties every row and is STILL partial: the distinction is not how many rows changed but whether per-row information means anything."
+
+[[case]]
+name = "damage-alt-screen-switch-is-full"
+expect = "match"
+cols = 10
+rows = 3
+damage = true
+bytes = "top\r\nmiddle\r\nbottom"
+after = "\u001B[?1049h"
+note = "Switching screens rebuilds everything. Also pins that entering the alternate screen leaves the cursor where it was rather than homing it."
+
+[[case]]
+name = "damage-ris-is-full"
+expect = "match"
+cols = 10
+rows = 3
+damage = true
+bytes = "top\r\nmiddle\r\nbottom"
+after = "\u001Bc"
+note = "RIS rebuilds everything."
+
+[[case]]
+name = "damage-wide-char"
+expect = "match"
+cols = 10
+rows = 3
+damage = true
+bytes = "top\r\nmiddle\r\nbottom"
+after = "\u001B[2;1H世"
+note = "A wide cell damages its row like any other write."
+
+[[case]]
+name = "damage-rewriting-identical-text"
+expect = "match"
+cols = 10
+rows = 3
+damage = true
+bytes = "top\r\nmiddle\r\nbottom"
+after = "\u001B[1;1Htop"
+note = "Damage is write-based, not a content diff: writing the same text over itself still dirties the row."

@@ -11,9 +11,17 @@ A terminal core in Rust implementing the C ABI Ghostty already publishes as
 **`libghostty-vt`**, so it can drop in behind an existing native GUI. The point is control
 and craft, not speed — Rust and Zig are peers here and there is no performance win waiting.
 
-The consumer is **RUUAH** (`../ruuah`, branch `ruuah`, config in `RUUAH.md` **not**
-`CLAUDE.md`). RUUAH's Swift app links `libghostty-vt` today; if ruuah-vt ever wins, RUUAH swaps
-one link flag.
+**There is no consumer yet, and the note that used to sit here was wrong.** Measured
+2026-07-28: RUUAH's Swift app calls **99 `ghostty_*` symbols and not one of them is a VT-core
+symbol** -- they are all app-level (`ghostty_app_*`, `ghostty_surface_*`, `ghostty_config_*`,
+`ghostty_inspector_*`). Ghostty's own app never routes through `src/terminal/c/` either; that
+layer is reached only by `src/lib_vt.zig`, which exists for external embedders. So "RUUAH swaps
+one link flag" was never true: swapping ruuah-vt in behind RUUAH's existing Swift app would
+mean reimplementing the *application* ABI, which is a different project.
+
+What is true, and what slice 6 makes testable: ruuah-vt can export the same C ABI
+`libghostty-vt` publishes, so **something built against that ABI** can link either. The planned
+consumer is a minimal Swift host (after slice 6), not RUUAH as it stands.
 
 **The one architectural rule: the core is a pure, deterministic state machine.** Bytes in,
 grid mutations out. No PTY, no GPU, no clock, no I/O. Everything else hangs off this,
@@ -440,6 +448,7 @@ about sixty lines we own. **`cargo fmt --all` reformats the whole repo**, which 
 rustfmt-clean; format only the files a change actually touches, or the diff drowns.
 
 ```sh
+./scripts/build-lib.sh         # build the shipped libruuah-vt.a and verify its 13 exports
 ./scripts/build-oracle.sh      # build libghostty-vt into vendor/ (the core's oracle)
 ./scripts/fetch-ucd.sh         # vendor the Unicode bidi suite (the reordering oracle) (../ruuah stays clean)
 cargo test --workspace         # 32 tests
@@ -483,6 +492,14 @@ and `lib/`, bypassing the build script).
 - `crates/ghostty/tests/semantic.rs` — what the oracle is known to do with OSC 133, measured.
 - `crates/render/tests/caret.rs` — where the caret lands, found by diffing shown against
   hidden, plus the control that pins the old logical placement.
+- `crates/abi-types/src/lib.rs` — the C types this library publishes. Depends on nothing so
+  it can be linked beside the oracle without a symbol clash.
+- `crates/abi/src/exports.rs` — the C entry points, thin on purpose.
+- `crates/abi/tests/differential.rs` — the whole corpus driven through the C ABI and compared
+  against the Rust API, plus the wrong-row control.
+- `crates/ghostty/tests/abi_parity.rs` — our published layouts against libghostty-vt's own
+  `ghostty_type_json()`. Caught a real `GhosttyPoint` size bug on its first run.
+- `scripts/build-lib.sh` — builds `libruuah-vt.a` and verifies its exports.
 - `crates/ghostty/tests/abi_layout.rs` — the ABI pin. Read before touching `sys`.
 - `crates/ghostty/tests/oracle.rs` — what the oracle is known to read correctly.
 - Conformance canon (not yet wired in): xterm ctlseqs, DEC STD 070, esctest2 (the CI

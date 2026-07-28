@@ -99,7 +99,43 @@ pub fn diff(oracle: &Snapshot, candidate: &Snapshot) -> Vec<Difference> {
         ));
     }
 
+    diff_damage(oracle, candidate, &mut out);
+
     out
+}
+
+/// Compares what each side says a renderer would have to repaint.
+///
+/// Only when both sides observed it. A case that does not ask for damage leaves `None` on
+/// both, and one that does gets it from both, so a mismatch here is a real disagreement
+/// rather than a case half-configured.
+fn diff_damage(oracle: &Snapshot, candidate: &Snapshot, out: &mut Vec<Difference>) {
+    let (Some(o), Some(c)) = (&oracle.damage, &candidate.damage) else {
+        if oracle.damage.is_some() != candidate.damage.is_some() {
+            out.push(Difference::new(
+                "damage.observed",
+                oracle.damage.is_some(),
+                candidate.damage.is_some(),
+            ));
+        }
+        return;
+    };
+
+    if o.global != c.global {
+        out.push(Difference::new(
+            "damage.global",
+            format!("{:?}", o.global),
+            format!("{:?}", c.global),
+        ));
+    }
+    if o.rows.len() != c.rows.len() {
+        out.push(Difference::new("damage.rows.len", o.rows.len(), c.rows.len()));
+    }
+    for (y, (o_row, c_row)) in o.rows.iter().zip(c.rows.iter()).enumerate() {
+        if o_row != c_row {
+            out.push(Difference::new(&format!("damage.row[{y}]"), *o_row, *c_row));
+        }
+    }
 }
 
 fn diff_cursor(oracle: &Snapshot, candidate: &Snapshot, out: &mut Vec<Difference>) {
@@ -238,6 +274,7 @@ mod tests {
                 })
                 .collect(),
             history: Vec::new(),
+            damage: None,
         }
     }
 

@@ -551,3 +551,13 @@ bytes = "ab\r\ncdef\u001B7\u001B[3;1Hz"
 resize = { cols = 5, rows = 3 }
 after = "\u001B8Q"
 note = "NAMED OMISSION. A saved cursor sitting in the blanks past its row's text is clamped by upstream against the column its sequential writer happens to be parked on (PageList.zig reflowRow, the p.x >= cols_len branch) -- a stale value carried from the PREVIOUS line. Measured 2026-07-28: Q lands at column 2 there and at column 4 here. Reproducing it means emulating that writer's leftover state; the adjacent upstream branch calls this whole area unspecified."
+
+[[case]]
+name = "damage-a-write-dirties-only-its-row"
+expect = "diff"
+cols = 10
+rows = 3
+damage = true
+bytes = "top\r\nmiddle\r\nbottom"
+after = "\u001B[1;1HX"
+note = "NOT YET IMPLEMENTED, slice 5. The dirty flags are reset after `bytes`, so the damage reported is exactly what `after` changed: one cell on row 0. The core reports no damage at all yet, which is the gap this case exists to hold open."

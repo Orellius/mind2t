@@ -63,6 +63,31 @@ pub fn diff(oracle: &Snapshot, candidate: &Snapshot) -> Vec<Difference> {
 
     diff_cursor(oracle, candidate, &mut out);
 
+    // History length first: a shorter or longer history shifts every row, so comparing rows
+    // pairwise after a length mismatch reports the shift N times instead of once.
+    if oracle.history.len() != candidate.history.len() {
+        out.push(Difference::new(
+            "history.len",
+            oracle.history.len(),
+            candidate.history.len(),
+        ));
+    } else {
+        for (y, (o_row, c_row)) in oracle
+            .history
+            .iter()
+            .zip(candidate.history.iter())
+            .enumerate()
+        {
+            diff_row_at(
+                &format!("history[{y}]"),
+                &format!("history_cell[{y},"),
+                o_row,
+                c_row,
+                &mut out,
+            );
+        }
+    }
+
     for (y, (o_row, c_row)) in oracle.grid.iter().zip(candidate.grid.iter()).enumerate() {
         diff_row(y, o_row, c_row, &mut out);
     }
@@ -99,48 +124,60 @@ fn diff_cursor(oracle: &Snapshot, candidate: &Snapshot, out: &mut Vec<Difference
 }
 
 fn diff_row(y: usize, oracle: &Row, candidate: &Row, out: &mut Vec<Difference>) {
+    diff_row_at(&format!("row[{y}]"), &format!("cell[{y},"), oracle, candidate, out)
+}
+
+/// Compares one row under a caller-supplied path prefix, so active-area rows and history
+/// rows produce differently-located differences from the same code.
+fn diff_row_at(
+    row_path: &str,
+    cell_prefix: &str,
+    oracle: &Row,
+    candidate: &Row,
+    out: &mut Vec<Difference>,
+) {
     if oracle.wrap != candidate.wrap {
         out.push(Difference::new(
-            format!("row[{y}].wrap"),
+            format!("{row_path}.wrap"),
             oracle.wrap,
             candidate.wrap,
         ));
     }
     if oracle.wrap_continuation != candidate.wrap_continuation {
         out.push(Difference::new(
-            format!("row[{y}].wrap_continuation"),
+            format!("{row_path}.wrap_continuation"),
             oracle.wrap_continuation,
             candidate.wrap_continuation,
         ));
     }
     for (x, (o_cell, c_cell)) in oracle.cells.iter().zip(candidate.cells.iter()).enumerate() {
-        diff_cell(y, x, o_cell, c_cell, out);
+        diff_cell(&format!("{cell_prefix}{x}]"), o_cell, c_cell, out);
     }
     if oracle.cells.len() != candidate.cells.len() {
         out.push(Difference::new(
-            format!("row[{y}].cells.len"),
+            format!("{row_path}.cells.len"),
             oracle.cells.len(),
             candidate.cells.len(),
         ));
     }
 }
 
-fn diff_cell(y: usize, x: usize, oracle: &Cell, candidate: &Cell, out: &mut Vec<Difference>) {
+fn diff_cell(path: &str, oracle: &Cell, candidate: &Cell, out: &mut Vec<Difference>) {
     if oracle.text != candidate.text {
         out.push(Difference::new(
-            format!("cell[{y},{x}].text"),
+            format!("{path}.text"),
             quote(&oracle.text),
             quote(&candidate.text),
         ));
     }
     if oracle.wide != candidate.wide {
         out.push(Difference::new(
-            format!("cell[{y},{x}].wide"),
+            format!("{path}.wide"),
             format!("{:?}", oracle.wide),
             format!("{:?}", candidate.wide),
         ));
     }
-    diff_style(&format!("cell[{y},{x}].style"), &oracle.style, &candidate.style, out);
+    diff_style(&format!("{path}.style"), &oracle.style, &candidate.style, out);
 }
 
 /// Reports the whole style as one difference rather than one per attribute: a single
@@ -200,7 +237,56 @@ mod tests {
                     cells: (0..cols).map(|_| Cell::blank()).collect(),
                 })
                 .collect(),
+            history: Vec::new(),
         }
+    }
+
+    fn row_of(cols: u16, text: &str) -> Row {
+        Row {
+            wrap: false,
+            wrap_continuation: false,
+            cells: (0..cols)
+                .map(|x| Cell {
+                    text: text.chars().nth(usize::from(x)).map(String::from).unwrap_or_default(),
+                    ..Cell::blank()
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn history_length_short_circuits_instead_of_shifting_every_row() {
+        // A history that is one row longer shifts every row against its partner. Reporting
+        // that as N cell differences buries the one real cause.
+        let mut a = snapshot(4, 2);
+        let mut b = a.clone();
+        a.history = vec![row_of(4, "old"), row_of(4, "new")];
+        b.history = vec![row_of(4, "new")];
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "history.len");
+    }
+
+    #[test]
+    fn a_history_cell_is_located_in_history_not_the_active_area() {
+        let mut a = snapshot(4, 2);
+        let mut b = a.clone();
+        a.history = vec![row_of(4, "abc")];
+        b.history = vec![row_of(4, "abX")];
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "history_cell[0,2].text");
+        assert_eq!(found[0].oracle, "'c'");
+    }
+
+    #[test]
+    fn identical_history_is_not_reported() {
+        let mut a = snapshot(4, 2);
+        a.history = vec![row_of(4, "same")];
+        let b = a.clone();
+        assert_eq!(diff(&a, &b), vec![]);
     }
 
     #[test]

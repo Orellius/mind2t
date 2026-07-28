@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use ruuah_vt_snapshot::{Row, Style};
 
 use crate::cell::Cell;
+use crate::page::{HistoryCell, HistoryRow};
 use crate::style::{StyleId, StyleTable};
 
 /// Per-row state that is not per-cell. Populated from slice 2 onward; carried now because
@@ -90,7 +91,32 @@ impl Grid {
     }
 
     pub fn intern_style(&mut self, style: Style) -> StyleId {
+        // Compact BEFORE interning, never after: compaction renumbers, so an ID handed out
+        // first would point at the wrong style the moment the table was rebuilt.
+        if self.styles.len() >= self.compaction_threshold() {
+            self.compact_styles();
+        }
         self.styles.intern(style)
+    }
+
+    /// The active area can reference at most one style per cell, so a table larger than that
+    /// is provably holding entries nothing points at.
+    fn compaction_threshold(&self) -> usize {
+        (usize::from(self.cols) * usize::from(self.rows)).max(256)
+    }
+
+    /// Rebuilds the style table around the styles cells actually reference.
+    pub fn compact_styles(&mut self) {
+        let mut live: Vec<StyleId> = self.cells.iter().map(|cell| cell.style_id).collect();
+        live.sort_unstable();
+        live.dedup();
+
+        let remap = self.styles.compact(&live);
+        for cell in &mut self.cells {
+            if let Some(&new_id) = remap.get(&cell.style_id) {
+                cell.style_id = new_id;
+            }
+        }
     }
 
     pub fn style(&self, id: StyleId) -> Style {
@@ -246,6 +272,32 @@ impl Grid {
         text
     }
 
+    /// Hands a row over for storage in history, resolving every style.
+    ///
+    /// Style IDs cannot travel: they index this grid's table, and a page has its own.
+    pub fn extract_row(&self, y: u16) -> HistoryRow {
+        let cells = (0..self.cols)
+            .map(|x| {
+                let index = self.index(x, y);
+                let cell = self.cell(index);
+                HistoryCell {
+                    codepoint: cell.codepoint,
+                    wide: cell.wide,
+                    style: self.style(cell.style_id),
+                    graphemes: if cell.flags.has_grapheme() {
+                        self.graphemes.get(&index).cloned().unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    },
+                }
+            })
+            .collect();
+        HistoryRow {
+            cells,
+            meta: self.row_meta(y),
+        }
+    }
+
     /// Renders the grid into the implementation-neutral comparison type.
     pub fn to_rows(&self) -> Vec<Row> {
         (0..self.rows)
@@ -279,6 +331,7 @@ impl Grid {
 mod tests {
     use super::*;
     use crate::cell::{CellFlags, Wide};
+    use ruuah_vt_snapshot::Color;
 
     fn cell_with(codepoint: char) -> Cell {
         Cell {
@@ -339,6 +392,60 @@ mod tests {
         let mut grid = Grid::new(4, 1);
         grid.push_grapheme(0, '\u{301}');
         assert_eq!(grid.cell_text(0), "");
+    }
+
+    #[test]
+    fn the_style_table_stays_bounded_under_churn() {
+        // 5000 distinct styles through a 16-cell grid. Without compaction the table would
+        // hold all 5000 forever; the grid can only ever reference 16 of them.
+        let mut grid = Grid::new(4, 4);
+        for i in 0..5000u16 {
+            let style = Style {
+                fg: Color::Palette((i % 256) as u8),
+                bold: i % 2 == 0,
+                italic: i % 3 == 0,
+                ..Style::DEFAULT
+            };
+            let id = grid.intern_style(style);
+            let index = usize::from(i) % 16;
+            grid.write(
+                index,
+                Cell {
+                    codepoint: u32::from(b'x'),
+                    style_id: id,
+                    ..Cell::BLANK
+                },
+            );
+        }
+        assert!(
+            grid.styles.len() <= 512,
+            "style table grew to {}",
+            grid.styles.len()
+        );
+    }
+
+    #[test]
+    fn compaction_preserves_what_every_cell_renders_as() {
+        let mut grid = Grid::new(4, 1);
+        let red = Style {
+            fg: Color::Palette(1),
+            ..Style::DEFAULT
+        };
+        let id = grid.intern_style(red);
+        grid.write(
+            0,
+            Cell {
+                codepoint: u32::from(b'a'),
+                style_id: id,
+                ..Cell::BLANK
+            },
+        );
+
+        grid.compact_styles();
+
+        let rows = grid.to_rows();
+        assert_eq!(rows[0].cells[0].style, red, "the cell still renders red");
+        assert_eq!(rows[0].cells[1].style, Style::DEFAULT);
     }
 
     #[test]

@@ -193,9 +193,8 @@ impl Renderer {
             let x = left + placed.x.round() as i32 + glyph.left;
             let y = baseline - placed.y.round() as i32 - glyph.top;
             let (width, height) = (glyph.width, glyph.height);
-            let coverage = glyph.coverage.clone();
             self.canvas
-                .blend_mask(x, y, width, height, &coverage, color);
+                .blend_mask(x, y, width, height, &glyph.coverage, color);
         }
     }
 

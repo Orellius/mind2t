@@ -32,6 +32,9 @@ pub struct Grid {
     rows: u16,
     cells: Vec<Cell>,
     row_meta: Vec<RowMeta>,
+    /// Per-row damage since it was last cleared. A renderer repaints exactly these rows,
+    /// and the corpus compares them against what libghostty-vt would have repainted.
+    dirty: Vec<bool>,
     /// Continuation codepoints only; the first codepoint of a cluster lives in the cell.
     /// Keyed by flat cell index, and only present when the cell's `has_grapheme` bit is set.
     graphemes: HashMap<usize, Vec<char>>,
@@ -45,6 +48,7 @@ impl Grid {
             rows,
             cells: vec![Cell::BLANK; usize::from(cols) * usize::from(rows)],
             row_meta: vec![RowMeta::default(); usize::from(rows)],
+            dirty: vec![false; usize::from(rows)],
             graphemes: HashMap::new(),
             styles: StyleTable::new(),
         }
@@ -52,6 +56,21 @@ impl Grid {
 
     pub fn cols(&self) -> u16 {
         self.cols
+    }
+
+    /// Marks a row as needing a repaint.
+    pub fn mark_dirty(&mut self, y: u16) {
+        if let Some(flag) = self.dirty.get_mut(usize::from(y)) {
+            *flag = true;
+        }
+    }
+
+    pub fn dirty_rows(&self) -> &[bool] {
+        &self.dirty
+    }
+
+    pub fn clear_dirty(&mut self) {
+        self.dirty.fill(false);
     }
 
     pub fn rows(&self) -> u16 {
@@ -80,6 +99,12 @@ impl Grid {
             self.graphemes.remove(&index);
         }
         self.cells[index] = cell;
+        if self.cols > 0 {
+            let y = index / usize::from(self.cols);
+            if let Some(flag) = self.dirty.get_mut(y) {
+                *flag = true;
+            }
+        }
     }
 
     /// Appends a zero-width codepoint to an existing cell's cluster.
@@ -155,6 +180,7 @@ impl Grid {
         if let Some(meta) = self.row_meta_mut(y) {
             *meta = RowMeta::default();
         }
+        self.mark_dirty(y);
     }
 
     /// Shifts cells on a row right from `at_x`, discarding what falls off the end (ICH).
@@ -253,6 +279,7 @@ impl Grid {
         if let Some(meta) = self.row_meta_mut(y) {
             *meta = row.meta;
         }
+        self.mark_dirty(y);
     }
 
     /// Relocates one cell along with its grapheme continuations.
@@ -288,6 +315,7 @@ impl Grid {
         if let Some(target) = self.row_meta_mut(to_y) {
             *target = meta;
         }
+        self.mark_dirty(to_y);
     }
 
     /// The full grapheme cluster in a cell, as the snapshot contract wants it: the primary

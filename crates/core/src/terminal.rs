@@ -10,7 +10,7 @@
 //! Test strategy: measured against libghostty-vt by the differential corpus rather than by
 //!   restating expected cell contents here.
 
-use ruuah_vt_snapshot::{Cursor, Damage, Screen as SnapshotScreen, Snapshot, Style};
+use ruuah_vt_snapshot::{Cursor, Damage, Dirty, Screen as SnapshotScreen, Snapshot, Style};
 use unicode_width::UnicodeWidthChar;
 use vte::{Params, Perform};
 
@@ -49,15 +49,14 @@ impl Terminal {
     }
 
     /// Discards accumulated damage, starting a fresh observation window.
-    ///
-    /// A no-op until damage is tracked. Present now because the harness needs the shape to
-    /// be expressible before the behaviour exists -- that is the whole point of extending it
-    /// first, and a corpus case records the gap as a disagreement in the meantime.
-    pub fn clear_damage(&mut self) {}
+    pub fn clear_damage(&mut self) {
+        self.state.full_damage = false;
+        self.state.screen_mut().grid.clear_dirty();
+    }
 
-    /// What a renderer would have to repaint. `None` until damage is tracked.
+    /// What a renderer would have to repaint since damage was last cleared.
     pub fn damage(&self) -> Option<Damage> {
-        None
+        Some(self.state.damage())
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -89,6 +88,12 @@ pub(crate) struct State {
     /// cluster it belongs to. Cleared by anything that moves the cursor.
     pub(crate) last_print: Option<usize>,
     pub(crate) max_scrollback: usize,
+    /// Something changed that no per-row flag can express, so the whole frame is stale.
+    ///
+    /// Four triggers, each confirmed in upstream's `Terminal.zig` as the places that set its
+    /// `dirty.clear` bit: a complete erase (ED 2, but NOT ED 0/1/3), a resize, a screen
+    /// switch in either direction, and RIS. Measured the same way from the outside.
+    pub(crate) full_damage: bool,
 }
 
 impl State {
@@ -106,7 +111,38 @@ impl State {
             cursor_visible: true,
             last_print: None,
             max_scrollback,
+            full_damage: false,
         }
+    }
+
+    /// Flags the whole frame as stale, and every row with it.
+    ///
+    /// Both halves: upstream rebuilds the entire render state for these events, so every row
+    /// comes back dirty as well as the global flag. Setting only the global one would report
+    /// a clean row set for a frame that is entirely stale.
+    pub(crate) fn mark_full_damage(&mut self) {
+        self.full_damage = true;
+        let rows = self.screen().rows();
+        for y in 0..rows {
+            self.screen_mut().grid.mark_dirty(y);
+        }
+    }
+
+    /// What a renderer would have to repaint.
+    ///
+    /// `Partial` whenever any row is dirty, `Full` only for the whole-frame triggers. A
+    /// scroll dirties every row and is still `Partial`: the distinction is not "how many
+    /// rows" but "is per-row information meaningful at all".
+    fn damage(&self) -> Damage {
+        let rows: Vec<bool> = self.screen().grid.dirty_rows().to_vec();
+        let global = if self.full_damage {
+            Dirty::Full
+        } else if rows.iter().any(|dirty| *dirty) {
+            Dirty::Partial
+        } else {
+            Dirty::None
+        };
+        Damage { global, rows }
     }
 
     pub(crate) fn screen(&self) -> &Screen {
@@ -308,12 +344,16 @@ impl State {
 
         self.tabs = TabStops::new(cols);
         self.last_print = None;
+        // After the grids are rebuilt, so the whole NEW geometry is marked rather than the
+        // old row count. Upstream sets the same clear bit from its own resize.
+        self.mark_full_damage();
     }
 
     pub(crate) fn full_reset(&mut self) {
         let cols = self.screen().cols();
         let rows = self.screen().rows();
         *self = State::new(cols, rows, self.max_scrollback);
+        self.mark_full_damage();
     }
 }
 

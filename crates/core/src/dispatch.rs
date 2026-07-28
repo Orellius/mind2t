@@ -52,11 +52,20 @@ impl State {
             if save {
                 self.save_cursor();
             }
+            // Where the cursor sits before the switch, read while the primary is still
+            // active. Clearing the alternate buffer does NOT home the cursor: measured
+            // against libghostty-vt 2026-07-28, entering the alternate screen leaves it
+            // exactly where it was. `reset` homes it, so it is put back afterwards.
+            let (x, y) = (self.screen().x, self.screen().y);
             self.active = Active::Alternate;
+            self.mark_full_damage();
             let blank = self.blank();
             self.alternate.reset(blank);
+            self.alternate.x = x.min(self.alternate.cols().saturating_sub(1));
+            self.alternate.y = y.min(self.alternate.rows().saturating_sub(1));
         } else {
             self.active = Active::Primary;
+            self.mark_full_damage();
             if save {
                 self.restore_cursor();
             }
@@ -138,7 +147,15 @@ impl State {
                 }
             }
 
-            'J' => self.screen_mut().erase_in_display(zero_arg(params, 0), blank),
+            'J' => {
+                let mode = zero_arg(params, 0);
+                // Only a COMPLETE erase is a whole-frame event. ED 0 and ED 1 leave content
+                // behind, so their per-row damage is real information; measured 2026-07-28.
+                if mode == 2 {
+                    self.mark_full_damage();
+                }
+                self.screen_mut().erase_in_display(mode, blank);
+            }
             'K' => self.screen_mut().erase_in_line(zero_arg(params, 0), blank),
             'X' => self.screen_mut().erase_chars(arg(params, 0), blank),
             '@' => self.screen_mut().insert_chars(arg(params, 0), blank),

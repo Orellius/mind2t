@@ -8,6 +8,12 @@
 # `bytes` is a TOML basic string, so control characters use TOML escapes.
 # ESC is \u001B.
 
+# `declared_cases` is the number of cases this file must contain. `load` refuses a
+# mismatch, because a corpus that silently loses cases still reports a confident verdict
+# over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
+# and exited 0. Adding or removing a case means updating this number in the same edit.
+declared_cases = 121
+
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
 # prove the harness can detect agreement rather than only ever crying difference.

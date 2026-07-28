@@ -104,6 +104,20 @@ open bugs here.
   bindings can be trusted rather than hoped about. `tests/abi_layout.rs` compares every
   offset this crate touches against it, which also catches the vendored headers drifting
   from the linked archive — something bindgen alone cannot see.
+- **Extend the harness BEFORE building the slice. Three for three so far.** Every slice has
+  had a blind spot that would have reported MATCH for a wrong implementation, and each was
+  found by asking "can the harness even see this?" before writing code:
+  - **Slice 2** — background-colour erase was invisible. Ghostty keeps a cell with only a
+    background out of the style map, so `grid_ref_style` reported Default for a red cell. An
+    erase ignoring BCE would have passed.
+  - **Slice 3** — scrollback was invisible. The oracle ran `max_scrollback = 0` and `Snapshot`
+    held only the active area, so any history implementation would have passed.
+  - **Slice 4 (next)** — resize is not expressible at all: `Case` has no resize field and
+    neither `Terminal` has a `resize` method. The oracle side exists
+    (`ghostty_terminal_resize(term, cols, rows, cell_w, cell_h)`); the harness does not.
+  Treat this as the project's dominant risk, not a coincidence. The differential harness only
+  catches what the `Snapshot` represents, so the first question of every slice is what new
+  observable it needs.
 - **A corpus `expect = "diff"` is a to-do, not a pass.** When ruuah-vt implements that behaviour
   the case *fails*, and it gets promoted to `expect = "match"`. That is the mechanism, not a
   nuisance: a harness that cannot be wrong is not evidence. `tests/corpus.rs` additionally

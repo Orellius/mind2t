@@ -25,7 +25,7 @@ pub mod packed;
 pub mod publish;
 pub mod seqlock;
 
-pub use frame::{Direction, Frame, FrameCursor, Run, Runs};
+pub use frame::{Direction, Frame, FrameCursor, Run, Runs, cell_width};
 pub use packed::{CLUSTER_BYTES, PackedCell, pack_style, unpack_style};
 pub use publish::Publisher;
 pub use seqlock::{CapacityExceeded, FrameReader, FrameWriter, Publish, ReadOutcome, channel};

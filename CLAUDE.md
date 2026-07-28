@@ -25,7 +25,29 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
-**Slices 0 through 4 are done. Slice 5 is in progress: steps 1, 2 and 3 of 5 landed.**
+**Slices 0 through 4 are done. Slice 5 is in progress: all five acceptance criteria are met;
+what remains is the GPU backend, which is slice 6 territory.**
+
+Slice 5 step 4, `[tested]`: **it renders vim.** `ruuah-vt-render` is a CPU rasterizer -- glyph
+atlas, xterm palette, damage-driven redraw -- built on `swash`. The backend is on the CPU
+deliberately: the atlas, the run-to-column mapping and the damage logic are all
+backend-agnostic, and only the final blit is not, so putting the reference backend here is
+what lets "renders vim" be an assertion in CI rather than a screenshot somebody looked at
+once. 168 tests green; corpus unchanged.
+
+The harness went first again and the blind spot was, again, total -- nothing in the project
+could see a **pixel**, so a renderer that drew nothing at all satisfied every existing test.
+The invariant that closes it: **painting a sequence of frames incrementally must produce the
+same bytes as painting the final frame in full.** One equality covers a row that changed
+without being marked, a row marked but not repainted, stale pixels from a shortened line, and
+a glyph overhanging into a row that is never redrawn. Proven able to fail by
+`a_renderer_that_skips_a_stale_row_is_caught`, which runs the identical load through a
+renderer that declines one row.
+
+Criterion 5 is satisfied structurally rather than by promise: every column the renderer paints
+comes from `Run::column_of`. Hebrew reaches the canvas today through the fallback font, in
+logical order, and `hebrew_is_drawn_in_logical_order_today_and_slice_5_5_must_flip_this` pins
+that by pixels -- when 5.5 reorders, that test fails, and the failure is the feature.
 
 Slice 5 step 3, `[tested]`: the frame channel and the pty host, in two new crates.
 `ruuah-vt-frame` publishes a whole frame from the parse thread to a renderer through a
@@ -50,9 +72,9 @@ the cursor's contribution to both, measured against the oracle's `GhosttyRenderS
 Slice 5 step 1, `[tested]`: the harness learned to see damage at all. `Snapshot` represented
 neither dirty layer, so any damage implementation would have reported MATCH.
 
-Remaining in slice 5: **step 4** (glyph atlas + damage-driven redraw; done = renders vim) and
-**step 5** (the renderer consumes visual runs). Step 5's seam is already built and tested --
-see the `Run` / `Direction` note below -- so step 4 draws through it from its first line.
+Next: **slice 5.5, display bidi.** Everything under it is now in place and measured -- the
+cluster survives to pixels, the fallback font works, the run builder is the only thing that
+has to change, and there is a pixel-level test that must flip when it does.
 
 Slice 4, `[tested]`: reflow. Resize rejoins soft-wrapped rows into logical lines, re-splits at
 the new width, and maps the cursor through the transform. Scrollback takes part -- a logical
@@ -135,8 +157,7 @@ peak memory during a resize is roughly double the scrollback. Resize is a human-
 which is what makes that trade acceptable; a streaming page-at-a-time reflow is the fix if it
 ever stops being.
 
-Next: **slice 5 step 4 — the glyph atlas and damage-driven redraw.** Done = renders vim. Bidi
-lives in the renderer if it lives anywhere, and never in the core (see below).
+Bidi lives in the renderer if it lives anywhere, and never in the core (see below).
 
 ## Project rules & gotchas
 
@@ -241,6 +262,21 @@ lives in the renderer if it lives anywhere, and never in the core (see below).
   a discarded frame into a fault. Sixteen bytes holds a base letter plus roughly seven
   combining marks, which covers Hebrew niqqud with room over; a longer cluster (multi-person
   emoji ZWJ sequences) is **flagged** via `PackedCell::is_truncated`, never silently shortened.
+- **No single macOS system font can draw this terminal.** Measured 2026-07-28 by walking every
+  font in `/System/Library/Fonts` and its `Supplemental`: Menlo maps Hebrew to glyph 0, and
+  Arial Hebrew maps `'A'` to glyph 0. Font fallback is therefore not an enhancement to add
+  later — it is required for the project's stated goal, which is why `FontStack` is plural
+  from its first commit and the atlas keys on **(font, glyph)** rather than glyph. A glyph id
+  without its font is meaningless, and collapsing the two would draw Hebrew using Menlo's
+  glyph numbering. `font.rs` unit-tests both coverage gaps, so a font change on the machine
+  surfaces as a failing test instead of tofu on screen.
+- **The renderer has no shaping yet, and that is the honest gap.** A cluster's codepoints are
+  rasterized individually and drawn at one pen position, which is right for Latin and only
+  approximate for combining marks: a niqqud lands where the font's default bearings put it,
+  not where GPOS mark attachment says it belongs. Real stacking is slice 5.5. `swash` was
+  chosen partly because it also does shaping, so 5.5 adds no new dependency; `cosmic-text`
+  pairs HarfRust with swash if its shaper turns out to be the better one, and 5.5 has a
+  conformance oracle to decide that with rather than a preference.
 - **The shipped artifact is `libruuah-vt.a`, but cargo cannot name it that.** Measured
   2026-07-28: a package called `libruuah-vt` emits `lib`**`lib`**`ruuah_vt.a`, and
   `[lib] name = "ruuah-vt"` is a hard cargo error — *"library target names cannot contain
@@ -277,8 +313,9 @@ overnight is indistinguishable from a regression you caused.
 
 Rust 1.93.1, edition 2024, resolver 3. `cargo test --workspace` is the gate.
 
-Dependencies stay deliberately few: `vte`, `unicode-width`, `thiserror`, `serde`, `toml`, and
-`rustix` (slice 5 step 3). `portable-pty` was evaluated for the pty host and rejected — on
+Dependencies stay deliberately few: `vte`, `unicode-width`, `thiserror`, `serde`, `toml`,
+`rustix` (slice 5 step 3) and `swash` (step 4, font parsing + rasterization + the shaper 5.5
+will need). `portable-pty` was evaluated for the pty host and rejected — on
 macOS it costs thirteen crates including `serial2`, a serial-port library, and a second
 `thiserror` major version alongside the workspace's. `rustix` costs three and the pty dance is
 about sixty lines we own. **`cargo fmt --all` reformats the whole repo**, which was never
@@ -314,6 +351,12 @@ and `lib/`, bypassing the build script).
 - `crates/frame/tests/tearing.rs` — the concurrency harness, including the control that proves
   it can fail.
 - `crates/pty/src/host.rs` — the only I/O in the project, and the one `unsafe` block.
+- `crates/render/src/renderer.rs` — the consumer the `Run` seam exists for. Every column comes
+  from `Run::column_of`.
+- `crates/render/src/font.rs` — why the font stack is plural, with the measurement.
+- `crates/render/tests/redraw.rs` — the pixel harness: incremental equals full, plus the
+  control that proves it can fail, plus the logical-order pin 5.5 must flip.
+- `crates/render/tests/vim.rs` — the acceptance gate. Writes a BMP to the temp dir for eyes.
 - `crates/ghostty/tests/abi_layout.rs` — the ABI pin. Read before touching `sys`.
 - `crates/ghostty/tests/oracle.rs` — what the oracle is known to read correctly.
 - Conformance canon (not yet wired in): xterm ctlseqs, DEC STD 070, esctest2 (the CI

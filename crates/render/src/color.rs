@@ -1,0 +1,205 @@
+//! Purpose: turn a cell's style into the two colours it is actually drawn with.
+//! Public surface: `Rgba`, `Palette`, `Drawn`.
+//! Why this file: the attribute-to-colour rules are small but order-dependent, and getting
+//!   the order wrong is invisible until a specific combination appears. Inverse has to be
+//!   applied AFTER the defaults resolve (otherwise inverting a default-on-default cell is a
+//!   no-op instead of a swap, and vim's status line vanishes), and invisible has to be
+//!   applied after inverse (otherwise an inverse-invisible cell shows its text).
+//! NOT responsible for: where the colours are painted (`canvas.rs`, `renderer.rs`).
+//! Test strategy: unit tests below pin the ordering rules, which is the part that breaks.
+
+use ruuah_vt_snapshot::{Color, Style};
+
+/// Straight (non-premultiplied) 8-bit RGBA.
+pub type Rgba = [u8; 4];
+
+/// What a cell actually gets painted with, after every attribute has had its say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Drawn {
+    pub foreground: Rgba,
+    pub background: Rgba,
+    /// False when the glyph must not be drawn at all, even though a background still is.
+    pub ink: bool,
+    pub underline: bool,
+    pub strikethrough: bool,
+}
+
+/// The 256-colour table plus the two defaults.
+#[derive(Debug, Clone)]
+pub struct Palette {
+    colors: [Rgba; 256],
+    pub default_foreground: Rgba,
+    pub default_background: Rgba,
+}
+
+impl Palette {
+    /// The xterm defaults: sixteen system colours, a 6x6x6 cube, then a 24-step grey ramp.
+    pub fn xterm() -> Palette {
+        let mut colors = [[0, 0, 0, 255]; 256];
+
+        const SYSTEM: [[u8; 3]; 16] = [
+            [0x00, 0x00, 0x00],
+            [0xcd, 0x00, 0x00],
+            [0x00, 0xcd, 0x00],
+            [0xcd, 0xcd, 0x00],
+            [0x00, 0x00, 0xee],
+            [0xcd, 0x00, 0xcd],
+            [0x00, 0xcd, 0xcd],
+            [0xe5, 0xe5, 0xe5],
+            [0x7f, 0x7f, 0x7f],
+            [0xff, 0x00, 0x00],
+            [0x00, 0xff, 0x00],
+            [0xff, 0xff, 0x00],
+            [0x5c, 0x5c, 0xff],
+            [0xff, 0x00, 0xff],
+            [0x00, 0xff, 0xff],
+            [0xff, 0xff, 0xff],
+        ];
+        for (index, rgb) in SYSTEM.iter().enumerate() {
+            colors[index] = [rgb[0], rgb[1], rgb[2], 255];
+        }
+
+        const STEPS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+        for index in 0..216usize {
+            colors[16 + index] = [
+                STEPS[index / 36],
+                STEPS[(index / 6) % 6],
+                STEPS[index % 6],
+                255,
+            ];
+        }
+
+        for index in 0..24usize {
+            let level = 8 + index as u8 * 10;
+            colors[232 + index] = [level, level, level, 255];
+        }
+
+        Palette {
+            colors,
+            default_foreground: [0xd0, 0xd0, 0xd0, 255],
+            default_background: [0x0d, 0x0d, 0x0d, 255],
+        }
+    }
+
+    pub fn indexed(&self, index: u8) -> Rgba {
+        self.colors[usize::from(index)]
+    }
+
+    fn resolve(&self, color: Color, fallback: Rgba) -> Rgba {
+        match color {
+            Color::Default => fallback,
+            Color::Palette(index) => self.indexed(index),
+            Color::Rgb { r, g, b } => [r, g, b, 255],
+        }
+    }
+
+    /// Applies every attribute that changes what a cell looks like.
+    pub fn draw(&self, style: &Style) -> Drawn {
+        let mut foreground = self.resolve(style.fg, self.default_foreground);
+        let mut background = self.resolve(style.bg, self.default_background);
+
+        // Bold brightens only the low eight palette entries, which is the convention every
+        // terminal follows and the reason bold red and bright red look the same.
+        if style.bold {
+            if let Color::Palette(index @ 0..=7) = style.fg {
+                foreground = self.indexed(index + 8);
+            }
+        }
+
+        // After the defaults have resolved, or inverting a default-on-default cell would do
+        // nothing and vim's status line would disappear.
+        if style.inverse {
+            std::mem::swap(&mut foreground, &mut background);
+        }
+
+        Drawn {
+            foreground,
+            background,
+            // After inverse, so an inverse-invisible cell still hides its text.
+            ink: !style.invisible,
+            underline: style.underline != ruuah_vt_snapshot::Underline::None,
+            strikethrough: style.strikethrough,
+        }
+    }
+}
+
+impl Default for Palette {
+    fn default() -> Palette {
+        Palette::xterm()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ruuah_vt_snapshot::Underline;
+
+    #[test]
+    fn the_cube_and_the_grey_ramp_land_where_xterm_puts_them() {
+        let palette = Palette::xterm();
+        assert_eq!(palette.indexed(16), [0, 0, 0, 255]);
+        assert_eq!(palette.indexed(231), [255, 255, 255, 255]);
+        assert_eq!(palette.indexed(232), [8, 8, 8, 255]);
+        assert_eq!(palette.indexed(255), [238, 238, 238, 255]);
+        assert_eq!(
+            palette.indexed(196),
+            [255, 0, 0, 255],
+            "the classic bright red"
+        );
+    }
+
+    #[test]
+    fn inverse_on_a_default_cell_swaps_the_defaults() {
+        // The one that matters: a status line is usually plain inverse with no colours set,
+        // so an implementation that inverts before resolving draws nothing at all.
+        let palette = Palette::xterm();
+        let drawn = palette.draw(&Style {
+            inverse: true,
+            ..Style::DEFAULT
+        });
+
+        assert_eq!(drawn.foreground, palette.default_background);
+        assert_eq!(drawn.background, palette.default_foreground);
+    }
+
+    #[test]
+    fn invisible_survives_inverse() {
+        let palette = Palette::xterm();
+        let drawn = palette.draw(&Style {
+            inverse: true,
+            invisible: true,
+            ..Style::DEFAULT
+        });
+        assert!(!drawn.ink);
+    }
+
+    #[test]
+    fn bold_brightens_only_the_low_eight() {
+        let palette = Palette::xterm();
+        let bold_red = palette.draw(&Style {
+            fg: Color::Palette(1),
+            bold: true,
+            ..Style::DEFAULT
+        });
+        assert_eq!(bold_red.foreground, palette.indexed(9));
+
+        let bold_cube = palette.draw(&Style {
+            fg: Color::Palette(100),
+            bold: true,
+            ..Style::DEFAULT
+        });
+        assert_eq!(bold_cube.foreground, palette.indexed(100), "unchanged");
+    }
+
+    #[test]
+    fn rgb_passes_through_untouched() {
+        let palette = Palette::xterm();
+        let drawn = palette.draw(&Style {
+            fg: Color::Rgb { r: 1, g: 2, b: 3 },
+            underline: Underline::Curly,
+            ..Style::DEFAULT
+        });
+        assert_eq!(drawn.foreground, [1, 2, 3, 255]);
+        assert!(drawn.underline);
+    }
+}

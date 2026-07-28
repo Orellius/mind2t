@@ -1,0 +1,4 @@
+[package]
+name = "ruuah-vt-abi-types"
+version = "0.1.0"
+edition.workspace = true

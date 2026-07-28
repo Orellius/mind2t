@@ -13,4 +13,5 @@ thiserror.workspace = true
 bindgen = "0.72"
 
 [dev-dependencies]
+ruuah-vt-abi-types = { path = "../abi-types" }
 serde_json = "1"

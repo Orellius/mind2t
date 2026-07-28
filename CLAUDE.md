@@ -61,12 +61,12 @@ host — slice 5/6 territory. The differential corpus covers the same semantics 
 - `[tested]` Struct layouts pinned against the library's own `ghostty_type_json()`.
 - `[tested]` `../ruuah` byte-identical and `git status` clean after a from-scratch oracle build.
 
-**`crates/core` is a stub, not a design.** Printable ASCII, CR, LF, BS. It exists solely so
-the harness has a second input. Slice 1 replaces it with the `vte` crate driving a real cell
-grid; do not grow the stub instead.
-
-Next: **slice 1 — parser + cell grid**. The nine DIFF cases are its specification; each
-reported path (`cell[0,1].style`, `row[0].wrap`, `cursor.pending_wrap`) is a thing to build.
+Next: **slice 3 — scrollback.** A paged structure with bounded memory, not an array of rows.
+Cost is driven by terminal WIDTH, not content: every blank cell to the right of the text still
+allocates. Ghostty's `PageList.zig` is 17,852 lines for exactly this reason — read it before
+designing. Two things already point at it: `Grid::move_row` is O(cols) with a map operation per
+cell (a page list moves pointers instead), and `StyleTable` has no eviction, so a program
+cycling through 65k+ distinct styles silently drops to default.
 
 ## Project rules & gotchas
 

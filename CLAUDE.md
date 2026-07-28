@@ -25,8 +25,36 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
-**Slices 0 through 5.5 are done.** Reordering and shaping have both landed, which closes the
-Hebrew goal end to end: bytes in, correctly ordered and correctly pointed pixels out.
+**Slices 0 through 5.6 are done**, tagged `v0.5.6`. Reordering, shaping, and now the semantic
+prompt layer and the caret that follows its cell: bytes in, correctly ordered, correctly
+pointed, correctly addressed pixels out. 227 tests green; corpus 97 cases, 90 match / 7 diff,
+97/97 met expectation.
+
+Slice 5.6, `[tested]`: **OSC 133 and the visual caret.** The core tracks prompt / input /
+output regions (`crates/core/src/semantic.rs`), and the renderer draws the caret at
+`Frame::visual_column` rather than at `cursor.x` -- on a reordered row those are different
+columns, and the glyph at the wrong one is a real character, which is why the old behaviour
+looked entirely reasonable.
+
+Sixteen corpus cases went in as `expect = "diff"` before the core could do anything and were
+promoted to `expect = "match"` by the implementation. That promotion is the evidence: every
+one disagreed with libghostty-vt before and agreed after, with the 71 pre-existing matches
+never moving.
+
+Three rules measured rather than assumed, each one a plausible implementation gets wrong:
+**`B` and `I` diverge only across a soft wrap** (`index()` resets the clear-at-EOL state and
+`printWrap` restores it); **`C` at column 0 un-marks the row and mid-row does not** (the rule
+is positional, not content-based); and **reflow gives each destination row the mark of the
+last source row that reached it** -- taking the last source row's mark unconditionally passes
+a split and a rejoin and fails a two-into-three re-split, which is why `split` reports the
+content offset each output row ended on.
+
+`step_visually` is the arrow half and is deliberately **not** gated on the cell being input.
+`Frame::is_input` is the gate and it belongs where the key event is handled, because outside
+an input region the cursor is the running program's to place. There is no key encoder in this
+repo, so the arrow work stops at the pure mapping; the GUI is what turns it into bytes.
+
+Slices 0 through 5.5 detail follows.
 
 Slice 5.5b, `[tested]`: **shaping.** `crates/render/src/shape.rs` runs each cell's cluster
 through swash so combining marks are placed by the font's GPOS table instead of their own
@@ -120,9 +148,8 @@ the cursor's contribution to both, measured against the oracle's `GhosttyRenderS
 Slice 5 step 1, `[tested]`: the harness learned to see damage at all. `Snapshot` represented
 neither dirty layer, so any damage implementation would have reported MATCH.
 
-Next: **slice 5.5, display bidi.** Everything under it is now in place and measured -- the
-cluster survives to pixels, the fallback font works, the run builder is the only thing that
-has to change, and there is a pixel-level test that must flip when it does.
+Next after 5.6: **slice 6**, the GPU backend behind `Canvas`, and the rename of the shipped
+artifact to `libruuah-vt.a` so RUUAH's link flag mirrors `-lghostty-vt` exactly.
 
 Slice 4, `[tested]`: reflow. Resize rejoins soft-wrapped rows into logical lines, re-splits at
 the new width, and maps the cursor through the transform. Scrollback takes part -- a logical
@@ -229,9 +256,14 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   bindings can be trusted rather than hoped about. `tests/abi_layout.rs` compares every
   offset this crate touches against it, which also catches the vendored headers drifting
   from the linked archive — something bindgen alone cannot see.
-- **Extend the harness BEFORE building the slice. Four for four.** Every slice has had a blind
+- **Extend the harness BEFORE building the slice. Nine for nine.** Every slice has had a blind
   spot that would have reported MATCH for a wrong implementation, and each was found by asking
-  "can the harness even see this?" before writing code:
+  "can the harness even see this?" before writing code. Three of the nine were total:
+  concurrency, pixels, and -- in slice 5.6 -- OSC 133, where `Snapshot` had no semantic surface
+  at all, so a core with zero OSC handling scored a perfect match on every prompt and input
+  region. A fourth, the caret's landing column, was invisible to the pixel harness itself:
+  `redraw.rs`'s incremental-equals-full invariant holds whether the caret is on the right cell
+  or the wrong one, because both renderers are consistently wrong.
   - **Slice 2** — background-colour erase was invisible. Ghostty keeps a cell with only a
     background out of the style map, so `grid_ref_style` reported Default for a red cell. An
     erase ignoring BCE would have passed.
@@ -447,6 +479,10 @@ and `lib/`, bypassing the build script).
 - `crates/frame/src/bidi.rs` — reordering, and the two terminal policies on top of the UBA
   (LTR base, segments bounded by box drawing).
 - `crates/frame/tests/bidi_conformance.rs` — the Unicode oracle, run against our own layout.
+- `crates/core/src/semantic.rs` — OSC 133, and the three places its rules apply at once.
+- `crates/ghostty/tests/semantic.rs` — what the oracle is known to do with OSC 133, measured.
+- `crates/render/tests/caret.rs` — where the caret lands, found by diffing shown against
+  hidden, plus the control that pins the old logical placement.
 - `crates/ghostty/tests/abi_layout.rs` — the ABI pin. Read before touching `sys`.
 - `crates/ghostty/tests/oracle.rs` — what the oracle is known to read correctly.
 - Conformance canon (not yet wired in): xterm ctlseqs, DEC STD 070, esctest2 (the CI

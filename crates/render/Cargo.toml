@@ -1,0 +1,16 @@
+[package]
+name = "ruuah-vt-render"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ruuah-vt-frame.workspace = true
+ruuah-vt-snapshot.workspace = true
+swash = "0.2"
+thiserror.workspace = true
+
+[dev-dependencies]
+ruuah-vt-core.workspace = true
+ruuah-vt-pty.workspace = true

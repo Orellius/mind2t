@@ -21,6 +21,14 @@ pub enum RunError {
     },
 }
 
+/// Wraps an oracle failure with the case that provoked it.
+fn oracle_error(case: &Case) -> impl Fn(ruuah_vt_ghostty::Error) -> RunError + '_ {
+    move |source| RunError::Oracle {
+        case: case.name.clone(),
+        source,
+    }
+}
+
 /// Whether the two implementations agreed on this case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
@@ -81,21 +89,43 @@ pub fn run(case: &Case) -> Result<Outcome, RunError> {
                 source,
             })?;
     }
+    // The dirty flags are reset here, before `after`, so damage reports exactly what the
+    // second stream changed rather than everything since the terminal was created.
+    let mut render = if case.damage {
+        let mut state = ruuah_vt_ghostty::RenderState::new().map_err(oracle_error(case))?;
+        state.update(&oracle_terminal).map_err(oracle_error(case))?;
+        state.clear_dirty().map_err(oracle_error(case))?;
+        Some(state)
+    } else {
+        None
+    };
+
     oracle_terminal.write(case.after.as_bytes());
-    let oracle = oracle_terminal
+    let mut oracle = oracle_terminal
         .snapshot()
         .map_err(|source| RunError::Oracle {
             case: case.name.clone(),
             source,
         })?;
 
+    if let Some(state) = render.as_mut() {
+        state.update(&oracle_terminal).map_err(oracle_error(case))?;
+        oracle.damage = Some(state.damage().map_err(oracle_error(case))?);
+    }
+
     let mut candidate_terminal = ruuah_vt_core::Terminal::with_scrollback(case.cols, case.rows, case.scrollback);
     candidate_terminal.write(bytes);
     if let Some(resize) = case.resize {
         candidate_terminal.resize(resize.cols, resize.rows);
     }
+    if case.damage {
+        candidate_terminal.clear_damage();
+    }
     candidate_terminal.write(case.after.as_bytes());
-    let candidate = candidate_terminal.snapshot();
+    let mut candidate = candidate_terminal.snapshot();
+    if case.damage {
+        candidate.damage = candidate_terminal.damage();
+    }
 
     let differences = diff(&oracle, &candidate);
     let verdict = if differences.is_empty() {

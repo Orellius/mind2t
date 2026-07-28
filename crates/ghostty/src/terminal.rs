@@ -70,6 +70,11 @@ impl Terminal {
         unsafe { sys::ghostty_terminal_vt_write(self.raw, bytes.as_ptr(), bytes.len()) };
     }
 
+    /// The raw handle, for the render state to read from.
+    pub(crate) fn raw(&self) -> sys::GhosttyTerminal {
+        self.raw
+    }
+
     /// Resizes the terminal, reflowing the primary screen as the library sees fit.
     ///
     /// The pixel dimensions are nominal. They feed image protocols and size reports, neither
@@ -114,6 +119,7 @@ impl Terminal {
             cursor: self.cursor()?,
             grid,
             history,
+            damage: None,
         })
     }
 
@@ -446,7 +452,7 @@ fn convert_underline(raw: i32) -> Result<Underline, Error> {
     }
 }
 
-fn check(call: &'static str, code: sys::GhosttyResult) -> Result<(), Error> {
+pub(crate) fn check(call: &'static str, code: sys::GhosttyResult) -> Result<(), Error> {
     if code == sys::GhosttyResult_GHOSTTY_SUCCESS {
         Ok(())
     } else {

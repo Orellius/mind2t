@@ -93,6 +93,11 @@ impl StyleTable {
         self.styles.len()
     }
 
+    /// Every style in ID order, so a consumer can copy the whole table out in one pass.
+    pub fn as_slice(&self) -> &[Style] {
+        &self.styles
+    }
+
     pub fn is_empty(&self) -> bool {
         false
     }

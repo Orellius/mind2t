@@ -83,6 +83,11 @@ pub struct Case {
     /// through a grid comparison.
     #[serde(default)]
     pub after: String,
+    /// Observe what a renderer would have to repaint. The window is the `after` stream: the
+    /// dirty flags are reset once `bytes` and any resize have been applied, so the damage
+    /// reported is exactly what `after` changed.
+    #[serde(default)]
+    pub damage: bool,
     /// Why this case exists, in one line. Shown in the report.
     #[serde(default)]
     pub note: String,

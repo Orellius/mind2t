@@ -334,6 +334,33 @@ impl State {
         self.last_print = None;
     }
 
+    /// CUU. The scroll region bounds the move, not the screen.
+    ///
+    /// A cursor at or below the top margin cannot be carried above it; one already above the
+    /// region is bounded by the top of the screen instead, because a cursor outside the region
+    /// is not confined by it (`Terminal.zig:1703`). Clamping to the screen alone lets CUU walk
+    /// out of the region from below, which every full-screen TUI would hit.
+    pub(crate) fn cursor_up(&mut self, count: u16) {
+        let y = self.cursor_y();
+        let top = self.screen().scroll_top;
+        let limit = if y >= top { y - top } else { y };
+        let x = self.cursor_x();
+        self.goto(x, y - count.min(limit));
+    }
+
+    /// CUD, the mirror rule (`Terminal.zig:1721`).
+    pub(crate) fn cursor_down(&mut self, count: u16) {
+        let y = self.cursor_y();
+        let bottom = self.screen().scroll_bottom;
+        let limit = if y <= bottom {
+            bottom - y
+        } else {
+            self.screen().rows().saturating_sub(1).saturating_sub(y)
+        };
+        let x = self.cursor_x();
+        self.goto(x, y + count.min(limit));
+    }
+
     pub(crate) fn save_cursor(&mut self) {
         self.screen_mut().save_cursor();
         self.saved_pen = Some(self.pen);

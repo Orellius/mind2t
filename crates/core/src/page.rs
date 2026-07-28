@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 
-use ruuah_vt_snapshot::{Row, Style};
+use ruuah_vt_snapshot::{Row, RowSemantic, Semantic, Style};
 
 use crate::cell::{Cell, Wide};
 use crate::grid::RowMeta;
@@ -179,11 +179,13 @@ impl Page {
                 text,
                 wide: cell.wide.into(),
                 style: self.styles.get(cell.style_id),
+                semantic: Semantic::Output,
             });
         }
         Some(Row {
             wrap: stored.meta.wrap,
             wrap_continuation: stored.meta.wrap_continuation,
+            semantic_prompt: RowSemantic::None,
             cells,
         })
     }

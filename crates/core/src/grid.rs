@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use ruuah_vt_snapshot::{Row, Style};
+use ruuah_vt_snapshot::{Row, RowSemantic, Semantic, Style};
 
 use crate::cell::Cell;
 use crate::page::{HistoryCell, HistoryRow};
@@ -395,6 +395,7 @@ impl Grid {
                 Row {
                     wrap: meta.wrap,
                     wrap_continuation: meta.wrap_continuation,
+                    semantic_prompt: RowSemantic::None,
                     cells: (0..self.cols)
                         .map(|x| {
                             let index = self.index(x, y);
@@ -403,6 +404,7 @@ impl Grid {
                                 text: self.cell_text(index),
                                 wide: cell.wide.into(),
                                 style: self.style(cell.style_id),
+                                semantic: Semantic::Output,
                             }
                         })
                         .collect(),

@@ -11,7 +11,9 @@
 use std::ffi::c_void;
 use std::mem;
 
-use ruuah_vt_snapshot::{Cell, Color, Cursor, Row, Screen, Snapshot, Style, Underline, Wide};
+use ruuah_vt_snapshot::{
+    Cell, Color, Cursor, Row, RowSemantic, Screen, Semantic, Snapshot, Style, Underline, Wide,
+};
 
 use crate::sys;
 
@@ -202,6 +204,14 @@ impl Terminal {
             cells.push(self.read_cell_at(tag, x, y)?);
         }
 
+        let semantic_prompt: sys::GhosttyRowSemanticPrompt = unsafe {
+            row_get(
+                raw_row,
+                sys::GhosttyRowData_GHOSTTY_ROW_DATA_SEMANTIC_PROMPT,
+                "SEMANTIC_PROMPT",
+            )
+        }?;
+
         Ok(Row {
             wrap: unsafe { row_get(raw_row, sys::GhosttyRowData_GHOSTTY_ROW_DATA_WRAP, "WRAP") }?,
             wrap_continuation: unsafe {
@@ -211,6 +221,7 @@ impl Terminal {
                     "WRAP_CONTINUATION",
                 )
             }?,
+            semantic_prompt: convert_row_semantic(semantic_prompt)?,
             cells,
         })
     }
@@ -232,10 +243,19 @@ impl Terminal {
         let wide: sys::GhosttyCellWide =
             unsafe { cell_get(raw_cell, sys::GhosttyCellData_GHOSTTY_CELL_DATA_WIDE, "WIDE") }?;
 
+        let semantic: sys::GhosttyCellSemanticContent = unsafe {
+            cell_get(
+                raw_cell,
+                sys::GhosttyCellData_GHOSTTY_CELL_DATA_SEMANTIC_CONTENT,
+                "SEMANTIC_CONTENT",
+            )
+        }?;
+
         Ok(Cell {
             text: read_graphemes(&cell_ref, x, u16::try_from(y).unwrap_or(u16::MAX))?,
             wide: convert_wide(wide)?,
             style: self.read_style(raw_cell, &raw_style)?,
+            semantic: convert_semantic(semantic)?,
         })
     }
 
@@ -432,6 +452,32 @@ fn convert_wide(raw: sys::GhosttyCellWide) -> Result<Wide, Error> {
         sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_SPACER_HEAD => Ok(Wide::SpacerHead),
         other => Err(Error::UnknownEnum {
             kind: "GhosttyCellWide",
+            value: other,
+        }),
+    }
+}
+
+fn convert_semantic(raw: sys::GhosttyCellSemanticContent) -> Result<Semantic, Error> {
+    match raw {
+        sys::GhosttyCellSemanticContent_GHOSTTY_CELL_SEMANTIC_OUTPUT => Ok(Semantic::Output),
+        sys::GhosttyCellSemanticContent_GHOSTTY_CELL_SEMANTIC_INPUT => Ok(Semantic::Input),
+        sys::GhosttyCellSemanticContent_GHOSTTY_CELL_SEMANTIC_PROMPT => Ok(Semantic::Prompt),
+        other => Err(Error::UnknownEnum {
+            kind: "GhosttyCellSemanticContent",
+            value: other,
+        }),
+    }
+}
+
+fn convert_row_semantic(raw: sys::GhosttyRowSemanticPrompt) -> Result<RowSemantic, Error> {
+    match raw {
+        sys::GhosttyRowSemanticPrompt_GHOSTTY_ROW_SEMANTIC_NONE => Ok(RowSemantic::None),
+        sys::GhosttyRowSemanticPrompt_GHOSTTY_ROW_SEMANTIC_PROMPT => Ok(RowSemantic::Prompt),
+        sys::GhosttyRowSemanticPrompt_GHOSTTY_ROW_SEMANTIC_PROMPT_CONTINUATION => {
+            Ok(RowSemantic::PromptContinuation)
+        }
+        other => Err(Error::UnknownEnum {
+            kind: "GhosttyRowSemanticPrompt",
             value: other,
         }),
     }

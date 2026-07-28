@@ -186,6 +186,13 @@ fn diff_row_at(
             candidate.wrap_continuation,
         ));
     }
+    if oracle.semantic_prompt != candidate.semantic_prompt {
+        out.push(Difference::new(
+            format!("{row_path}.semantic_prompt"),
+            format!("{:?}", oracle.semantic_prompt),
+            format!("{:?}", candidate.semantic_prompt),
+        ));
+    }
     for (x, (o_cell, c_cell)) in oracle.cells.iter().zip(candidate.cells.iter()).enumerate() {
         diff_cell(&format!("{cell_prefix}{x}]"), o_cell, c_cell, out);
     }
@@ -211,6 +218,13 @@ fn diff_cell(path: &str, oracle: &Cell, candidate: &Cell, out: &mut Vec<Differen
             format!("{path}.wide"),
             format!("{:?}", oracle.wide),
             format!("{:?}", candidate.wide),
+        ));
+    }
+    if oracle.semantic != candidate.semantic {
+        out.push(Difference::new(
+            format!("{path}.semantic"),
+            format!("{:?}", oracle.semantic),
+            format!("{:?}", candidate.semantic),
         ));
     }
     diff_style(&format!("{path}.style"), &oracle.style, &candidate.style, out);
@@ -252,7 +266,7 @@ fn quote(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grid::{Color, Cursor, Screen, Underline, Wide, describe_color};
+    use crate::grid::{Color, Cursor, RowSemantic, Screen, Underline, Wide, describe_color};
 
     fn snapshot(cols: u16, rows: u16) -> Snapshot {
         Snapshot {
@@ -270,6 +284,7 @@ mod tests {
                 .map(|_| Row {
                     wrap: false,
                     wrap_continuation: false,
+                    semantic_prompt: RowSemantic::None,
                     cells: (0..cols).map(|_| Cell::blank()).collect(),
                 })
                 .collect(),
@@ -282,6 +297,7 @@ mod tests {
         Row {
             wrap: false,
             wrap_continuation: false,
+            semantic_prompt: RowSemantic::None,
             cells: (0..cols)
                 .map(|x| Cell {
                     text: text.chars().nth(usize::from(x)).map(String::from).unwrap_or_default(),

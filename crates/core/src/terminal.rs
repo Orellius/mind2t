@@ -399,9 +399,15 @@ impl State {
         if cols == 0 || rows == 0 {
             return;
         }
-        // The primary rejoins soft-wrapped lines; the alternate is documented by the ABI as
-        // not reflowing, so its rows only gain or lose columns.
-        crate::resize::apply(&mut self.primary, cols, rows, Mode::Rejoin);
+        // The primary rejoins soft-wrapped lines only while DECAWM is on -- upstream passes
+        // reflow = modes.get(.wraparound) (Terminal.zig:3783). The alternate is documented
+        // by the ABI as not reflowing, so its rows only gain or lose columns.
+        let primary_mode = if self.autowrap {
+            Mode::Rejoin
+        } else {
+            Mode::Truncate
+        };
+        crate::resize::apply(&mut self.primary, cols, rows, primary_mode);
         crate::resize::apply(&mut self.alternate, cols, rows, Mode::Truncate);
 
         self.tabs = TabStops::new(cols);

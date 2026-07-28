@@ -961,12 +961,12 @@ note = "Modes 0, 1 and 2 each clear the phantom state; mode 3 dispatches straigh
 
 [[case]]
 name = "reflow-is-gated-on-decawm"
-expect = "diff"
+expect = "match"
 cols = 10
 rows = 3
 resize = { cols = 5, rows = 3 }
 bytes = "abcdefghijklmno\u001B[?7l"
-note = "Terminal.resize passes reflow = modes.get(.wraparound) (Terminal.zig:3783), so with DECAWM off the primary takes resizeWithoutReflow and rows keep their identity, losing columns only. This core always rejoins."
+note = "Terminal.resize passes reflow = modes.get(.wraparound) (Terminal.zig:3783), so with DECAWM off the primary takes resizeWithoutReflow and rows keep their identity, losing columns only. Promoted by the S2 wave: State::resize picks Rejoin or Truncate for the primary from the autowrap flag."
 
 [[case]]
 name = "reflow-blank-prompt-row-is-content"

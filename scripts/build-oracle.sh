@@ -50,6 +50,42 @@ if [[ "$before" != "$after" ]]; then
   exit 1
 fi
 
+# Record which Ghostty build the oracle came from.
+#
+# ruuah-vt has no git upstream -- it is original code, and adding a remote with no shared
+# history would be theatre. But it does have a real upstream DEPENDENCY: the oracle is a
+# moving target, and when Ghostty changes behaviour the corpus verdicts move with it. Without
+# this pin, a case flipping overnight is indistinguishable from a regression we caused. This
+# is the upstream tracking that actually matters here.
+lock="$root/oracle.lock"
+commit=$(cd "$ruuah" && git rev-parse HEAD)
+describe=$(cd "$ruuah" && git describe --tags --always 2>/dev/null || echo unknown)
+
+if [[ -f "$lock" ]]; then
+  previous=$(grep '^commit = ' "$lock" | cut -d'"' -f2)
+  if [[ -n "$previous" && "$previous" != "$commit" ]]; then
+    echo
+    echo "NOTE: the oracle moved."
+    echo "        was $previous"
+    echo "        now $commit"
+    echo "      Corpus verdicts may change for reasons that are not yours. Re-run"
+    echo "      ./target/debug/difftest and attribute any flip to this before debugging it."
+  fi
+fi
+
+cat > "$lock" <<LOCK
+# Which libghostty-vt the differential oracle was built from. Written by
+# scripts/build-oracle.sh; commit this file when it changes.
+#
+# ruuah-vt has no git upstream. This is the upstream that matters: the oracle is the
+# reference implementation, and when it moves the corpus can move with it.
+source = "$ruuah"
+commit = "$commit"
+describe = "$describe"
+zig = "$REQUIRED_ZIG"
+LOCK
+
 echo
 echo "ok: $prefix/lib/libghostty-vt.a"
 echo "ok: $ruuah is unchanged"
+echo "ok: oracle pinned at $describe ($lock)"

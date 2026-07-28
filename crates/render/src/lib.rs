@@ -24,9 +24,11 @@ pub mod canvas;
 pub mod color;
 pub mod font;
 pub mod renderer;
+pub mod shape;
 
 pub use atlas::{Atlas, Glyph, GlyphKey};
 pub use canvas::Canvas;
 pub use color::{Drawn, Palette, Rgba};
 pub use font::{CellMetrics, FontError, FontStack, Resolved};
 pub use renderer::Renderer;
+pub use shape::{PositionedGlyph, Shaper, needs_shaping};

@@ -25,8 +25,27 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
-**Slices 0 through 5 are done. Slice 5.5 is in progress: reordering has landed; shaping has
-not.**
+**Slices 0 through 5.5 are done.** Reordering and shaping have both landed, which closes the
+Hebrew goal end to end: bytes in, correctly ordered and correctly pointed pixels out.
+
+Slice 5.5b, `[tested]`: **shaping.** `crates/render/src/shape.rs` runs each cell's cluster
+through swash so combining marks are placed by the font's GPOS table instead of their own
+bearings. Only clusters with more than one codepoint pay for it; a lone character takes
+`place_at_origin`, which for one glyph is not an approximation but the exact answer.
+
+The blind spot, eighth in a row: nothing could see where a mark LANDS. Every earlier test is
+satisfied by a renderer that draws a niqqud at the cell's left edge -- the ink is still ink,
+still inside the cell, still changes the pixels. Measured at 32px on a 19px cell, an unshaped
+`בָּ` puts **9 pixels of ink in column 0** and a shaped one puts **none**. So the assertion is
+positional and two-directional in one test: shaped, the leftmost columns must be empty;
+unshaped, they must not be. `tests/shaping.rs` also guards the opposite failure -- a renderer
+that "fixes" placement by dropping the marks entirely would satisfy emptiness perfectly, so a
+second test requires the marks to add ink and to reach below the base.
+
+**One cell is shaped at a time, deliberately.** A terminal cell is addressable, so shaping
+across cells would let the renderer merge or re-space cells the program placed on purpose. The
+cost is that Arabic contextual joining does not cross cells -- a limitation every terminal
+shares, not a bug here.
 
 Slice 5.5a, `[tested]`: **display bidi.** Hebrew now reorders. `crates/frame/src/bidi.rs`
 lays a row out with `wezterm-bidi` under it, and the seam held exactly as designed -- the

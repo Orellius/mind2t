@@ -264,3 +264,33 @@ fn the_oracle_reports_damage_and_a_reset_clears_it() {
         targeted.rows
     );
 }
+
+/// What the oracle does with the out-param when creation fails.
+///
+/// Measured rather than read, because the drop-in claim rests on it: a C consumer that checks
+/// the out-param instead of the return code sees whatever was in that variable before the
+/// call, and the two libraries have to agree about what that is.
+#[test]
+fn a_failed_creation_nulls_the_out_param() {
+    let sentinel = 0xDEAD_BEEF_usize as ruuah_vt_ghostty::sys::GhosttyTerminal;
+    let mut handle = sentinel;
+    let options = ruuah_vt_ghostty::sys::GhosttyTerminalOptions {
+        cols: 0,
+        rows: 24,
+        max_scrollback: 0,
+    };
+
+    let code = unsafe {
+        ruuah_vt_ghostty::sys::ghostty_terminal_new(std::ptr::null(), &mut handle, options)
+    };
+
+    assert_ne!(
+        code,
+        ruuah_vt_ghostty::sys::GhosttyResult_GHOSTTY_SUCCESS,
+        "zero columns must fail"
+    );
+    assert!(
+        handle.is_null(),
+        "the oracle left {handle:?} in the out-param on failure; the sentinel was {sentinel:?}"
+    );
+}

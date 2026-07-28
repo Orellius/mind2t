@@ -325,6 +325,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruuah-vt-abi"
+version = "0.1.0"
+dependencies = [
+ "ruuah-vt-abi-types",
+ "ruuah-vt-core",
+ "ruuah-vt-snapshot",
+ "serde",
+ "toml",
+]
+
+[[package]]
+name = "ruuah-vt-abi-types"
+version = "0.1.0"
+
+[[package]]
 name = "ruuah-vt-core"
 version = "0.1.0"
 dependencies = [
@@ -359,6 +374,7 @@ name = "ruuah-vt-ghostty"
 version = "0.1.0"
 dependencies = [
  "bindgen",
+ "ruuah-vt-abi-types",
  "ruuah-vt-snapshot",
  "serde_json",
  "thiserror 2.0.19",

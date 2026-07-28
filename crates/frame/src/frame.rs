@@ -1,18 +1,20 @@
 //! Purpose: the reader's own copy of a frame, and the only shape a renderer is allowed to
 //!   draw from -- runs, never a raw cell array.
-//! Public surface: `Frame`, `FrameCursor`, `Run`, `Direction`, `Runs`.
-//! Why this file: this is the seam that keeps bidi out of the renderer. A renderer that
-//!   walks cells left to right has the logical order baked into every draw call, and slice
-//!   5.5 would be a rewrite. A renderer that draws runs asks each run where it starts and
-//!   which way it advances, so reordering later changes the run builder and nothing else.
-//!   `Direction` is `LeftToRight` for every run today and is still load-bearing today: it
-//!   forces the renderer to compute a column from the run rather than assume one.
-//! NOT responsible for: the thread handoff (`seqlock.rs`) or bit layout (`packed.rs`).
+//! Public surface: `Frame`, `FrameCursor`, `Run`, `Direction`, `cell_width`.
+//! Why this file: this is the seam that keeps bidi out of the renderer, and slice 5.5 proved
+//!   it holds. Reordering turned on by changing `runs` and `bidi.rs` alone -- the renderer
+//!   was not touched, because it never assumed a direction and asks `Run::column_of` for
+//!   every column it paints. A renderer that had added an index to a run's start instead
+//!   would have compiled, passed every test before 5.5, and drawn Hebrew backwards after it.
+//! NOT responsible for: the thread handoff (`seqlock.rs`), bit layout (`packed.rs`), or the
+//!   reordering itself (`bidi.rs`).
 //! Test strategy: run splitting is unit-tested below against hand-built rows; the frame's
-//!   agreement with the core is tested end to end in `tests/publish.rs`.
+//!   agreement with the core is tested end to end in `tests/publish.rs`; the layout is
+//!   measured against 91,707 Unicode cases in `tests/bidi_conformance.rs`.
 
 use ruuah_vt_snapshot::{Style, Wide};
 
+use crate::bidi::{BaseDirection, visual_spans};
 use crate::packed::{PackedCell, unpack_style};
 
 /// Which way a run advances from its starting column.
@@ -101,6 +103,8 @@ pub struct Frame {
     /// Generation of the last whole-frame invalidation.
     pub full_generation: u64,
     pub cursor: FrameCursor,
+    /// How rows are laid out. Left-to-right by default; see `BaseDirection`.
+    pub base_direction: BaseDirection,
     pub(crate) cells: Vec<PackedCell>,
     pub(crate) row_generation: Vec<u64>,
     pub(crate) row_flags: Vec<(bool, bool)>,
@@ -158,60 +162,58 @@ impl Frame {
         (0..self.rows).filter(move |y| self.row_is_stale(*y, drawn_generation))
     }
 
-    /// The row split into drawable runs.
-    pub fn runs(&self, y: u16) -> Runs<'_> {
+    /// The row split into drawable runs, left to right.
+    ///
+    /// Two splits, in order. First `bidi::visual_spans` decides where each stretch of text
+    /// sits and which way it advances; then each span is broken where its style changes,
+    /// because a run is what the renderer draws in one go and it can carry only one style.
+    /// The second split cannot cross the first: a style change inside a right-to-left span
+    /// yields two runs laid out right to left, not two left-to-right runs.
+    pub fn runs(&self, y: u16) -> Vec<Run<'_>> {
         let start = usize::from(y) * usize::from(self.cols);
         let end = start + usize::from(self.cols);
-        Runs {
-            frame: self,
-            cells: self.cells.get(start..end).unwrap_or(&[]),
-            column: 0,
-            index: 0,
-        }
-    }
-}
-
-/// Splits a row into runs. A run breaks where the style changes; a spacer tail stays with
-/// the wide cell it belongs to rather than starting a run of its own.
-pub struct Runs<'a> {
-    frame: &'a Frame,
-    cells: &'a [PackedCell],
-    column: u16,
-    index: usize,
-}
-
-impl<'a> Iterator for Runs<'a> {
-    type Item = Run<'a>;
-
-    fn next(&mut self) -> Option<Run<'a>> {
-        if self.index >= self.cells.len() {
-            return None;
-        }
-
-        let start_index = self.index;
-        let style_id = self.cells[start_index].style_id();
-        let mut width = 0;
-
-        while self.index < self.cells.len() {
-            let cell = self.cells[self.index];
-            let continues = self.index == start_index
-                || cell.style_id() == style_id
-                || cell.wide() == Wide::SpacerTail;
-            if !continues {
-                break;
-            }
-            width += cell_width(cell);
-            self.index += 1;
-        }
-
-        let run = Run {
-            start: self.column,
-            direction: Direction::LeftToRight,
-            style: self.frame.style(style_id),
-            cells: &self.cells[start_index..self.index],
+        let Some(row) = self.cells.get(start..end) else {
+            return Vec::new();
         };
-        self.column += width;
-        Some(run)
+
+        let mut runs = Vec::new();
+        for span in visual_spans(row, self.base_direction) {
+            let cells = &row[span.logical.clone()];
+            let span_width: u16 = cells.iter().copied().map(cell_width).sum();
+            let mut offset = 0;
+
+            while offset < cells.len() {
+                let style_id = cells[offset].style_id();
+                let mut end_offset = offset + 1;
+                while end_offset < cells.len()
+                    && (cells[end_offset].style_id() == style_id
+                        || cells[end_offset].wide() == Wide::SpacerTail)
+                {
+                    end_offset += 1;
+                }
+
+                let before: u16 = cells[..offset].iter().copied().map(cell_width).sum();
+                let piece: u16 = cells[offset..end_offset]
+                    .iter()
+                    .copied()
+                    .map(cell_width)
+                    .sum();
+
+                runs.push(Run {
+                    // In a right-to-left span the first logical piece is the RIGHTMOST one,
+                    // so its column is measured from the span's far edge inwards.
+                    start: match span.direction {
+                        Direction::LeftToRight => span.column + before,
+                        Direction::RightToLeft => span.column + span_width - before - piece,
+                    },
+                    direction: span.direction,
+                    style: self.style(style_id),
+                    cells: &cells[offset..end_offset],
+                });
+                offset = end_offset;
+            }
+        }
+        runs
     }
 }
 
@@ -229,6 +231,7 @@ mod tests {
             generation: 1,
             full_generation: 0,
             cursor: FrameCursor::default(),
+            base_direction: BaseDirection::default(),
             cells,
             row_generation: vec![1],
             row_flags: vec![(false, false)],
@@ -244,7 +247,7 @@ mod tests {
                 .collect(),
             vec![[0, 0]],
         );
-        let runs: Vec<_> = frame.runs(0).collect();
+        let runs = frame.runs(0);
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].start, 0);
         assert_eq!(runs[0].width(), 4);
@@ -265,7 +268,7 @@ mod tests {
             vec![[0, 0], pack_style(&red)],
         );
 
-        let runs: Vec<_> = frame.runs(0).collect();
+        let runs = frame.runs(0);
         assert_eq!(runs.len(), 2);
         assert_eq!((runs[0].start, runs[0].width()), (0, 2));
         assert_eq!((runs[1].start, runs[1].width()), (2, 1));
@@ -283,7 +286,7 @@ mod tests {
             vec![[0, 0]],
         );
 
-        let runs: Vec<_> = frame.runs(0).collect();
+        let runs = frame.runs(0);
         assert_eq!(runs.len(), 1);
         assert_eq!(
             runs[0].width(),

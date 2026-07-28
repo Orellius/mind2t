@@ -25,8 +25,37 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
-**Slices 0 through 4 are done. Slice 5 is in progress: all five acceptance criteria are met;
-what remains is the GPU backend, which is slice 6 territory.**
+**Slices 0 through 5 are done. Slice 5.5 is in progress: reordering has landed; shaping has
+not.**
+
+Slice 5.5a, `[tested]`: **display bidi.** Hebrew now reorders. `crates/frame/src/bidi.rs`
+lays a row out with `wezterm-bidi` under it, and the seam held exactly as designed -- the
+renderer was **not touched**, because it never assumed a direction and asks `Run::column_of`
+for every column it paints. 184 tests green; corpus untouched at 78/78, which is the proof
+that bidi stayed out of the core.
+
+Measured, not eyeballed: `crates/frame/tests/bidi_conformance.rs` runs **all 91,707
+BidiCharacterTest cases through our own `visual_spans`** and passes, with 2,162 of the first
+4,000 requiring real reordering so the comparison provably distinguishes visual from logical.
+The suite caught a genuine bug on its first run -- the fast path that skips the algorithm for
+plain text ignored the base direction, and under an RTL base even a row of pure neutrals
+resolves to level 1 and reverses.
+
+Verified by hand afterwards, through the real terminal path:
+
+| logical | visual |
+|---|---|
+| `שלום עולם` | `םלוע םולש` (reads correctly right to left, word order kept) |
+| `let msg = "שלום";` | `let msg = "םולש";` (code stays put) |
+| `גיל 42 שנה` | `הנש 42 ליג` (**the number stays 42, not 24**) |
+| `│אבג│abc│` | `│גבא│abc│` (bars stay in columns 0, 4, 8) |
+
+Still missing in 5.5: **shaping**. A cluster's codepoints are still rasterized individually
+and drawn at one pen position, so niqqud land on default bearings rather than where GPOS puts
+them. `swash` shapes and its Hebrew GSUB/GPOS is verified, so this adds no dependency.
+
+Slice 5, `[tested]`, tagged `v0.5.0`: all five acceptance criteria met. What remains from it
+is the GPU backend, which is slice 6 territory.
 
 Slice 5 step 4, `[tested]`: **it renders vim.** `ruuah-vt-render` is a CPU rasterizer -- glyph
 atlas, xterm palette, damage-driven redraw -- built on `swash`. The backend is on the CPU
@@ -223,7 +252,26 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   budget, so this is structural rather than a check that can be forgotten.
 - Cell text is a **grapheme cluster**, not a codepoint — encoded in `Snapshot` from day one
   because it is ranked failure mode 2 and 32 bits per cell is structurally insufficient.
-- **Bidi is a slice 5 (renderer) item and must never enter the core.** Decided 2026-07-28.
+- **The bidi oracle is Unicode, and it is not optional.** `./scripts/fetch-ucd.sh` vendors
+  `BidiTest.txt` and `BidiCharacterTest.txt` into `vendor/ucd/`; `ucd.lock` pins the revision,
+  so a conformance failure after a Unicode update can be told apart from a regression you
+  caused. libghostty-vt cannot play this role -- it has no bidi surface at all.
+- **`wezterm-bidi` was chosen by measurement, not by reputation.** Verified 2026-07-28 by
+  running it over the whole suite: **770,241 / 770,241** BidiTest cases and **91,707 / 91,707**
+  BidiCharacterTest cases, on paragraph level, resolved levels and visual order. It also fits
+  the data model -- `resolve_paragraph(&[char], hint)` and level runs with contiguous logical
+  ranges, which is why reordering did not change the shape of a `Run`. `unicode-bidi` (servo)
+  is byte-indexed and would need an adapter for a cell grid.
+- **The terminal's base direction is LTR, deliberately, and it is a policy not a bug.** A grid
+  is column-addressed by the program drawing into it, so auto-detection would move a Hebrew
+  status line written at column 0 to the right edge. With an LTR base, RTL runs still reorder
+  within their own span. `BaseDirection::Auto` exists for a caller that wants it.
+- **Segments are bounded by box drawing and block elements** (U+2500..=U+259F). Whole-line UBA
+  across a table moves the frame characters relative to the text they enclose; bounding at the
+  frame keeps every box where the program drew it. The Unicode suite has no opinion about this
+  and cannot catch a wrong choice here, so it is unit-tested separately in `bidi.rs`.
+- **Bidi is a renderer-layer item and must never enter the core.** Decided 2026-07-28, and
+  slice 5.5 confirmed it: reordering landed with the corpus untouched at 78/78.
   `../ruuah/include/` has **zero** bidi/RTL surface, so reordering in the core breaks ABI
   compatibility — the project's whole thesis — and makes every RTL line diverge from the
   oracle *by construction*, deleting the only correctness signal there is. Ghostty's own
@@ -333,15 +381,16 @@ overnight is indistinguishable from a regression you caused.
 Rust 1.93.1, edition 2024, resolver 3. `cargo test --workspace` is the gate.
 
 Dependencies stay deliberately few: `vte`, `unicode-width`, `thiserror`, `serde`, `toml`,
-`rustix` (slice 5 step 3) and `swash` (step 4, font parsing + rasterization + the shaper 5.5
-will need). `portable-pty` was evaluated for the pty host and rejected — on
+`rustix` (slice 5 step 3), `swash` (step 4, font parsing + rasterization + the shaper 5.5 will
+need) and `wezterm-bidi` (5.5, chosen by conformance measurement). `portable-pty` was evaluated for the pty host and rejected — on
 macOS it costs thirteen crates including `serial2`, a serial-port library, and a second
 `thiserror` major version alongside the workspace's. `rustix` costs three and the pty dance is
 about sixty lines we own. **`cargo fmt --all` reformats the whole repo**, which was never
 rustfmt-clean; format only the files a change actually touches, or the diff drowns.
 
 ```sh
-./scripts/build-oracle.sh      # build libghostty-vt into vendor/ (../ruuah stays clean)
+./scripts/build-oracle.sh      # build libghostty-vt into vendor/ (the core's oracle)
+./scripts/fetch-ucd.sh         # vendor the Unicode bidi suite (the reordering oracle) (../ruuah stays clean)
 cargo test --workspace         # 32 tests
 cargo run -p ruuah-vt-difftest            # the corpus report (binary is `difftest`)
 cargo run -p ruuah-vt-difftest -- --dump  # plus both grids, rendered, per case
@@ -376,6 +425,9 @@ and `lib/`, bypassing the build script).
 - `crates/render/tests/redraw.rs` — the pixel harness: incremental equals full, plus the
   control that proves it can fail, plus the logical-order pin 5.5 must flip.
 - `crates/render/tests/vim.rs` — the acceptance gate. Writes a BMP to the temp dir for eyes.
+- `crates/frame/src/bidi.rs` — reordering, and the two terminal policies on top of the UBA
+  (LTR base, segments bounded by box drawing).
+- `crates/frame/tests/bidi_conformance.rs` — the Unicode oracle, run against our own layout.
 - `crates/ghostty/tests/abi_layout.rs` — the ABI pin. Read before touching `sys`.
 - `crates/ghostty/tests/oracle.rs` — what the oracle is known to read correctly.
 - Conformance canon (not yet wired in): xterm ctlseqs, DEC STD 070, esctest2 (the CI

@@ -1,0 +1,4 @@
+# Which Unicode bidi conformance suite the reordering was verified against.
+# Written by scripts/fetch-ucd.sh; commit this file when it changes.
+version = "17.0.0"
+source = "https://www.unicode.org/Public/UCD/latest/ucd"

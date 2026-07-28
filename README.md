@@ -41,12 +41,12 @@ possible at all. Ghostty enforces the same split physically between `src/termina
 | 3 | Paged scrollback with an exact row budget | `v0.3.0` |
 | 4 | Reflow on resize, including scrollback and cursor mapping | `v0.4.0` |
 | 5 | Damage tracking, frame channel, pty host, and a renderer that draws vim | `v0.5.0` |
+| 5.5a | Display bidi: Hebrew reorders, measured against the Unicode conformance suite | - |
 
-**170 tests green.** Corpus: 78 cases, 71 match / 7 diff, 78/78 met expectation.
+**184 tests green.** Corpus: 78 cases, 71 match / 7 diff, 78/78 met expectation.
 
-Next is **slice 5.5, display bidi**. Everything under it is in place: a cell carries its whole
-grapheme cluster to the renderer, Hebrew reaches pixels through font fallback, and the renderer
-never assumes a direction.
+Next is the rest of **slice 5.5: shaping**. Reordering has landed and the seam held - the
+renderer was not touched, because it never assumed a direction.
 
 ## How correctness is established
 
@@ -66,10 +66,12 @@ proof that the harness can still tell things apart - a corpus where nothing ever
 cannot demonstrate that it detects disagreement. When a behaviour gets implemented, its case
 *fails*, and gets promoted to `match`. A harness that cannot be wrong is not evidence.
 
-**2. Extend the harness before the slice. Six for six.** Every single slice has had a blind
+**2. Extend the harness before the slice. Seven for seven.** Every single slice has had a blind
 spot that would have reported success for a wrong implementation, and each was found by asking
 "can the harness even see this?" *before* writing code. Twice in slice 5 the blind spot was
-total: nothing could observe a concurrency bug, and later, nothing could observe a pixel.
+total: nothing could observe a concurrency bug, and later, nothing could observe a pixel. The
+bidi suite kept the streak going - it caught a real bug on its first run, a fast path that
+skipped the algorithm for plain text without accounting for the base direction.
 
 **3. Prove the harness can fail.** Both slice 5 harnesses ship a deliberately broken control
 alongside the real one. `read_into_unsynchronized_for_testing` reads frames with the seqlock
@@ -128,9 +130,35 @@ thesis, and would make every RTL line diverge from the oracle *by construction* 
 only correctness signal there is. Ghostty's own bidi-adjacent code sits in the font shaper too.
 
 So the renderer's only input is **runs**, and a `Run` carries a `Direction` plus `column_of`.
-Nothing emits a right-to-left run yet. The seam exists so that when display bidi lands it
-changes the run builder and not one line of drawing code. A renderer that added an index to a
-run's start would compile, pass today, and draw every Hebrew line backwards later.
+That seam is what made slice 5.5 cheap: turning reordering on changed the run builder and
+`bidi.rs`, and **not one line of drawing code**. A renderer that had added an index to a run's
+start instead would have compiled, passed every test before 5.5, and drawn Hebrew backwards
+after it.
+
+**Reordering is measured, not eyeballed.** `crates/frame/tests/bidi_conformance.rs` runs all
+91,707 `BidiCharacterTest` cases through the real `visual_spans` path; `./scripts/fetch-ucd.sh`
+vendors the suite and `ucd.lock` pins the Unicode revision. The algorithm underneath is
+`wezterm-bidi`, chosen by running it over the whole suite rather than by reputation:
+770,241/770,241 and 91,707/91,707 on levels and visual order, and it takes `&[char]` and
+returns contiguous level runs, which is why a `Run` stayed a plain slice.
+
+Two policies sit on top of the UBA, and Unicode has no opinion about either, so both are
+unit-tested separately:
+
+- **The base direction is LTR**, not auto. A grid is column-addressed by the program drawing
+  into it, so auto-detection would move a Hebrew status line written at column 0 to the right
+  edge. RTL runs still reorder within their own span.
+- **Segments are bounded by box drawing** (U+2500..=U+259F). Whole-line UBA across a table
+  moves the frame characters relative to the text they enclose.
+
+What that produces, through the real terminal path:
+
+| logical | visual |
+|---|---|
+| `שלום עולם` | `םלוע םולש` (reads right to left, word order kept) |
+| `let msg = "שלום";` | `let msg = "םולש";` (code stays put) |
+| `גיל 42 שנה` | `הנש 42 ליג` (the number stays `42`, not `24`) |
+| `│אבג│abc│` | `│גבא│abc│` (bars stay in columns 0, 4, 8) |
 
 **Fonts.** No single font can draw this terminal. Measured across every font on the machine:
 Menlo maps Hebrew to glyph 0, and Arial Hebrew maps `A` to glyph 0. So fallback is required
@@ -162,7 +190,8 @@ its Hebrew GSUB/GPOS has been verified, so slice 5.5 adds no new dependency.
 Requires the oracle, which is built from a Ghostty checkout. Zig must be exactly `0.16.0`.
 
 ```sh
-./scripts/build-oracle.sh            # build libghostty-vt into vendor/
+./scripts/build-oracle.sh            # the core's oracle: libghostty-vt into vendor/
+./scripts/fetch-ucd.sh               # the reordering oracle: the Unicode bidi suite
 cargo test --workspace               # the gate
 cargo run -p ruuah-vt-difftest       # the corpus report
 cargo run -p ruuah-vt-difftest -- --dump   # plus both grids, rendered, per case
@@ -179,7 +208,8 @@ corpus verdict flipping overnight is indistinguishable from a regression you cau
 
 ## Dependencies
 
-Deliberately few: `vte`, `unicode-width`, `thiserror`, `serde`, `toml`, `rustix`, `swash`.
+Deliberately few: `vte`, `unicode-width`, `thiserror`, `serde`, `toml`, `rustix`, `swash`,
+`wezterm-bidi`.
 
 `portable-pty` was evaluated for the pty host and rejected - on macOS it costs thirteen crates
 including a serial-port library and a second `thiserror` major version. `rustix` costs three,

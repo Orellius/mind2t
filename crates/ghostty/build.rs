@@ -52,6 +52,7 @@ fn main() {
         .allowlist_function("ghostty_type_json")
         .allowlist_type("Ghostty(Result|TerminalData|TerminalScreen)")
         .allowlist_type("Ghostty(CellData|CellWide|CellContentTag|RowData)")
+        .allowlist_type("Ghostty(CellSemanticContent|RowSemanticPrompt)")
         .allowlist_type("Ghostty(PointTag|StyleColorTag)")
         .allowlist_type("GhosttyRenderState(Data|Dirty|RowData|Option|RowOption)?")
         .allowlist_type("Ghostty(SgrUnderline)")

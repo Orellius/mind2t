@@ -21,7 +21,7 @@
 use std::path::{Path, PathBuf};
 
 use ruuah_vt_frame::{BaseDirection, Direction, PackedCell, visual_spans};
-use ruuah_vt_snapshot::Wide;
+use ruuah_vt_snapshot::{Semantic, Wide};
 
 fn ucd(name: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -87,7 +87,7 @@ fn visual_order(case: &Case) -> Vec<usize> {
     let row: Vec<PackedCell> = case
         .chars
         .iter()
-        .map(|c| PackedCell::new(&c.to_string(), 0, Wide::Narrow))
+        .map(|c| PackedCell::new(&c.to_string(), 0, Wide::Narrow, Semantic::Output))
         .collect();
 
     let mut order = Vec::with_capacity(row.len());

@@ -4,6 +4,7 @@
 //! is consumed through the same published C ABI that RUUAH's Swift app already links,
 //! so agreement here is agreement with a shipping terminal, not with a model of one.
 
+mod convert;
 pub mod sys;
 pub mod render;
 pub mod terminal;

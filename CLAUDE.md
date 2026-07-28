@@ -25,20 +25,30 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
-**Slice 0 (the gate) passed, slice 1 (parser + cell grid) is done.**
+**Slices 0, 1 and 2 are done.**
 
-Slice 1, `[tested]`: `vte 0.15` drives a flat row-major cell array. Echo, full SGR (attributes,
-palette, bright, indexed, direct RGB in both semicolon and colon forms, underline styles and
-underline colour), and cursor movement (CUU/CUD/CUF/CUB/CNL/CPL/CHA/VPA/CUP). 54 tests green;
-22 corpus cases, 18 MATCH / 4 DIFF, 22/22 met expectation.
+Slice 2, `[tested]`: the autowrap phantom state (with DECAWM), scrolling and scroll regions
+(DECSTBM, IND, RI, NEL, SU, SD), the alternate screen (47/1047/1048/1049), tab stops
+(HTS, TBC, CHT, CBT), and the erase / insert / delete family (EL, ED, ECH, ICH, DCH, IL, DL),
+plus DECOM, DECTCEM, DECSC/DECRC and RIS. 74 tests green; 28 corpus cases, 22 MATCH / 6 DIFF,
+28/28 met expectation.
 
-The four that still DIFF are all **slice 2** and are labelled as such in the corpus:
-`autowrap-phantom`, `erase-in-line`, `alternate-screen`, `scroll-past-bottom`.
+Slice 1, `[tested]`: `vte 0.15` driving a flat row-major cell array. Echo, full SGR, cursor
+movement.
+
+The six remaining DIFF cases are **not slice boundaries** — slice 2 closed every one of those.
+They are named omissions kept deliberately, because a corpus where nothing differs cannot show
+the harness detects disagreement: DECALN, private/selective erase, REP, IRM, grapheme-cluster
+mode 2027, and reverse wraparound (mode 45).
 
 Cell layout is settled and enforced: `Cell` is **8 bytes**, asserted at compile time in
 `cell.rs`. Style is an interned `u16` into a `StyleTable`; grapheme continuations live in a
 side map keyed by flat cell index. Moving that map and table into a page's own allocation is
 slice 3 work, and is what unlocks scrollback compression.
+
+**esctest2 is deferred, not skipped.** It drives a terminal through a real PTY and reads state
+back via DSR/DA query responses. This core has neither by design, so wiring it up needs a PTY
+host — slice 5/6 territory. The differential corpus covers the same semantics without one.
 
 **Slice 0 detail.** The differential oracle harness runs, and the project is real.
 

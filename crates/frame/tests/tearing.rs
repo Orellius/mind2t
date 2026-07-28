@@ -18,7 +18,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use ruuah_vt_frame::{Frame, FrameReader, PackedCell, ReadOutcome, channel};
-use ruuah_vt_snapshot::Wide;
+use ruuah_vt_snapshot::{Semantic, Wide};
 
 const COLS: u16 = 120;
 const ROWS: u16 = 40;
@@ -66,7 +66,7 @@ fn hammer(synchronized: bool) -> Tally {
     let scribe = thread::spawn(move || {
         let mut stamp: u16 = 1;
         while !writer_stop.load(Ordering::Relaxed) {
-            let cell = PackedCell::new("x", stamp, Wide::Narrow);
+            let cell = PackedCell::new("x", stamp, Wide::Narrow, Semantic::Output);
             writer
                 .publish(COLS, ROWS, |frame| {
                     for y in 0..ROWS {
@@ -159,7 +159,7 @@ fn a_publish_larger_than_the_buffer_is_refused_rather_than_truncated() {
 
     writer
         .publish(10, 4, |f| {
-            f.cell(0, 0, PackedCell::new("a", 0, Wide::Narrow))
+            f.cell(0, 0, PackedCell::new("a", 0, Wide::Narrow, Semantic::Output))
         })
         .expect("fits");
     assert!(matches!(
@@ -168,7 +168,7 @@ fn a_publish_larger_than_the_buffer_is_refused_rather_than_truncated() {
     ));
 
     let refused = writer.publish(11, 4, |f| {
-        f.cell(0, 0, PackedCell::new("z", 0, Wide::Narrow))
+        f.cell(0, 0, PackedCell::new("z", 0, Wide::Narrow, Semantic::Output))
     });
     let error = refused.expect_err("11 columns do not fit a 10 column buffer");
     assert_eq!(error.wanted, (11, 4));
@@ -190,7 +190,7 @@ fn an_unread_frame_reports_fresh_once_and_unchanged_after() {
 
     let generation = writer
         .publish(4, 2, |f| {
-            f.cell(0, 0, PackedCell::new("q", 0, Wide::Narrow))
+            f.cell(0, 0, PackedCell::new("q", 0, Wide::Narrow, Semantic::Output))
         })
         .expect("fits");
 
@@ -199,7 +199,7 @@ fn an_unread_frame_reports_fresh_once_and_unchanged_after() {
 
     writer
         .publish(4, 2, |f| {
-            f.cell(1, 0, PackedCell::new("r", 0, Wide::Narrow))
+            f.cell(1, 0, PackedCell::new("r", 0, Wide::Narrow, Semantic::Output))
         })
         .expect("fits");
     assert!(matches!(

@@ -11,6 +11,7 @@
 
 use crate::cell::Cell;
 use crate::grid::Grid;
+use crate::history::History;
 use crate::style::StyleId;
 
 /// A saved cursor (DECSC / DECRC, and the alternate-screen save).
@@ -34,12 +35,16 @@ pub struct Screen {
     pub scroll_top: u16,
     pub scroll_bottom: u16,
     pub saved: Option<SavedCursor>,
+    /// Rows that have scrolled off the top of this screen. The alternate screen is created
+    /// with a zero budget, which is how it ends up with no scrollback.
+    pub history: History,
 }
 
 impl Screen {
-    pub fn new(cols: u16, rows: u16) -> Screen {
+    pub fn new(cols: u16, rows: u16, max_scrollback: usize) -> Screen {
         Screen {
             grid: Grid::new(cols, rows),
+            history: History::new(cols, max_scrollback),
             x: 0,
             y: 0,
             pending_wrap: false,
@@ -95,8 +100,7 @@ impl Screen {
     /// a scrolling area.
     pub fn line_feed(&mut self, blank: Cell) {
         if self.y == self.scroll_bottom {
-            self.grid
-                .scroll_up(self.scroll_top, self.scroll_bottom, 1, blank);
+            self.scroll_region_up(1, blank);
         } else if self.y < self.last_row() {
             self.y += 1;
         }
@@ -208,6 +212,23 @@ impl Screen {
 
     /// SU / SD: scroll the region without moving the cursor.
     pub fn scroll_up(&mut self, count: u16, blank: Cell) {
+        self.scroll_region_up(count, blank);
+    }
+
+    /// Scrolls the region up, saving what leaves to history first.
+    ///
+    /// Only when the region starts at the top of the screen. A row pushed out of a region
+    /// that begins lower down has not left the screen -- it has been overwritten inside it,
+    /// and putting it in scrollback would invent history that never scrolled. Same reason
+    /// `delete_lines` does not route through here.
+    fn scroll_region_up(&mut self, count: u16, blank: Cell) {
+        if self.scroll_top == 0 && self.history.enabled() {
+            let limit = count.min(self.rows());
+            for y in 0..limit {
+                let row = self.grid.extract_row(y);
+                self.history.push(row);
+            }
+        }
         self.grid
             .scroll_up(self.scroll_top, self.scroll_bottom, count, blank);
     }
@@ -237,8 +258,10 @@ impl Screen {
         }
     }
 
-    /// Clears the whole buffer and homes the cursor, as entering the alternate screen does.
+    /// Clears the whole buffer, its history and the cursor, as entering the alternate
+    /// screen does.
     pub fn reset(&mut self, blank: Cell) {
+        self.history.clear();
         for y in 0..self.rows() {
             self.grid.blank_row(y, blank);
         }
@@ -293,21 +316,21 @@ mod tests {
 
     #[test]
     fn an_inverted_scroll_region_is_rejected_not_clamped() {
-        let mut screen = Screen::new(10, 5);
+        let mut screen = Screen::new(10, 5, 0);
         assert!(!screen.set_scroll_region(3, 1));
         assert_eq!((screen.scroll_top, screen.scroll_bottom), (0, 4));
     }
 
     #[test]
     fn a_region_past_the_last_row_is_rejected() {
-        let mut screen = Screen::new(10, 5);
+        let mut screen = Screen::new(10, 5, 0);
         assert!(!screen.set_scroll_region(0, 9));
         assert_eq!(screen.scroll_bottom, 4);
     }
 
     #[test]
     fn line_feed_at_the_bottom_margin_scrolls_only_the_region() {
-        let mut screen = Screen::new(10, 5);
+        let mut screen = Screen::new(10, 5, 0);
         for y in 0..5 {
             put(&mut screen, y, &format!("row{y}"));
         }
@@ -324,7 +347,7 @@ mod tests {
 
     #[test]
     fn reverse_index_at_the_top_margin_scrolls_the_region_down() {
-        let mut screen = Screen::new(10, 4);
+        let mut screen = Screen::new(10, 4, 0);
         for y in 0..4 {
             put(&mut screen, y, &format!("row{y}"));
         }
@@ -340,7 +363,7 @@ mod tests {
 
     #[test]
     fn insert_and_delete_chars_shift_within_the_row_only() {
-        let mut screen = Screen::new(8, 2);
+        let mut screen = Screen::new(8, 2, 0);
         put(&mut screen, 0, "abcdef");
         put(&mut screen, 1, "keepme");
 
@@ -355,7 +378,7 @@ mod tests {
 
     #[test]
     fn erase_in_line_covers_each_mode() {
-        let mut screen = Screen::new(6, 1);
+        let mut screen = Screen::new(6, 1, 0);
 
         put(&mut screen, 0, "abcdef");
         screen.move_to(3, 0);
@@ -374,7 +397,7 @@ mod tests {
 
     #[test]
     fn insert_lines_stops_at_the_bottom_margin_not_the_screen() {
-        let mut screen = Screen::new(6, 5);
+        let mut screen = Screen::new(6, 5, 0);
         for y in 0..5 {
             put(&mut screen, y, &format!("r{y}"));
         }
@@ -390,7 +413,7 @@ mod tests {
 
     #[test]
     fn line_ops_outside_the_region_do_nothing() {
-        let mut screen = Screen::new(6, 5);
+        let mut screen = Screen::new(6, 5, 0);
         for y in 0..5 {
             put(&mut screen, y, &format!("r{y}"));
         }
@@ -403,7 +426,7 @@ mod tests {
 
     #[test]
     fn any_cursor_movement_cancels_a_pending_wrap() {
-        let mut screen = Screen::new(6, 2);
+        let mut screen = Screen::new(6, 2, 0);
         screen.pending_wrap = true;
         screen.move_to(1, 0);
         assert!(!screen.pending_wrap);
@@ -411,7 +434,7 @@ mod tests {
 
     #[test]
     fn a_wrapped_line_records_both_flags_for_reflow() {
-        let mut screen = Screen::new(6, 3);
+        let mut screen = Screen::new(6, 3, 0);
         screen.y = 0;
         screen.pending_wrap = true;
         screen.wrap_line(Cell::BLANK);
@@ -428,7 +451,7 @@ mod tests {
     #[test]
     fn a_blanked_row_loses_its_wrap_flags() {
         // Otherwise a recycled row claims to continue a line that scrolled away.
-        let mut screen = Screen::new(6, 2);
+        let mut screen = Screen::new(6, 2, 0);
         if let Some(meta) = screen.grid.row_meta_mut(0) {
             meta.wrap = true;
             meta.wrap_continuation = true;

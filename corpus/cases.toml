@@ -204,3 +204,83 @@ cols = 6
 rows = 3
 bytes = "\u001B[?45habcdefgh\u001B[1G\u0008"
 note = "Mode 45 lets backspace at column 0 wrap to the end of the previous row. Ghostty has it (modes.zig: reverse_wrap = 45); not implemented here. The first version of this case backspaced on row 0, where there is no previous row, so both sides agreed and it proved nothing."
+
+# ---------------------------------------------------------------------------
+# Slice 3: scrollback. Every case here stays far under the point where either
+# side prunes -- Ghostty's limit is a memory budget scaled by width (measured
+# 2026-07-28: 3000 lines kept 2998 at 6 columns but only 634 at 80), while
+# this core's is a row count, so the prune POLICIES are not comparable. Their
+# CONTENTS are, and that is what these check. Prune policy is unit-tested in
+# history.rs instead.
+# ---------------------------------------------------------------------------
+
+[[case]]
+name = "scrollback-basic"
+expect = "match"
+cols = 10
+rows = 3
+scrollback = 50
+bytes = "l1\r\nl2\r\nl3\r\nl4\r\nl5\r\nl6\r\nl7"
+note = "Rows scrolled off the top land in history, oldest first."
+
+[[case]]
+name = "scrollback-none-without-budget"
+expect = "match"
+cols = 10
+rows = 3
+bytes = "l1\r\nl2\r\nl3\r\nl4\r\nl5"
+note = "With no budget the same stream keeps no history at all. Guards the default."
+
+[[case]]
+name = "scrollback-styles-survive"
+expect = "match"
+cols = 10
+rows = 2
+scrollback = 50
+bytes = "\u001B[31mred\r\n\u001B[1;42mboldgreen\r\nplain\r\nlast"
+note = "A row keeps its styles across the move into a page, which re-interns them into the page's own table."
+
+[[case]]
+name = "scrollback-wrapped-line"
+expect = "match"
+cols = 6
+rows = 2
+scrollback = 50
+bytes = "abcdefghijkl\r\nx\r\ny\r\nz"
+note = "Soft-wrap flags must survive into history, or slice 4 cannot rejoin the logical line."
+
+[[case]]
+name = "scrollback-graphemes"
+expect = "match"
+cols = 8
+rows = 2
+scrollback = 50
+bytes = "e\u0301\u4E16!\r\nsecond\r\nthird\r\nfourth"
+note = "Combining marks and wide cells survive the move into a page."
+
+[[case]]
+name = "scrollback-erased-background"
+expect = "match"
+cols = 8
+rows = 2
+scrollback = 50
+bytes = "\u001B[41m\u001B[2Kfilled\r\nb\r\nc\r\nd"
+note = "A background-only cell keeps its colour in history. This is the case that would have passed silently before the oracle learned to read bg-colour cells."
+
+[[case]]
+name = "scrollback-alt-screen-has-none"
+expect = "match"
+cols = 10
+rows = 2
+scrollback = 50
+bytes = "keep\r\nme\r\n\u001B[?1049ha\r\nb\r\nc\r\nd"
+note = "The alternate screen has no scrollback by protocol; its scrolled rows are discarded."
+
+[[case]]
+name = "scrollback-scroll-region-does-not-feed-history"
+expect = "match"
+cols = 10
+rows = 5
+scrollback = 50
+bytes = "a\r\nb\r\nc\r\nd\r\ne\u001B[2;4r\u001B[4;1Hx\r\ny\r\nz"
+note = "A region that does not start at the top of the screen pushes rows out inside the screen, not off it. Those must not become history."

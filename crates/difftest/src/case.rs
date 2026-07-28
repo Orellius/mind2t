@@ -60,6 +60,10 @@ pub struct Case {
     pub cols: u16,
     #[serde(default = "default_rows")]
     pub rows: u16,
+    /// Lines of scrollback to retain. Zero keeps the pre-slice-3 behaviour, so every case
+    /// written before scrollback existed is unaffected.
+    #[serde(default)]
+    pub scrollback: usize,
     /// The stream to feed both implementations, as a TOML basic string. Control
     /// bytes use TOML's own escapes, so ESC is written u001B with a leading backslash.
     pub bytes: String,

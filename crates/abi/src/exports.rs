@@ -76,7 +76,15 @@ pub unsafe extern "C" fn ghostty_terminal_new(
     out: *mut GhosttyTerminal,
     options: GhosttyTerminalOptions,
 ) -> GhosttyResult {
-    if out.is_null() || options.cols == 0 || options.rows == 0 {
+    if out.is_null() {
+        return GHOSTTY_INVALID_VALUE;
+    }
+    // The out-param is cleared on failure, not left alone. Measured on the real library
+    // (`oracle.rs::a_failed_creation_nulls_the_out_param`, and `terminal.zig:328`): a consumer
+    // that checks the handle instead of the return code would otherwise read whatever was in
+    // that variable before the call, and a stale non-null value looks like success.
+    if options.cols == 0 || options.rows == 0 {
+        unsafe { *out = std::ptr::null_mut() };
         return GHOSTTY_INVALID_VALUE;
     }
     let terminal = Box::new(Terminal {

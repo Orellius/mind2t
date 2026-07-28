@@ -30,6 +30,16 @@ pub enum CorpusError {
 
     #[error("corpus at {path} declares no cases")]
     Empty { path: String },
+
+    #[error(
+        "corpus at {path} declares {declared} cases but loaded {found}; \
+         if this was intentional, update `declared_cases`"
+    )]
+    CountMismatch {
+        path: String,
+        declared: usize,
+        found: usize,
+    },
 }
 
 /// What a case is expected to prove.
@@ -103,11 +113,21 @@ fn default_rows() -> u16 {
 
 #[derive(Debug, Deserialize)]
 struct Corpus {
+    /// How many cases this file is asserted to contain. Deliberately required rather than
+    /// defaulted: a corpus that forgets to declare its size fails to parse, so the check
+    /// cannot be dropped by omission.
+    declared_cases: usize,
     #[serde(rename = "case", default)]
     cases: Vec<Case>,
 }
 
 /// Reads and parses a corpus file. An empty corpus is an error, not an empty pass.
+///
+/// The declared count is enforced here rather than in a test because every consumer goes
+/// through this function: a corpus that silently loses cases takes the `difftest` binary down
+/// with it instead of letting it report a confident verdict over a fraction of the corpus.
+/// Mutation found this the hard way -- truncating the case list to 30 printed
+/// "30/30 met expectation" and exited 0, with 67 cases gone and every gate green.
 pub fn load(path: &str) -> Result<Vec<Case>, CorpusError> {
     let text = std::fs::read_to_string(path).map_err(|source| CorpusError::Read {
         path: path.to_string(),
@@ -122,5 +142,83 @@ pub fn load(path: &str) -> Result<Vec<Case>, CorpusError> {
             path: path.to_string(),
         });
     }
+    if corpus.cases.len() != corpus.declared_cases {
+        return Err(CorpusError::CountMismatch {
+            path: path.to_string(),
+            declared: corpus.declared_cases,
+            found: corpus.cases.len(),
+        });
+    }
     Ok(corpus.cases)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Writes a corpus with `declared` in the header and `actual` cases in the body.
+    fn corpus_file(name: &str, declared: usize, actual: usize) -> String {
+        let mut text = format!("declared_cases = {declared}\n");
+        for i in 0..actual {
+            text.push_str(&format!(
+                "\n[[case]]\nname = \"c{i}\"\nexpect = \"match\"\nbytes = \"x\"\n"
+            ));
+        }
+        let path = std::env::temp_dir().join(format!("ruuah-vt-{name}.toml"));
+        std::fs::write(&path, text).expect("write the fixture");
+        path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn a_corpus_whose_count_matches_its_header_loads() {
+        let path = corpus_file("count-ok", 3, 3);
+        assert_eq!(load(&path).expect("loads").len(), 3);
+    }
+
+    /// The control. Truncating the case list is exactly what a slicing bug does, and before
+    /// this check the harness reported "30/30 met expectation" and exited 0 with 67 cases
+    /// missing. A count that only ever grows would not catch it either -- the assertion has to
+    /// be equality.
+    #[test]
+    fn a_corpus_that_lost_cases_is_refused() {
+        let path = corpus_file("count-short", 97, 30);
+        let error = load(&path).expect_err("a truncated corpus must not load");
+        assert!(
+            matches!(
+                error,
+                CorpusError::CountMismatch {
+                    declared: 97,
+                    found: 30,
+                    ..
+                }
+            ),
+            "got {error:?}"
+        );
+    }
+
+    #[test]
+    fn a_corpus_that_gained_an_undeclared_case_is_refused() {
+        let path = corpus_file("count-long", 2, 3);
+        assert!(matches!(
+            load(&path).expect_err("an undeclared case must not load"),
+            CorpusError::CountMismatch { declared: 2, found: 3, .. }
+        ));
+    }
+
+    /// Without this, a header-less corpus would parse and the floor would be silently absent
+    /// in exactly the file it exists to protect.
+    #[test]
+    fn a_corpus_with_no_declared_count_does_not_parse() {
+        let path = std::env::temp_dir().join("ruuah-vt-count-missing.toml");
+        std::fs::write(
+            &path,
+            "[[case]]\nname = \"c\"\nexpect = \"match\"\nbytes = \"x\"\n",
+        )
+        .expect("write the fixture");
+
+        assert!(matches!(
+            load(&path.to_string_lossy()).expect_err("must not parse"),
+            CorpusError::Parse { .. }
+        ));
+    }
 }

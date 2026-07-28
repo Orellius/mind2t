@@ -147,6 +147,15 @@ impl Frame {
         self.row_flags.get(usize::from(y)).is_some_and(|f| f.0)
     }
 
+    /// Whether this frame corresponds to a real publish.
+    ///
+    /// False for a frame that has never been read, and for one a mid-copy publish invalidated
+    /// -- see `ReadOutcome::Skipped`. A caller that checks the outcome never needs this; it
+    /// exists so that one which does not still cannot draw a mixture of two frames unnoticed.
+    pub fn is_valid(&self) -> bool {
+        self.generation != 0
+    }
+
     /// Whether the renderer still owes this row a repaint, given the last frame it drew.
     ///
     /// Comparing stamps rather than consuming flags is what makes a dropped frame harmless:

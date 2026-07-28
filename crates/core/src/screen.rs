@@ -169,9 +169,18 @@ impl Screen {
         self.pending_wrap = false;
     }
 
-    /// ED: 0 erases cursor to end of screen, 1 start to cursor, 2 everything.
-    /// Mode 3 clears scrollback, which does not exist until slice 3.
+    /// ED: 0 erases cursor to end of screen, 1 start to cursor, 2 everything,
+    /// 3 the scrollback.
+    ///
+    /// Mode 3 returns before the `pending_wrap` reset rather than falling through it.
+    /// Upstream dispatches it straight to `eraseHistory` (`Terminal.zig:3398`) and the other
+    /// three modes each clear the phantom state themselves, so touching it here would make
+    /// ED 3 cancel a deferred wrap that upstream leaves standing.
     pub fn erase_in_display(&mut self, mode: u16, blank: Cell) {
+        if mode == 3 {
+            self.history.clear();
+            return;
+        }
         match mode {
             0 => {
                 self.grid.clear_span(self.y, self.x, self.last_col(), blank);

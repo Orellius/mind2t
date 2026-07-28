@@ -36,6 +36,34 @@ fn every_case_produces_the_verdict_the_corpus_declares() {
     assert!(wrong.is_empty(), "cases behaved unexpectedly:\n  {}", wrong.join("\n  "));
 }
 
+/// Counts `[[case]]` headers in the raw file, trusting nothing in the loader.
+///
+/// The independence is the entire point. `load` enforces the declared count itself, but that
+/// check runs *before* it returns, so a loader that drops cases on the way out passes it --
+/// measured, not assumed: with the check in place, truncating the returned list to 30 still
+/// printed "30/30 met expectation" and exited 0. Re-deriving the count from the bytes is what
+/// closes that, because it shares no code with the thing it is checking.
+fn cases_in_the_file() -> usize {
+    std::fs::read_to_string(DEFAULT_CORPUS)
+        .expect("the shipped corpus must be readable")
+        .lines()
+        .filter(|line| line.trim() == "[[case]]")
+        .count()
+}
+
+#[test]
+fn every_case_in_the_file_reaches_the_runner() {
+    let loaded = load(DEFAULT_CORPUS).expect("corpus").len();
+    let in_file = cases_in_the_file();
+
+    assert_eq!(
+        loaded, in_file,
+        "the file declares {in_file} cases but {loaded} reached the runner; \
+         a verdict over a subset is not a verdict over the corpus"
+    );
+    assert!(in_file >= 97, "the corpus must not shrink below its slice-7 size, got {in_file}");
+}
+
 #[test]
 fn the_corpus_exercises_both_directions() {
     // The guard against a harness that is trivially always-right. If every case expects

@@ -54,7 +54,11 @@ pub trait Surface {
     /// Returns owned bytes rather than a borrow because a GPU backend has to read them back,
     /// and a trait that could only be implemented by something holding a CPU buffer would
     /// have quietly decided slice 7's outcome.
-    fn read_pixels(&self) -> Vec<u8>;
+    ///
+    /// Takes `&mut self` because reading is where a deferred backend does its work and
+    /// retires what it has already done. A shared borrow forced the GPU surface to keep every
+    /// operation it had ever recorded, since it could never clear them.
+    fn read_pixels(&mut self) -> Vec<u8>;
 }
 
 impl Surface for Canvas {
@@ -86,7 +90,7 @@ impl Surface for Canvas {
         Canvas::blend_mask(self, x, y, mask_width, mask_height, coverage, color)
     }
 
-    fn read_pixels(&self) -> Vec<u8> {
+    fn read_pixels(&mut self) -> Vec<u8> {
         Canvas::pixels(self).to_vec()
     }
 }
@@ -175,7 +179,7 @@ impl Surface for TruncatingSurface {
         }
     }
 
-    fn read_pixels(&self) -> Vec<u8> {
+    fn read_pixels(&mut self) -> Vec<u8> {
         self.pixels.clone()
     }
 }

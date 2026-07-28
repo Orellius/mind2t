@@ -76,7 +76,7 @@ impl<S: Surface> Renderer<S> {
     }
 
     /// The finished pixels, however the backend stores them.
-    pub fn pixels(&self) -> Vec<u8> {
+    pub fn pixels(&mut self) -> Vec<u8> {
         self.canvas.read_pixels()
     }
 

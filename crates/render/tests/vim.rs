@@ -42,7 +42,10 @@ fn wait_for(reader: &FrameReader, wanted: impl Fn(&Frame) -> bool) -> Frame {
     let deadline = Instant::now() + PATIENCE;
     while Instant::now() < deadline {
         reader.read_into(&mut frame);
-        if wanted(&frame) {
+        // A read interrupted mid-copy leaves the frame invalid rather than untouched, so it
+        // must not be inspected -- this loop used to discard the outcome and ask `wanted`
+        // about whatever it was holding.
+        if frame.is_valid() && wanted(&frame) {
             return frame;
         }
         std::thread::sleep(Duration::from_millis(10));

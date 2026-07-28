@@ -30,7 +30,7 @@ pub enum Wide {
 }
 
 /// Underline decoration, matching the SGR 4:n sub-parameters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Underline {
     None,
     Single,
@@ -41,7 +41,7 @@ pub enum Underline {
 }
 
 /// A colour slot in a style: unset, a palette index, or a direct RGB value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Color {
     Default,
     Palette(u8),
@@ -49,7 +49,7 @@ pub enum Color {
 }
 
 /// Visual attributes applied to a cell.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Style {
     pub fg: Color,
     pub bg: Color,

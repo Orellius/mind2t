@@ -25,8 +25,22 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
-**Slice 0 (the gate) is done and passed.** The differential oracle harness runs, and the
-project is real. Nothing downstream is built yet — that was the instruction.
+**Slice 0 (the gate) passed, slice 1 (parser + cell grid) is done.**
+
+Slice 1, `[tested]`: `vte 0.15` drives a flat row-major cell array. Echo, full SGR (attributes,
+palette, bright, indexed, direct RGB in both semicolon and colon forms, underline styles and
+underline colour), and cursor movement (CUU/CUD/CUF/CUB/CNL/CPL/CHA/VPA/CUP). 54 tests green;
+22 corpus cases, 18 MATCH / 4 DIFF, 22/22 met expectation.
+
+The four that still DIFF are all **slice 2** and are labelled as such in the corpus:
+`autowrap-phantom`, `erase-in-line`, `alternate-screen`, `scroll-past-bottom`.
+
+Cell layout is settled and enforced: `Cell` is **8 bytes**, asserted at compile time in
+`cell.rs`. Style is an interned `u16` into a `StyleTable`; grapheme continuations live in a
+side map keyed by flat cell index. Moving that map and table into a page's own allocation is
+slice 3 work, and is what unlocks scrollback compression.
+
+**Slice 0 detail.** The differential oracle harness runs, and the project is real.
 
 - `[tested]` 32 tests green, `cargo test --workspace` exit 0.
 - `[tested]` `ruuah-vt-difftest` over 13 corpus cases: 4 MATCH, 9 DIFF, 13/13 met expectation.
@@ -74,6 +88,15 @@ reported path (`cell[0,1].style`, `row[0].wrap`, `cursor.pending_wrap`) is a thi
   arrives with slice 3; do not read `GHOSTTY_POINT_TAG_SCREEN` before then.
 - Cell text is a **grapheme cluster**, not a codepoint — encoded in `Snapshot` from day one
   because it is ranked failure mode 2 and 32 bits per cell is structurally insufficient.
+- **Bidi is a slice 5 (renderer) item and must never enter the core.** Decided 2026-07-28.
+  `../ruuah/include/` has **zero** bidi/RTL surface, so reordering in the core breaks ABI
+  compatibility — the project's whole thesis — and makes every RTL line diverge from the
+  oracle *by construction*, deleting the only correctness signal there is. Ghostty's own
+  bidi-adjacent code sits in the font shaper, not the VT core. Scar
+  `~/.claude/scars/2026-06-11-bidi-terminal-deadend.md` and memory
+  `feedback-no-bidi-in-terminals`: emulator bidi structurally cannot serve a cursor-addressed
+  TUI, because the cursor has no mapping after reorder. **"Support most languages" is not
+  bidi** — it is grapheme clusters plus correct width tables, both of which are slice 1.
 - **The shipped artifact is `libruuah-vt.a`, but cargo cannot name it that.** Measured
   2026-07-28: a package called `libruuah-vt` emits `lib`**`lib`**`ruuah_vt.a`, and
   `[lib] name = "ruuah-vt"` is a hard cargo error — *"library target names cannot contain

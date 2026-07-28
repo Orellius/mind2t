@@ -30,6 +30,8 @@ pub struct Renderer {
     positioned: Vec<PositionedGlyph>,
     /// Whether combining marks are placed by the font. Off is a test control only.
     shaping: bool,
+    /// Whether the caret follows its cell through the bidi layout. Off is a test control only.
+    visual_caret: bool,
     cols: u16,
     rows: u16,
     /// The last generation fully painted. Rows stamped above it are what is owed.
@@ -46,6 +48,7 @@ impl Renderer {
             shaper: Shaper::new(),
             positioned: Vec::with_capacity(8),
             shaping: true,
+            visual_caret: true,
             palette: Palette::xterm(),
             canvas,
             cols,
@@ -74,6 +77,18 @@ impl Renderer {
     #[doc(hidden)]
     pub fn set_shaping_for_testing(&mut self, on: bool) {
         self.shaping = on;
+    }
+
+    /// Puts the caret back at the cursor's logical column, which is where it went before the
+    /// visual mapping existed.
+    ///
+    /// A control, not a feature. On a left-to-right row this is indistinguishable from the
+    /// real path, and that is the point: `tests/caret.rs` requires the two to agree on Latin
+    /// and disagree on Hebrew, so a mapping that had quietly become the identity function
+    /// would fail the second half instead of passing both.
+    #[doc(hidden)]
+    pub fn set_visual_caret_for_testing(&mut self, on: bool) {
+        self.visual_caret = on;
     }
 
     /// Repaints the rows this frame says are stale, and returns how many that was.
@@ -217,13 +232,23 @@ impl Renderer {
     /// Painted as part of the row rather than after every frame, which is what keeps the
     /// redraw invariant true: the core already marks both the row the cursor left and the
     /// row it arrived at as damaged, so a moved cursor repaints both and leaves no ghost.
+    ///
+    /// The column comes from `visual_column`, never from `cursor.x` directly. The cursor is
+    /// reported in logical coordinates, and on a reordered row the cell it names is painted
+    /// somewhere else -- so drawing at `cursor.x` puts the caret on a glyph the program never
+    /// addressed, while still looking entirely reasonable.
     fn draw_cursor(&mut self, frame: &Frame, y: u16) {
         if !frame.cursor.visible || frame.cursor.y != y || frame.cursor.x >= self.cols {
             return;
         }
+        let column = if self.visual_caret {
+            frame.visual_column(frame.cursor.x, y)
+        } else {
+            frame.cursor.x
+        };
         let metrics = self.fonts.metrics();
         let drawn = self.palette.draw(&frame.cursor.style);
-        let left = i32::from(frame.cursor.x) * metrics.width as i32;
+        let left = i32::from(column) * metrics.width as i32;
         let top = i32::from(y) * metrics.height as i32;
 
         self.canvas

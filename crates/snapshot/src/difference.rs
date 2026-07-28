@@ -186,6 +186,13 @@ fn diff_row_at(
             candidate.wrap_continuation,
         ));
     }
+    if oracle.semantic_prompt != candidate.semantic_prompt {
+        out.push(Difference::new(
+            format!("{row_path}.semantic_prompt"),
+            format!("{:?}", oracle.semantic_prompt),
+            format!("{:?}", candidate.semantic_prompt),
+        ));
+    }
     for (x, (o_cell, c_cell)) in oracle.cells.iter().zip(candidate.cells.iter()).enumerate() {
         diff_cell(&format!("{cell_prefix}{x}]"), o_cell, c_cell, out);
     }
@@ -211,6 +218,13 @@ fn diff_cell(path: &str, oracle: &Cell, candidate: &Cell, out: &mut Vec<Differen
             format!("{path}.wide"),
             format!("{:?}", oracle.wide),
             format!("{:?}", candidate.wide),
+        ));
+    }
+    if oracle.semantic != candidate.semantic {
+        out.push(Difference::new(
+            format!("{path}.semantic"),
+            format!("{:?}", oracle.semantic),
+            format!("{:?}", candidate.semantic),
         ));
     }
     diff_style(&format!("{path}.style"), &oracle.style, &candidate.style, out);
@@ -252,7 +266,9 @@ fn quote(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grid::{Color, Cursor, Screen, Underline, Wide, describe_color};
+    use crate::grid::{
+        Color, Cursor, RowSemantic, Screen, Semantic, Underline, Wide, describe_color,
+    };
 
     fn snapshot(cols: u16, rows: u16) -> Snapshot {
         Snapshot {
@@ -270,6 +286,7 @@ mod tests {
                 .map(|_| Row {
                     wrap: false,
                     wrap_continuation: false,
+                    semantic_prompt: RowSemantic::None,
                     cells: (0..cols).map(|_| Cell::blank()).collect(),
                 })
                 .collect(),
@@ -282,6 +299,7 @@ mod tests {
         Row {
             wrap: false,
             wrap_continuation: false,
+            semantic_prompt: RowSemantic::None,
             cells: (0..cols)
                 .map(|x| Cell {
                     text: text.chars().nth(usize::from(x)).map(String::from).unwrap_or_default(),
@@ -324,6 +342,47 @@ mod tests {
         a.history = vec![row_of(4, "same")];
         let b = a.clone();
         assert_eq!(diff(&a, &b), vec![]);
+    }
+
+    /// The control for the semantic layer: snapshots identical but for OSC 133 content must
+    /// still disagree, or slice 5.6's sixteen corpus cases would pass against a core that
+    /// had quietly stopped tracking semantics.
+    #[test]
+    fn a_cell_differing_only_in_semantic_content_is_reported() {
+        let a = snapshot(4, 2);
+        let mut b = a.clone();
+        b.grid[0].cells[2].semantic = Semantic::Input;
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "cell[0,2].semantic");
+        assert_eq!(found[0].oracle, "Output");
+        assert_eq!(found[0].candidate, "Input");
+    }
+
+    #[test]
+    fn a_row_differing_only_in_its_prompt_mark_is_reported() {
+        let a = snapshot(4, 2);
+        let mut b = a.clone();
+        b.grid[1].semantic_prompt = RowSemantic::PromptContinuation;
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "row[1].semantic_prompt");
+        assert_eq!(found[0].candidate, "PromptContinuation");
+    }
+
+    /// The row mark is not a summary of the cells: deriving one from the other hides this.
+    #[test]
+    fn the_row_mark_and_the_cell_marks_are_compared_independently() {
+        let mut a = snapshot(4, 2);
+        a.grid[0].semantic_prompt = RowSemantic::Prompt;
+        let mut b = a.clone();
+        b.grid[0].semantic_prompt = RowSemantic::None;
+        b.grid[0].cells[0].semantic = Semantic::Prompt;
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 2, "{found:?}");
     }
 
     #[test]

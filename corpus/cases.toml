@@ -690,3 +690,170 @@ damage = true
 bytes = "top\r\nmiddle\r\nbottom"
 after = "\u001B[1;1Htop"
 note = "Damage is write-based, not a content diff: writing the same text over itself still dirties the row."
+
+# --- OSC 133 semantic prompt (slice 5.6) -------------------------------------
+# Every case here is expect = "diff" because the core has no OSC handling at all: it
+# reports every cell as Output and every row as None. That is precisely the blind spot
+# slice 5.6's harness extension exists to expose, and each case gets promoted to
+# expect = "match" as the core learns the rule it pins. The rules themselves were measured
+# against the real library and are asserted in crates/ghostty/tests/semantic.rs.
+
+[[case]]
+name = "semantic-prompt-start"
+expect = "match"
+cols = 12
+rows = 3
+bytes = "\u001B]133;A\u0007$ "
+note = "OSC 133;A marks the cells it writes as Prompt and the row as Prompt. Only written cells are marked."
+
+[[case]]
+name = "semantic-input-after-b"
+expect = "match"
+cols = 12
+rows = 3
+bytes = "\u001B]133;A\u0007$ \u001B]133;B\u0007ls"
+note = "B switches the cursor to Input. The row keeps its Prompt mark; the row mark is not a summary of the cells."
+
+[[case]]
+name = "semantic-output-after-c"
+expect = "match"
+cols = 12
+rows = 3
+bytes = "\u001B]133;A\u0007$ \u001B]133;B\u0007ls\u001B]133;C\u0007ok"
+note = "C returns the cursor to Output, giving one row holding all three content types."
+
+[[case]]
+name = "semantic-fresh-line"
+expect = "match"
+cols = 12
+rows = 3
+bytes = "xy\u001B]133;A\u0007$"
+note = "A is fresh-line-then-prompt: with the cursor off the left margin it moves down first, so the prompt lands on row 1."
+
+[[case]]
+name = "semantic-fresh-line-noop-at-margin"
+expect = "match"
+cols = 12
+rows = 3
+bytes = "xy\r\n\u001B]133;A\u0007$"
+note = "The same sequence with the cursor already at the left margin does not move: the prompt lands on the row it was already on."
+
+[[case]]
+name = "semantic-newline-continuation"
+expect = "match"
+cols = 12
+rows = 3
+bytes = "\u001B]133;A\u0007$ \u001B]133;B\u0007one\r\ntwo"
+note = "A newline taken in a non-output state marks the row it lands on as a continuation, so a row can be a prompt continuation while holding Input cells."
+
+[[case]]
+name = "semantic-clear-at-eol-ends-at-newline"
+expect = "match"
+cols = 12
+rows = 3
+bytes = "\u001B]133;A\u0007$ \u001B]133;I\u0007one\r\ntwo"
+note = "I is input terminated by end-of-line, so the newline resets the cursor to Output instead of marking a continuation. The one place B and I diverge."
+
+[[case]]
+name = "semantic-soft-wrap-input"
+expect = "match"
+cols = 4
+rows = 3
+bytes = "\u001B]133;A\u0007$ \u001B]133;B\u0007abcdef"
+note = "A soft wrap preserves the cursor's semantic state, so input continues onto the wrapped row and that row is marked a continuation."
+
+[[case]]
+name = "semantic-soft-wrap-clear-at-eol"
+expect = "match"
+cols = 4
+rows = 3
+bytes = "\u001B]133;A\u0007$ \u001B]133;I\u0007abcdef"
+note = "The same wrap under I keeps the cells Input but leaves the row unmarked: index() cleared the mark before printWrap restored the state."
+
+[[case]]
+name = "semantic-c-at-column-zero-unmarks"
+expect = "match"
+cols = 12
+rows = 3
+bytes = "\u001B]133;A\u0007$ p\r\n\u001B]133;C\u0007out"
+note = "C arriving at column 0 on a marked row un-marks it. A workaround for shells that emit no continuation marker, and it fires on position, not content."
+
+[[case]]
+name = "semantic-c-mid-row-keeps-mark"
+expect = "match"
+cols = 12
+rows = 3
+bytes = "\u001B]133;A\u0007$ \u001B]133;B\u0007ls\u001B]133;C\u0007out"
+note = "The same C away from column 0 leaves the row mark alone, which is what makes the rule positional rather than a general reset."
+
+[[case]]
+name = "semantic-explicit-continuation"
+expect = "match"
+cols = 12
+rows = 3
+bytes = "\u001B]133;A\u0007$ \u001B]133;B\u0007x\r\n\u001B]133;P;k=c\u0007> "
+note = "P with k=c marks the row a continuation directly, which is what a shell with a PS2 emits."
+
+[[case]]
+name = "semantic-overwrite-replaces-cell-mark"
+expect = "match"
+cols = 12
+rows = 2
+bytes = "\u001B]133;A\u0007$ abc\u001B]133;C\u0007\rXY"
+note = "Cell semantics are written at print time, so overwriting replaces the mark. The row mark is not recomputed and survives."
+
+[[case]]
+name = "semantic-erase-keeps-row-mark"
+expect = "match"
+cols = 12
+rows = 2
+bytes = "\u001B]133;A\u0007$ abc\u001B[2K"
+note = "Erasing a line clears the cells' semantics with their text but leaves the row mark standing."
+
+[[case]]
+name = "semantic-survives-into-history"
+expect = "match"
+cols = 4
+rows = 2
+scrollback = 100
+bytes = "\u001B]133;A\u0007$ abcdef\r\nz\r\ny\r\nx"
+note = "Both layers cross into scrollback intact. Pinned because a reporting gap once made it look as though they did not."
+
+[[case]]
+name = "semantic-alt-screen-inherits-the-cursor-state"
+expect = "match"
+cols = 12
+rows = 2
+bytes = "\u001B]133;A\u0007$ p\u001B[?1049h\u001B]133;B\u0007alt"
+note = "The alternate screen starts with no marks of its own, but the cursor carries its semantic state across the switch, so text written after the switch is still Input. A case that only switches screens matches trivially: the snapshot observes the active screen, and both sides agree it is blank."
+
+# --- OSC 133 across a reflow ------------------------------------------------
+# Upstream's reflow writer copies each source row's mark onto the destination row it is
+# filling, so the last source row to contribute wins. Measured 2026-07-28.
+
+[[case]]
+name = "reflow-semantic-split"
+expect = "match"
+cols = 20
+rows = 3
+bytes = "\u001B]133;A\u0007$ \u001B]133;B\u0007abcdefghij"
+resize = { cols = 8, rows = 3 }
+note = "Narrowing one prompt row into two leaves BOTH marked prompt, not the second a continuation: a split has a single source row and every destination row takes its mark."
+
+[[case]]
+name = "reflow-semantic-rejoin"
+expect = "match"
+cols = 4
+rows = 4
+bytes = "\u001B]133;A\u0007$ \u001B]133;B\u0007abcdef"
+resize = { cols = 20, rows = 4 }
+note = "Widening a prompt row and its continuation into one row leaves that row marked a continuation: the last source row to contribute wins."
+
+[[case]]
+name = "reflow-semantic-many-to-many"
+expect = "match"
+cols = 4
+rows = 4
+bytes = "\u001B]133;A\u0007$ \u001B]133;B\u0007abcdefgh"
+resize = { cols = 3, rows = 4 }
+note = "Two source rows re-split into three. This is the case the simple last-source-row rule need not cover, because an earlier destination row could still carry an earlier source row's mark."

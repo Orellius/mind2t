@@ -57,7 +57,7 @@ impl Publisher {
                     frame.cell(
                         x,
                         y,
-                        PackedCell::new(cluster, cell.style_id, cell.wide.into()),
+                        PackedCell::new(cluster, cell.style_id, cell.wide.into(), cell.flags.semantic()),
                     );
                 }
 

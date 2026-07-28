@@ -10,7 +10,7 @@
 //! Test strategy: round-trip properties below -- every style and every cluster that fits
 //!   comes back identical, and one that does not fit comes back marked truncated.
 
-use ruuah_vt_snapshot::{Color, Style, Underline, Wide};
+use ruuah_vt_snapshot::{Color, Semantic, Style, Underline, Wide};
 
 /// How much UTF-8 a cell carries inline.
 ///
@@ -27,6 +27,7 @@ pub struct PackedCell {
 }
 
 const WIDE_SHIFT: u32 = 16;
+const SEMANTIC_SHIFT: u32 = 18;
 const TRUNCATED_BIT: u64 = 1 << 24;
 
 impl PackedCell {
@@ -40,7 +41,7 @@ impl PackedCell {
     /// The cluster needs no stored length: NUL is not a legal codepoint in a cell (a zero
     /// codepoint *is* "no text"), so the first zero byte ends the string. One less field to
     /// tear.
-    pub fn new(cluster: &str, style_id: u16, wide: Wide) -> PackedCell {
+    pub fn new(cluster: &str, style_id: u16, wide: Wide, semantic: Semantic) -> PackedCell {
         let bytes = cluster.as_bytes();
         let (fitting, truncated) = if bytes.len() <= CLUSTER_BYTES {
             (bytes, false)
@@ -53,6 +54,7 @@ impl PackedCell {
 
         let attrs = u64::from(style_id)
             | (wide_code(wide) << WIDE_SHIFT)
+            | (semantic_code(semantic) << SEMANTIC_SHIFT)
             | if truncated { TRUNCATED_BIT } else { 0 };
 
         PackedCell {
@@ -74,6 +76,17 @@ impl PackedCell {
             2 => Wide::SpacerTail,
             3 => Wide::SpacerHead,
             _ => Wide::Narrow,
+        }
+    }
+
+    /// What OSC 133 says this cell holds. Carried through to the renderer because the caret
+    /// only moves visually where the user is editing: everywhere else the cursor is the
+    /// program's to place, and stepping it visually would fight the program.
+    pub fn semantic(self) -> Semantic {
+        match (self.attrs >> SEMANTIC_SHIFT) & 0b11 {
+            1 => Semantic::Input,
+            2 => Semantic::Prompt,
+            _ => Semantic::Output,
         }
     }
 
@@ -99,6 +112,14 @@ impl PackedCell {
         // Only ever written from a `&str` above, so the prefix ending at a NUL is valid UTF-8
         // as long as the writer respected char boundaries -- which `new` does.
         std::str::from_utf8(&scratch[..end]).unwrap_or("")
+    }
+}
+
+fn semantic_code(semantic: Semantic) -> u64 {
+    match semantic {
+        Semantic::Output => 0,
+        Semantic::Input => 1,
+        Semantic::Prompt => 2,
     }
 }
 
@@ -259,7 +280,7 @@ mod tests {
         // The north star in one assertion: base letter, vowel, dagesh and accent are four
         // codepoints in ONE cell, and all four have to survive the crossing.
         let cluster = "\u{05D1}\u{05BC}\u{05B8}\u{0591}";
-        let cell = PackedCell::new(cluster, 3, Wide::Narrow);
+        let cell = PackedCell::new(cluster, 3, Wide::Narrow, Semantic::Output);
         let mut scratch = [0u8; CLUSTER_BYTES];
 
         assert_eq!(cell.cluster(&mut scratch), cluster);
@@ -270,7 +291,7 @@ mod tests {
     #[test]
     fn an_oversized_cluster_is_marked_rather_than_quietly_shortened() {
         let cluster = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}";
-        let cell = PackedCell::new(cluster, 0, Wide::Wide);
+        let cell = PackedCell::new(cluster, 0, Wide::Wide, Semantic::Output);
         let mut scratch = [0u8; CLUSTER_BYTES];
 
         assert!(cell.is_truncated(), "the renderer has to be able to tell");
@@ -290,11 +311,11 @@ mod tests {
 
     #[test]
     fn wide_and_style_id_survive_alongside_text() {
-        let cell = PackedCell::new("\u{4F60}", 0xbeef, Wide::Wide);
+        let cell = PackedCell::new("\u{4F60}", 0xbeef, Wide::Wide, Semantic::Output);
         assert_eq!(cell.wide(), Wide::Wide);
         assert_eq!(cell.style_id(), 0xbeef);
         assert_eq!(
-            PackedCell::new("", 0, Wide::SpacerTail).wide(),
+            PackedCell::new("", 0, Wide::SpacerTail, Semantic::Output).wide(),
             Wide::SpacerTail
         );
     }

@@ -11,11 +11,12 @@
 //!   arithmetic that is cheapest to read in isolation (the cursor landing past the end of
 //!   its line, wide cells at the new edge, blank-row deferral).
 
-use ruuah_vt_snapshot::Style;
+use ruuah_vt_snapshot::{RowSemantic, Semantic, Style};
 
 use crate::cell::Wide;
 use crate::grid::RowMeta;
 use crate::page::{HistoryCell, HistoryRow};
+use crate::split::{mark_for, split};
 
 /// A position within a row sequence: which row, and which column of it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,9 +84,12 @@ pub fn resize_rows(
 
         let mut content: Vec<HistoryCell> = Vec::new();
         let mut tracked: [Option<usize>; 2] = [None, None];
+        // Where each source row's cells begin in `content`, with the mark it carried.
+        let mut marks: Vec<(usize, RowSemantic)> = Vec::new();
         for (index, row) in rows[line.start..=last].iter().enumerate() {
             let y = line.start + index;
             let row_start = content.len();
+            marks.push((row_start, row.meta.semantic_prompt));
             let width = match mode {
                 Mode::Rejoin => old_cols,
                 // Without a rejoin there is nowhere for an overhanging cell to go, so the
@@ -146,6 +150,7 @@ pub fn resize_rows(
         let split = split(&content, new_cols, tracked);
         let first = out.len();
         let count = split.rows.len();
+        let content_end = split.content_end;
         for (index, cells) in split.rows.into_iter().enumerate() {
             out.push(HistoryRow {
                 cells,
@@ -160,6 +165,10 @@ pub fn resize_rows(
                     } else {
                         rows[line.start].meta.wrap_continuation
                     },
+                    // Upstream's reflow writer copies each source row's mark onto the
+                    // destination row it is filling, so the last source row to reach a
+                    // destination row wins. The three `reflow-semantic-*` cases pin it.
+                    semantic_prompt: mark_for(&marks, content_end[index]),
                 },
             });
         }
@@ -237,79 +246,6 @@ fn row_cells(row: &HistoryRow, width: u16, is_last: bool) -> Vec<HistoryCell> {
     cells
 }
 
-struct Split {
-    rows: Vec<Vec<HistoryCell>>,
-    /// Where each tracked offset landed, as (row within this line, column).
-    tracked: [Option<(usize, u16)>; 2],
-}
-
-/// Cuts a line's cells into rows of `new_cols`, keeping wide cells whole.
-fn split(content: &[HistoryCell], new_cols: u16, offsets: [Option<usize>; 2]) -> Split {
-    let width = usize::from(new_cols);
-    let mut rows: Vec<Vec<HistoryCell>> = Vec::new();
-    let mut current: Vec<HistoryCell> = Vec::new();
-    let mut tracked: [Option<(usize, u16)>; 2] = [None, None];
-
-    let mut index = 0;
-    while index < content.len() {
-        let cell = &content[index];
-        if cell.wide == Wide::SpacerHead {
-            index += 1;
-            continue;
-        }
-
-        let needed = if cell.wide == Wide::Wide { 2 } else { 1 };
-        if current.len() + needed > width {
-            // A wide cell that cannot fit leaves the last column spoken for, exactly as
-            // printing one at the right edge does.
-            if needed == 2 && current.len() < width {
-                current.push(HistoryCell {
-                    wide: Wide::SpacerHead,
-                    ..blank_cell()
-                });
-            }
-            rows.push(std::mem::take(&mut current));
-        }
-
-        mark(&mut tracked, offsets, index, rows.len(), current.len());
-        current.push(cell.clone());
-
-        if needed == 2 {
-            index += 1;
-            let tail = match content.get(index) {
-                Some(cell) if cell.wide == Wide::SpacerTail => cell.clone(),
-                _ => HistoryCell {
-                    wide: Wide::SpacerTail,
-                    ..blank_cell()
-                },
-            };
-            mark(&mut tracked, offsets, index, rows.len(), current.len());
-            current.push(tail);
-        }
-        index += 1;
-    }
-
-    if !current.is_empty() || rows.is_empty() {
-        rows.push(current);
-    }
-
-    Split { rows, tracked }
-}
-
-fn mark(
-    tracked: &mut [Option<(usize, u16)>; 2],
-    offsets: [Option<usize>; 2],
-    index: usize,
-    row: usize,
-    column: usize,
-) {
-    for slot in 0..2 {
-        if offsets[slot] == Some(index) {
-            tracked[slot] = Some((row, column as u16));
-        }
-    }
-}
-
 fn is_blank(cell: &HistoryCell) -> bool {
     // A spacer tail is never trimmed on its own: it belongs to the wide cell to its left,
     // and dropping it would leave that cell claiming a column it no longer has.
@@ -319,11 +255,12 @@ fn is_blank(cell: &HistoryCell) -> bool {
         && cell.style == Style::DEFAULT
 }
 
-fn blank_cell() -> HistoryCell {
+pub(crate) fn blank_cell() -> HistoryCell {
     HistoryCell {
         codepoint: 0,
         wide: Wide::Narrow,
         style: Style::DEFAULT,
+        semantic: Semantic::Output,
         graphemes: Vec::new(),
     }
 }
@@ -347,12 +284,14 @@ mod tests {
                     codepoint: c as u32,
                     wide: Wide::Narrow,
                     style: Style::DEFAULT,
+                    semantic: Semantic::Output,
                     graphemes: Vec::new(),
                 })
                 .collect(),
             meta: RowMeta {
                 wrap,
                 wrap_continuation,
+                semantic_prompt: RowSemantic::None,
             },
         }
     }
@@ -430,18 +369,21 @@ mod tests {
             codepoint: u32::from(b'a'),
             wide: Wide::Narrow,
             style: Style::DEFAULT,
+            semantic: Semantic::Output,
             graphemes: Vec::new(),
         }];
         cells.push(HistoryCell {
             codepoint: '世' as u32,
             wide: Wide::Wide,
             style: Style::DEFAULT,
+            semantic: Semantic::Output,
             graphemes: Vec::new(),
         });
         cells.push(HistoryCell {
             codepoint: 0,
             wide: Wide::SpacerTail,
             style: Style::DEFAULT,
+            semantic: Semantic::Output,
             graphemes: Vec::new(),
         });
         let rows = [HistoryRow {

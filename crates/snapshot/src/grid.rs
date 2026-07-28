@@ -1,7 +1,7 @@
 //! Purpose: the terminal state a differential test is allowed to observe.
 //! Public surface: `Snapshot`, `Row`, `Cell`, `Cursor`, `Style`, `Color`, `Wide`,
-//!   `Underline`, `Screen`, `Dirty`, `Damage`, and a `Display` impl that renders a snapshot
-//!   for human eyes.
+//!   `Underline`, `Screen`, `Dirty`, `Damage`, `Semantic`, `RowSemantic`, and a `Display`
+//!   impl that renders a snapshot for human eyes.
 //! Why this file: both implementations must agree on what "the grid" *is* before they
 //!   can be compared, so the shape lives in one place that neither of them owns.
 //! NOT responsible for: parsing, mutation, comparison (see `difference.rs`), or storage
@@ -28,6 +28,37 @@ pub enum Wide {
     SpacerTail,
     /// Filler at the end of a soft-wrapped row that could not fit a wide cell.
     SpacerHead,
+}
+
+/// What a cell's content means, as marked by the OSC 133 semantic prompt sequences.
+///
+/// `Output` is not "unmarked": a terminal that has never seen an OSC 133 reports every cell
+/// as output, which is what the sequences themselves define as the default state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Semantic {
+    /// Command output, and the state everything starts in.
+    #[default]
+    Output,
+    /// Typed by the user at a prompt.
+    Input,
+    /// Emitted by the shell as the prompt itself.
+    Prompt,
+}
+
+/// Whether a row takes part in a shell prompt.
+///
+/// A row-level summary that exists so jump-to-prompt does not have to walk cells. The ABI
+/// documents it as allowing false positives but never false negatives, so it is a coarser
+/// signal than the per-cell `Semantic` rather than a derived one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RowSemantic {
+    /// No prompt cells in this row.
+    #[default]
+    None,
+    /// Prompt cells exist and this row begins a prompt.
+    Prompt,
+    /// Prompt cells exist and this row continues a prompt started above.
+    PromptContinuation,
 }
 
 /// Underline decoration, matching the SGR 4:n sub-parameters.
@@ -77,6 +108,9 @@ pub struct Cell {
     pub text: String,
     pub wide: Wide,
     pub style: Style,
+    /// What OSC 133 says this cell's content is. Blind before slice 5.6: nothing produced
+    /// anything but `Output`, so a core with no OSC 133 at all reported a perfect match.
+    pub semantic: Semantic,
 }
 
 /// One grid row.
@@ -86,6 +120,9 @@ pub struct Row {
     pub wrap: bool,
     /// This row is the continuation of a soft-wrap from the previous one.
     pub wrap_continuation: bool,
+    /// The row's own prompt state, which is tracked separately from its cells rather than
+    /// summarised from them.
+    pub semantic_prompt: RowSemantic,
     pub cells: Vec<Cell>,
 }
 
@@ -180,6 +217,7 @@ impl Cell {
             text: String::new(),
             wide: Wide::Narrow,
             style: Style::DEFAULT,
+            semantic: Semantic::Output,
         }
     }
 }
@@ -240,29 +278,64 @@ impl fmt::Display for Snapshot {
                 .collect();
             writeln!(f, "damage {:?} rows |{rows}|", damage.global)?;
         }
+        // History rows render through the same path as active ones. They used not to, and
+        // the omission was invisible until slice 5.6 read a second per-cell layer: a style
+        // or semantic difference in scrollback was reported by `diff` and then absent from
+        // the dump a human reads to diagnose it.
         for (y, row) in self.history.iter().enumerate() {
-            let text = self.history_text(y);
-            let flags = wrap_flags(row);
-            writeln!(f, "h{y:>2} |{text}|{flags}")?;
+            write_row(f, &format!("h{y:>2}"), &self.history_text(y), row, false)?;
         }
         for (y, row) in self.grid.iter().enumerate() {
-            let text = self.row_text(y);
-            let styled: Vec<String> = style_runs(row)
-                .into_iter()
-                .map(|(start, end, style)| format!("{start}..{end} {}", describe_style(&style)))
-                .collect();
-            if text.is_empty() && styled.is_empty() && !row.wrap && !row.wrap_continuation {
-                writeln!(f, "{y:3} ~")?;
-                continue;
-            }
-            let flags = wrap_flags(row);
-            writeln!(f, "{y:3} |{text}|{flags}")?;
-            for run in styled {
-                writeln!(f, "    style {run}")?;
-            }
+            write_row(f, &format!("{y:3}"), &self.row_text(y), row, true)?;
         }
         Ok(())
     }
+}
+
+/// Renders one row and its per-cell layers under a caller-supplied label.
+///
+/// `collapse` writes an entirely empty row as `~`, which keeps a mostly-blank 24-row active
+/// area readable. History is never collapsed: every row in it was written on purpose.
+fn write_row(
+    f: &mut fmt::Formatter<'_>,
+    label: &str,
+    text: &str,
+    row: &Row,
+    collapse: bool,
+) -> fmt::Result {
+    let styled: Vec<String> = style_runs(row)
+        .into_iter()
+        .map(|(start, end, style)| format!("{start}..{end} {}", describe_style(&style)))
+        .collect();
+    let semantic: Vec<String> = semantic_runs(row)
+        .into_iter()
+        .map(|(start, end, semantic)| format!("{start}..{end} {semantic:?}"))
+        .collect();
+
+    if collapse
+        && text.is_empty()
+        && styled.is_empty()
+        && semantic.is_empty()
+        && !row.wrap
+        && !row.wrap_continuation
+        && row.semantic_prompt == RowSemantic::None
+    {
+        return writeln!(f, "{label} ~");
+    }
+
+    let prompt = match row.semantic_prompt {
+        RowSemantic::None => "",
+        RowSemantic::Prompt => " [prompt]",
+        RowSemantic::PromptContinuation => " [prompt cont]",
+    };
+    writeln!(f, "{label} |{text}|{}{prompt}", wrap_flags(row))?;
+    for run in styled {
+        writeln!(f, "    style {run}")?;
+    }
+    for run in semantic {
+        writeln!(f, "    semantic {run}")?;
+    }
+    Ok(())
 }
 
 fn wrap_flags(row: &Row) -> &'static str {
@@ -272,6 +345,21 @@ fn wrap_flags(row: &Row) -> &'static str {
         (false, true) => " [cont]",
         (false, false) => "",
     }
+}
+
+/// Contiguous spans of non-`Output` semantic content within a row.
+fn semantic_runs(row: &Row) -> Vec<(usize, usize, Semantic)> {
+    let mut runs: Vec<(usize, usize, Semantic)> = Vec::new();
+    for (x, cell) in row.cells.iter().enumerate() {
+        if cell.semantic == Semantic::Output {
+            continue;
+        }
+        match runs.last_mut() {
+            Some((_, end, semantic)) if *end == x && *semantic == cell.semantic => *end = x + 1,
+            _ => runs.push((x, x + 1, cell.semantic)),
+        }
+    }
+    runs
 }
 
 /// Contiguous spans of identical non-default style within a row.

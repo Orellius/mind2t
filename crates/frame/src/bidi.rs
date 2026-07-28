@@ -191,11 +191,11 @@ fn needs_bidi(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ruuah_vt_snapshot::Wide;
+    use ruuah_vt_snapshot::{Semantic, Wide};
 
     fn row(text: &str) -> Vec<PackedCell> {
         text.chars()
-            .map(|c| PackedCell::new(&c.to_string(), 0, Wide::Narrow))
+            .map(|c| PackedCell::new(&c.to_string(), 0, Wide::Narrow, Semantic::Output))
             .collect()
     }
 

@@ -27,7 +27,7 @@ pub mod publish;
 pub mod seqlock;
 
 pub use bidi::{BaseDirection, VisualSpan, visual_spans};
-pub use frame::{Direction, Frame, FrameCursor, Run, cell_width};
+pub use frame::{Direction, Frame, FrameCursor, Motion, Run, cell_width};
 pub use packed::{CLUSTER_BYTES, PackedCell, pack_style, unpack_style};
 pub use publish::Publisher;
 pub use seqlock::{CapacityExceeded, FrameReader, FrameWriter, Publish, ReadOutcome, channel};

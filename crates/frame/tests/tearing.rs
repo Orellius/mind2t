@@ -11,6 +11,12 @@
 //! The invariant is self-consistency. Every cell of frame N carries N in its style slot and
 //! every row stamp is N, so a frame assembled from two publishes disagrees with itself and
 //! nothing else has to be known about it.
+//!
+//! `a_publish_landing_mid_copy_leaves_no_frame_claiming_to_be_valid` asserts a second and
+//! different invariant, because self-consistency provably cannot see the bug it exists for:
+//! an interrupted copy usually finishes with clean content wearing the wrong generation, and
+//! every cell agrees with every other one. What that test asks instead is whether the frame
+//! was TOUCHED, which a skipped read is not allowed to do without invalidating it.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -104,6 +110,18 @@ fn observe(reader: &FrameReader, synchronized: bool, stop: &AtomicBool) -> Tally
                 ReadOutcome::Fresh(_) => tally.accepted += 1,
                 ReadOutcome::Skipped => {
                     tally.skipped += 1;
+                    // A skipped read used to `continue` straight past this check, which is
+                    // exactly why the frame it leaves behind went unexamined for two slices.
+                    // The copy runs before the counter is re-read, so a publish landing
+                    // mid-copy overwrites the caller's frame; if that frame still claimed a
+                    // generation, it would be a mixture of two publishes wearing the identity
+                    // of one. Either it is untouched and still consistent, or it is invalid.
+                    if frame.is_valid()
+                        && let Some(complaint) = inconsistency(&frame)
+                    {
+                        stop.store(true, Ordering::Relaxed);
+                        panic!("a skipped read left a torn frame still claiming to be valid: {complaint}");
+                    }
                     continue;
                 }
                 ReadOutcome::Unchanged => continue,
@@ -206,4 +224,106 @@ fn an_unread_frame_reports_fresh_once_and_unchanged_after() {
         reader.read_into(&mut frame),
         ReadOutcome::Fresh(_)
     ));
+}
+
+/// A publish landing mid-copy must not leave the caller holding a mixture of two frames.
+///
+/// The copy runs before the counter is re-read, so the frame is already overwritten by the
+/// time the read decides to skip. Without invalidating it there, it keeps the generation of
+/// the publish before last and looks entirely fresh.
+///
+/// This needs its own workload, and the reason is measured. Under `hammer` the writer holds
+/// the counter odd almost continuously, so reads bail at the first check and never copy at
+/// all: 6,802,136 skips in one 400ms run, of which **zero** were this path. Slowing the writer
+/// to a realistic cadence found exactly 1 in four million. So the timing is orchestrated
+/// instead -- a large grid to make the copy slow, and a writer that publishes just after the
+/// reader enters it, which converts a one-in-a-million race into roughly one attempt in two.
+#[test]
+fn a_publish_landing_mid_copy_leaves_no_frame_claiming_to_be_valid() {
+    const WIDE: u16 = 1000;
+    const TALL: u16 = 300;
+    const ATTEMPTS: usize = 40;
+
+    let (writer, reader) = channel(WIDE, TALL);
+    let writer = Arc::new(std::sync::Mutex::new(writer));
+    let mut frame = Frame::new();
+
+    let fill = |stamp: u16| PackedCell::new("a", stamp, Wide::Narrow, Semantic::Output);
+    writer
+        .lock()
+        .expect("uncontended")
+        .publish(WIDE, TALL, |f| {
+            for y in 0..TALL {
+                for x in 0..WIDE {
+                    f.cell(x, y, fill(1));
+                }
+                f.row_changed(y);
+            }
+        })
+        .expect("fits");
+    assert!(matches!(reader.read_into(&mut frame), ReadOutcome::Fresh(_)));
+
+    let mut invalidated = 0;
+    for attempt in 0..ATTEMPTS {
+        let go = Arc::new(AtomicBool::new(false));
+        let their_writer = Arc::clone(&writer);
+        let their_go = Arc::clone(&go);
+        let stamp = (attempt % 100 + 2) as u16;
+        let scribe = thread::spawn(move || {
+            while !their_go.load(Ordering::Acquire) {}
+            // Long enough for the reader to be inside the copy, short enough to land before
+            // it finishes. Measured at roughly a 50% hit rate on this grid.
+            thread::sleep(Duration::from_micros(60));
+            their_writer
+                .lock()
+                .expect("the reader never takes this lock")
+                .publish(WIDE, TALL, |f| {
+                    for y in 0..TALL {
+                        for x in 0..WIDE {
+                            f.cell(x, y, fill(stamp));
+                        }
+                        f.row_changed(y);
+                    }
+                })
+                .expect("fits");
+        });
+
+        // The fingerprint is what makes this exact. Asking whether the frame is torn is the
+        // wrong question: most interrupted copies here finish cleanly and are merely wearing
+        // the wrong generation, which no cell-against-cell check can see. Asking whether the
+        // frame CHANGED catches both, because a skipped read is only allowed to leave a frame
+        // it did not touch.
+        let before = frame.cell(0, 0).style_id();
+        go.store(true, Ordering::Release);
+        let outcome = reader.read_into(&mut frame);
+        scribe.join().expect("writer thread panicked");
+
+        if outcome == ReadOutcome::Skipped {
+            let touched = frame.cell(0, 0).style_id() != before;
+            assert!(
+                !(touched && frame.is_valid()),
+                "attempt {attempt}: a skipped read overwrote the frame (publish {before} -> {}) \
+                 and left it claiming generation {}; a caller that ignores the outcome draws \
+                 that as if it were fresh",
+                frame.cell(0, 0).style_id(),
+                frame.generation
+            );
+            if touched {
+                invalidated += 1;
+            }
+        }
+        if !frame.is_valid() {
+            let _ = reader.read_into(&mut frame);
+        }
+    }
+
+    assert!(
+        invalidated > 0,
+        "no read was interrupted mid-copy in {ATTEMPTS} attempts, so this test asserted \
+         nothing; the orchestration has stopped working and needs re-measuring"
+    );
+    assert!(
+        !frame.is_valid() || frame.generation != 0,
+        "sanity: a valid frame carries a non-zero generation"
+    );
 }

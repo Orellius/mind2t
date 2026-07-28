@@ -441,7 +441,10 @@ Rust 1.93.1, edition 2024, resolver 3. `cargo test --workspace` is the gate.
 
 Dependencies stay deliberately few: `vte`, `unicode-width`, `thiserror`, `serde`, `toml`,
 `rustix` (slice 5 step 3), `swash` (step 4, font parsing + rasterization + the shaper 5.5 will
-need) and `wezterm-bidi` (5.5, chosen by conformance measurement). `portable-pty` was evaluated for the pty host and rejected — on
+need) and `wezterm-bidi` (5.5, chosen by conformance measurement). **`wgpu` is the one large
+exception** (slice 7): measured at +123 packages against +9 for a Mac-only `objc2-metal`
+backend, taking the tree from 80 to 181. Orel chose it over the Metal route with those numbers
+in hand, for portability the roadmap does not yet want but may. `portable-pty` was evaluated for the pty host and rejected — on
 macOS it costs thirteen crates including `serial2`, a serial-port library, and a second
 `thiserror` major version alongside the workspace's. `rustix` costs three and the pty dance is
 about sixty lines we own. **`cargo fmt --all` reformats the whole repo**, which was never
@@ -492,6 +495,10 @@ and `lib/`, bypassing the build script).
 - `crates/ghostty/tests/semantic.rs` — what the oracle is known to do with OSC 133, measured.
 - `crates/render/tests/caret.rs` — where the caret lands, found by diffing shown against
   hidden, plus the control that pins the old logical placement.
+- `crates/render/src/surface.rs` — the backend seam, and the specified integer blend both
+  backends must produce. Also holds the truncating control.
+- `crates/render/src/gpu.rs` — the wgpu compute backend, and why the sRGB trap does not bite.
+- `crates/render/tests/backend.rs` — CPU against GPU, byte for byte.
 - `crates/abi-types/src/lib.rs` — the C types this library publishes. Depends on nothing so
   it can be linked beside the oracle without a symbol clash.
 - `crates/abi/src/exports.rs` — the C entry points, thin on purpose.

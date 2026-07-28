@@ -15,16 +15,22 @@ use ruuah_vt_frame::{Frame, PackedCell, cell_width};
 
 use crate::atlas::Atlas;
 use crate::canvas::Canvas;
+use crate::surface::Surface;
 use crate::color::{Palette, Rgba};
 use crate::font::FontStack;
 use crate::shape::{PositionedGlyph, Shaper, needs_shaping};
 
-/// Paints frames into a pixel buffer.
-pub struct Renderer {
+/// Paints frames into a surface.
+///
+/// Generic over the backend, with the CPU canvas as the default so every existing caller and
+/// test reads unchanged. `Renderer::new` resolves to the CPU reference; a second backend is
+/// reached through `with_surface`, which is what `tests/backend.rs` uses to run the identical
+/// drawing logic two ways.
+pub struct Renderer<S = Canvas> {
     fonts: FontStack,
     atlas: Atlas,
     palette: Palette,
-    canvas: Canvas,
+    canvas: S,
     shaper: Shaper,
     /// Scratch for one cell's positioned glyphs, so drawing allocates nothing per cell.
     positioned: Vec<PositionedGlyph>,
@@ -38,10 +44,18 @@ pub struct Renderer {
     drawn: u64,
 }
 
-impl Renderer {
-    pub fn new(fonts: FontStack, cols: u16, rows: u16) -> Renderer {
+impl Renderer<Canvas> {
+    /// The CPU reference backend.
+    pub fn new(fonts: FontStack, cols: u16, rows: u16) -> Renderer<Canvas> {
+        Renderer::with_surface(fonts, cols, rows)
+    }
+}
+
+impl<S: Surface> Renderer<S> {
+    /// The same renderer on any backend.
+    pub fn with_surface(fonts: FontStack, cols: u16, rows: u16) -> Renderer<S> {
         let cell = fonts.metrics();
-        let canvas = Canvas::new(cell.width * u32::from(cols), cell.height * u32::from(rows));
+        let canvas = S::with_size(cell.width * u32::from(cols), cell.height * u32::from(rows));
         Renderer {
             fonts,
             atlas: Atlas::new(),
@@ -57,8 +71,13 @@ impl Renderer {
         }
     }
 
-    pub fn canvas(&self) -> &Canvas {
+    pub fn canvas(&self) -> &S {
         &self.canvas
+    }
+
+    /// The finished pixels, however the backend stores them.
+    pub fn pixels(&self) -> Vec<u8> {
+        self.canvas.read_pixels()
     }
 
     pub fn atlas(&self) -> &Atlas {

@@ -100,6 +100,35 @@ impl History {
         self.pages.clear();
         self.len = 0;
     }
+
+    /// The row budget, so a resize can rebuild this history at a new width without the
+    /// caller having to remember what it was created with.
+    pub fn max_rows(&self) -> usize {
+        self.max_rows
+    }
+
+    /// Empties the history, handing every row back oldest-first in transfer form.
+    ///
+    /// Reflow consumes the whole scrollback and re-pushes it at the new width, which is why
+    /// this drains rather than borrows: the pages it came from are about to be dropped.
+    pub fn drain(&mut self) -> Vec<HistoryRow> {
+        let mut rows = Vec::with_capacity(self.len);
+        for page in &self.pages {
+            for index in 0..page.len() {
+                if let Some(row) = page.take_row(index) {
+                    rows.push(row);
+                }
+            }
+        }
+        self.clear();
+        rows
+    }
+
+    /// Points this history at a new width. Only meaningful while it is empty, which is the
+    /// state a resize leaves it in after draining.
+    pub fn set_cols(&mut self, cols: u16) {
+        self.cols = cols;
+    }
 }
 
 #[cfg(test)]

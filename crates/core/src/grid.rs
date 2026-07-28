@@ -16,8 +16,9 @@ use crate::cell::Cell;
 use crate::page::{HistoryCell, HistoryRow};
 use crate::style::{StyleId, StyleTable};
 
-/// Per-row state that is not per-cell. Populated from slice 2 onward; carried now because
-/// reflow in slice 4 is impossible without a soft-vs-hard wrap flag recorded at write time.
+/// Per-row state that is not per-cell. The wrap flag is what makes reflow possible at all:
+/// it is the only record of whether two rows are one logical line, and it has to be written
+/// when the wrap happens because nothing later can reconstruct it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RowMeta {
     pub wrap: bool,
@@ -218,6 +219,39 @@ impl Grid {
         }
         for y in top..(top + count) {
             self.blank_row(y, blank);
+        }
+    }
+
+    /// Lays a row from the reflow back into the grid, interning its styles into this table.
+    ///
+    /// The counterpart to `extract_row`. Cells beyond the row's content are blanked, so a
+    /// short row from history reads back as a full-width row.
+    pub fn write_row(&mut self, y: u16, row: &HistoryRow) {
+        for x in 0..self.cols {
+            let index = self.index(x, y);
+            match row.cells.get(usize::from(x)) {
+                Some(cell) => {
+                    let style_id = self.intern_style(cell.style);
+                    let mut flags = crate::cell::CellFlags::NONE;
+                    flags.set_has_grapheme(!cell.graphemes.is_empty());
+                    self.write(
+                        index,
+                        Cell {
+                            codepoint: cell.codepoint,
+                            style_id,
+                            wide: cell.wide,
+                            flags,
+                        },
+                    );
+                    if !cell.graphemes.is_empty() {
+                        self.graphemes.insert(index, cell.graphemes.clone());
+                    }
+                }
+                None => self.write(index, Cell::BLANK),
+            }
+        }
+        if let Some(meta) = self.row_meta_mut(y) {
+            *meta = row.meta;
         }
     }
 

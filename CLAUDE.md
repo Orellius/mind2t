@@ -25,7 +25,27 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
-**Slices 0 through 3 are done.**
+**Slices 0 through 4 are done.**
+
+Slice 4, `[tested]`: reflow. Resize rejoins soft-wrapped rows into logical lines, re-splits at
+the new width, and maps the cursor through the transform. Scrollback takes part -- a logical
+line straddling the history / active boundary is one line -- so the whole buffer is drained
+into one row sequence, reflowed, and split back at the bottom. 103 tests green; 64 corpus
+cases, 57 MATCH / 7 DIFF, 64/64 met expectation.
+
+The measured rules, all against the real library on 2026-07-28 and each with a `reflow-*`
+corpus case: trailing blanks are trimmed from the last row of a line only; the cursor's line
+extends to reach a cursor parked past its content (which is why narrowing a full line leaves
+an empty continuation row); a line with no content is deferred and emitted only if content
+follows, which drops trailing blank rows while keeping interior ones; rows leaving the top
+become scrollback and growth reclaims them; the alternate screen does not reflow; DECSTBM is
+reset. A rows-only change does not reflow at all, because with the width unchanged there is
+nothing to rejoin and rejoining anyway would grow the cursor's line by a row.
+
+Slice 4 also fixed a slice-2 rule that nothing before it could observe: a soft wrap is marked
+only when the cursor is at the last column. A deferred wrap survives a reflow verbatim, so
+widening the screen leaves the cursor mid-row with the wrap still pending, and marking that
+one would fuse two lines that were never one.
 
 Slice 3, `[tested]`: paged scrollback. History is a list of fixed-capacity pages, each owning
 its own cells, style table and grapheme storage, so dropping a page frees all of it. The row
@@ -43,10 +63,17 @@ plus DECOM, DECTCEM, DECSC/DECRC and RIS. 74 tests green; 28 corpus cases, 22 MA
 Slice 1, `[tested]`: `vte 0.15` driving a flat row-major cell array. Echo, full SGR, cursor
 movement.
 
-The six remaining DIFF cases are **not slice boundaries** — slice 2 closed every one of those.
-They are named omissions kept deliberately, because a corpus where nothing differs cannot show
-the harness detects disagreement: DECALN, private/selective erase, REP, IRM, grapheme-cluster
-mode 2027, and reverse wraparound (mode 45).
+The seven remaining DIFF cases are **not slice boundaries**. They are named omissions kept
+deliberately, because a corpus where nothing differs cannot show the harness detects
+disagreement: DECALN, private/selective erase, REP, IRM, grapheme-cluster mode 2027, reverse
+wraparound (mode 45), and — added by slice 4 — a **saved (DECSC) cursor sitting in the blanks
+past its row's text when that row reflows**. Upstream clamps such a pin against whatever
+column its sequential reflow writer happens to be parked on, a value carried over from the
+*previous* line (`PageList.zig`, `reflowRow`, the `p.x >= cols_len` branch). Matching it means
+emulating that writer's leftover state, and the branch next to it calls this area unspecified
+outright. A saved cursor is otherwise tracked exactly like the live one: inside its row's
+content it travels with its cell, and it falls back to the top-left when its row does not
+survive. Both of those are corpus-pinned as MATCH.
 
 Cell layout is settled and enforced: `Cell` is **8 bytes**, asserted at compile time in
 `cell.rs`. Style is an interned `u16` into a `StyleTable`; grapheme continuations live in a
@@ -69,18 +96,19 @@ host — slice 5/6 territory. The differential corpus covers the same semantics 
 - `[tested]` Struct layouts pinned against the library's own `ghostty_type_json()`.
 - `[tested]` `../ruuah` byte-identical and `git status` clean after a from-scratch oracle build.
 
-**Deliberate divergence from Ghostty, slice 3.** Ghostty keeps the active area and the history
-in ONE page list, so scrolling moves a pointer. Here the active area stays a flat fixed-size
-grid (already bounded at `cols * rows`) and only the *history* is paged, because that is where
-the unbounded growth was. The cost is that scrolling a row into history is O(cols) rather than
-a pointer move. Recorded rather than hidden; slice 4's reflow is the point at which unifying
-them might start paying for itself.
+**Deliberate divergence from Ghostty, slices 3 and 4.** Ghostty keeps the active area and the
+history in ONE page list, so scrolling moves a pointer and reflow streams through the pages in
+place. Here the active area stays a flat fixed-size grid (already bounded at `cols * rows`) and
+only the *history* is paged, because that is where the unbounded growth was. Two costs, both
+recorded rather than hidden: scrolling a row into history is O(cols) rather than a pointer
+move, and a resize materialises the entire scrollback as owned rows before writing it back, so
+peak memory during a resize is roughly double the scrollback. Resize is a human-driven event,
+which is what makes that trade acceptable; a streaming page-at-a-time reflow is the fix if it
+ever stops being.
 
-Next: **slice 4 — reflow.** Resize joins soft-wrapped rows into logical lines, re-splits at the
-new width, and maps the cursor through the transform. The per-row soft-vs-hard wrap flag it
-needs has been carried since slice 2 and now survives into history (there is a corpus case
-pinning that). The plan says budget for getting this wrong twice; shipped terminals still have
-open bugs here.
+Next: **slice 5 — render.** Glyph atlas, damage-driven redraw from a dirty-row bitset, and a
+seqlock between the PTY thread and the renderer. Bidi lives here if it lives anywhere, and
+never in the core (see below).
 
 ## Project rules & gotchas
 
@@ -104,20 +132,30 @@ open bugs here.
   bindings can be trusted rather than hoped about. `tests/abi_layout.rs` compares every
   offset this crate touches against it, which also catches the vendored headers drifting
   from the linked archive — something bindgen alone cannot see.
-- **Extend the harness BEFORE building the slice. Three for three so far.** Every slice has
-  had a blind spot that would have reported MATCH for a wrong implementation, and each was
-  found by asking "can the harness even see this?" before writing code:
+- **Extend the harness BEFORE building the slice. Four for four.** Every slice has had a blind
+  spot that would have reported MATCH for a wrong implementation, and each was found by asking
+  "can the harness even see this?" before writing code:
   - **Slice 2** — background-colour erase was invisible. Ghostty keeps a cell with only a
     background out of the style map, so `grid_ref_style` reported Default for a red cell. An
     erase ignoring BCE would have passed.
   - **Slice 3** — scrollback was invisible. The oracle ran `max_scrollback = 0` and `Snapshot`
     held only the active area, so any history implementation would have passed.
-  - **Slice 4 (next)** — resize is not expressible at all: `Case` has no resize field and
-    neither `Terminal` has a `resize` method. The oracle side exists
-    (`ghostty_terminal_resize(term, cols, rows, cell_w, cell_h)`); the harness does not.
+  - **Slice 4** — resize was not expressible at all: `Case` had no resize field and neither
+    `Terminal` had a `resize` method, so any reflow would have passed. `Case` gained `resize`
+    and `after`, and both were needed: `after` is the only way a grid comparison can see where
+    the cursor landed, because a cursor that never writes leaves no trace. With the harness
+    extended and a non-reflowing resize in place, wrapped cases DIFFed and flat ones MATCHed —
+    both directions, before a line of reflow was written.
   Treat this as the project's dominant risk, not a coincidence. The differential harness only
   catches what the `Snapshot` represents, so the first question of every slice is what new
   observable it needs.
+- **Read the oracle's source before inferring its behaviour.** `../ruuah` is a Ghostty
+  checkout, so `src/terminal/PageList.zig` and `src/terminal/Screen.zig` are the reference
+  implementation of everything the ABI exposes. Slice 4 burned five rounds of black-box probes
+  on the saved-cursor mapping and got three mutually contradictory rules; the answer was
+  twenty lines of `reflowRow`. Probe to find out WHAT differs, read the source to find out WHY.
+  Both matter — the probes are what made the corpus, and the source is what stopped the
+  guessing.
 - **A corpus `expect = "diff"` is a to-do, not a pass.** When ruuah-vt implements that behaviour
   the case *fails*, and it gets promoted to `expect = "match"`. That is the mechanism, not a
   nuisance: a harness that cannot be wrong is not evidence. `tests/corpus.rs` additionally
@@ -199,6 +237,10 @@ and `lib/`, bypassing the build script).
 - `corpus/cases.toml` — every byte stream and the verdict it is asserted to produce.
 - `crates/snapshot/src/grid.rs` — what "the grid" means for comparison. The contract both
   implementations satisfy; neither owns it.
+- `crates/core/src/reflow.rs` — the re-lay itself, as a pure transform over rows. Every
+  non-obvious rule in it carries the measurement it came from.
+- `crates/core/src/resize.rs` — the storage round-trip around that transform: drain, reflow,
+  split back into history and active area.
 - `crates/snapshot/src/difference.rs` — how disagreement is located and reported.
 - `crates/ghostty/tests/abi_layout.rs` — the ABI pin. Read before touching `sys`.
 - `crates/ghostty/tests/oracle.rs` — what the oracle is known to read correctly.

@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use ruuah_vt_snapshot::{Row, RowSemantic, Semantic, Style};
+use ruuah_vt_snapshot::{Row, RowSemantic, Style};
 
 use crate::cell::Cell;
 use crate::page::{HistoryCell, HistoryRow};
@@ -23,6 +23,10 @@ use crate::style::{StyleId, StyleTable};
 pub struct RowMeta {
     pub wrap: bool,
     pub wrap_continuation: bool,
+    /// The row's own OSC 133 prompt state. Tracked here rather than derived from the cells
+    /// because upstream does not derive it either: a row keeps its mark after the cells that
+    /// earned it are erased or overwritten.
+    pub semantic_prompt: RowSemantic,
 }
 
 /// The cell array and everything hanging off it.
@@ -281,7 +285,7 @@ impl Grid {
             match row.cells.get(usize::from(x)) {
                 Some(cell) => {
                     let style_id = self.intern_style(cell.style);
-                    let mut flags = crate::cell::CellFlags::NONE;
+                    let mut flags = crate::cell::CellFlags::with_semantic(cell.semantic);
                     flags.set_has_grapheme(!cell.graphemes.is_empty());
                     self.write(
                         index,
@@ -369,6 +373,7 @@ impl Grid {
                     codepoint: cell.codepoint,
                     wide: cell.wide,
                     style: self.style(cell.style_id),
+                    semantic: cell.flags.semantic(),
                     graphemes: if cell.flags.has_grapheme() {
                         self.graphemes.get(&index).cloned().unwrap_or_default()
                     } else {
@@ -395,7 +400,7 @@ impl Grid {
                 Row {
                     wrap: meta.wrap,
                     wrap_continuation: meta.wrap_continuation,
-                    semantic_prompt: RowSemantic::None,
+                    semantic_prompt: meta.semantic_prompt,
                     cells: (0..self.cols)
                         .map(|x| {
                             let index = self.index(x, y);
@@ -404,7 +409,7 @@ impl Grid {
                                 text: self.cell_text(index),
                                 wide: cell.wide.into(),
                                 style: self.style(cell.style_id),
-                                semantic: Semantic::Output,
+                                semantic: cell.flags.semantic(),
                             }
                         })
                         .collect(),

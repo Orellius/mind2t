@@ -198,11 +198,11 @@ impl State {
                 self.last_print = None;
             }
             b'D' => {
-                self.screen_mut().line_feed(blank);
+                self.index(blank);
                 self.last_print = None;
             }
             b'E' => {
-                self.screen_mut().line_feed(blank);
+                self.index(blank);
                 self.screen_mut().x = 0;
                 self.last_print = None;
             }

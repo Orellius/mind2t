@@ -11,10 +11,9 @@
 use std::ffi::c_void;
 use std::mem;
 
-use ruuah_vt_snapshot::{
-    Cell, Color, Cursor, Row, RowSemantic, Screen, Semantic, Snapshot, Style, Underline, Wide,
-};
+use ruuah_vt_snapshot::{Cell, Color, Cursor, Row, Screen, Snapshot, Style};
 
+use crate::convert::{convert_row_semantic, convert_semantic, convert_style, convert_wide};
 use crate::sys;
 
 /// A failure reaching or reading the oracle. Never a terminal-behaviour disagreement:
@@ -404,98 +403,6 @@ fn read_graphemes(cell_ref: &sys::GhosttyGridRef, x: u16, y: u16) -> Result<Stri
             })
         })
         .collect()
-}
-
-fn convert_style(raw: &sys::GhosttyStyle) -> Result<Style, Error> {
-    Ok(Style {
-        fg: convert_color(&raw.fg_color)?,
-        bg: convert_color(&raw.bg_color)?,
-        underline_color: convert_color(&raw.underline_color)?,
-        bold: raw.bold,
-        italic: raw.italic,
-        faint: raw.faint,
-        blink: raw.blink,
-        inverse: raw.inverse,
-        invisible: raw.invisible,
-        strikethrough: raw.strikethrough,
-        overline: raw.overline,
-        underline: convert_underline(raw.underline)?,
-    })
-}
-
-fn convert_color(raw: &sys::GhosttyStyleColor) -> Result<Color, Error> {
-    match raw.tag {
-        sys::GhosttyStyleColorTag_GHOSTTY_STYLE_COLOR_NONE => Ok(Color::Default),
-        sys::GhosttyStyleColorTag_GHOSTTY_STYLE_COLOR_PALETTE => {
-            Ok(Color::Palette(unsafe { raw.value.palette }))
-        }
-        sys::GhosttyStyleColorTag_GHOSTTY_STYLE_COLOR_RGB => {
-            let rgb = unsafe { raw.value.rgb };
-            Ok(Color::Rgb {
-                r: rgb.r,
-                g: rgb.g,
-                b: rgb.b,
-            })
-        }
-        other => Err(Error::UnknownEnum {
-            kind: "GhosttyStyleColorTag",
-            value: other,
-        }),
-    }
-}
-
-fn convert_wide(raw: sys::GhosttyCellWide) -> Result<Wide, Error> {
-    match raw {
-        sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_NARROW => Ok(Wide::Narrow),
-        sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_WIDE => Ok(Wide::Wide),
-        sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_SPACER_TAIL => Ok(Wide::SpacerTail),
-        sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_SPACER_HEAD => Ok(Wide::SpacerHead),
-        other => Err(Error::UnknownEnum {
-            kind: "GhosttyCellWide",
-            value: other,
-        }),
-    }
-}
-
-fn convert_semantic(raw: sys::GhosttyCellSemanticContent) -> Result<Semantic, Error> {
-    match raw {
-        sys::GhosttyCellSemanticContent_GHOSTTY_CELL_SEMANTIC_OUTPUT => Ok(Semantic::Output),
-        sys::GhosttyCellSemanticContent_GHOSTTY_CELL_SEMANTIC_INPUT => Ok(Semantic::Input),
-        sys::GhosttyCellSemanticContent_GHOSTTY_CELL_SEMANTIC_PROMPT => Ok(Semantic::Prompt),
-        other => Err(Error::UnknownEnum {
-            kind: "GhosttyCellSemanticContent",
-            value: other,
-        }),
-    }
-}
-
-fn convert_row_semantic(raw: sys::GhosttyRowSemanticPrompt) -> Result<RowSemantic, Error> {
-    match raw {
-        sys::GhosttyRowSemanticPrompt_GHOSTTY_ROW_SEMANTIC_NONE => Ok(RowSemantic::None),
-        sys::GhosttyRowSemanticPrompt_GHOSTTY_ROW_SEMANTIC_PROMPT => Ok(RowSemantic::Prompt),
-        sys::GhosttyRowSemanticPrompt_GHOSTTY_ROW_SEMANTIC_PROMPT_CONTINUATION => {
-            Ok(RowSemantic::PromptContinuation)
-        }
-        other => Err(Error::UnknownEnum {
-            kind: "GhosttyRowSemanticPrompt",
-            value: other,
-        }),
-    }
-}
-
-fn convert_underline(raw: i32) -> Result<Underline, Error> {
-    match raw as u32 {
-        sys::GhosttySgrUnderline_GHOSTTY_SGR_UNDERLINE_NONE => Ok(Underline::None),
-        sys::GhosttySgrUnderline_GHOSTTY_SGR_UNDERLINE_SINGLE => Ok(Underline::Single),
-        sys::GhosttySgrUnderline_GHOSTTY_SGR_UNDERLINE_DOUBLE => Ok(Underline::Double),
-        sys::GhosttySgrUnderline_GHOSTTY_SGR_UNDERLINE_CURLY => Ok(Underline::Curly),
-        sys::GhosttySgrUnderline_GHOSTTY_SGR_UNDERLINE_DOTTED => Ok(Underline::Dotted),
-        sys::GhosttySgrUnderline_GHOSTTY_SGR_UNDERLINE_DASHED => Ok(Underline::Dashed),
-        other => Err(Error::UnknownEnum {
-            kind: "GhosttySgrUnderline",
-            value: other,
-        }),
-    }
 }
 
 pub(crate) fn check(call: &'static str, code: sys::GhosttyResult) -> Result<(), Error> {

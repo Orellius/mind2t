@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 
-use ruuah_vt_snapshot::{Row, RowSemantic, Semantic, Style};
+use ruuah_vt_snapshot::{Row, Semantic, Style};
 
 use crate::cell::{Cell, Wide};
 use crate::grid::RowMeta;
@@ -31,6 +31,7 @@ pub struct HistoryCell {
     pub codepoint: u32,
     pub wide: Wide,
     pub style: Style,
+    pub semantic: Semantic,
     pub graphemes: Vec<char>,
 }
 
@@ -94,7 +95,7 @@ impl Page {
             if !cell.graphemes.is_empty() {
                 graphemes.insert(x as u16, cell.graphemes.clone());
             }
-            let mut flags = crate::cell::CellFlags::NONE;
+            let mut flags = crate::cell::CellFlags::with_semantic(cell.semantic);
             flags.set_has_grapheme(!cell.graphemes.is_empty());
             cells.push(Cell {
                 codepoint: cell.codepoint,
@@ -145,6 +146,7 @@ impl Page {
                 codepoint: cell.codepoint,
                 wide: cell.wide,
                 style: self.styles.get(cell.style_id),
+                semantic: cell.flags.semantic(),
                 graphemes: stored
                     .graphemes
                     .get(&(x as u16))
@@ -179,13 +181,13 @@ impl Page {
                 text,
                 wide: cell.wide.into(),
                 style: self.styles.get(cell.style_id),
-                semantic: Semantic::Output,
+                semantic: cell.flags.semantic(),
             });
         }
         Some(Row {
             wrap: stored.meta.wrap,
             wrap_continuation: stored.meta.wrap_continuation,
-            semantic_prompt: RowSemantic::None,
+            semantic_prompt: stored.meta.semantic_prompt,
             cells,
         })
     }
@@ -203,6 +205,7 @@ mod tests {
                 codepoint: c as u32,
                 wide: Wide::Narrow,
                 style: Style::DEFAULT,
+                semantic: Semantic::Output,
                 graphemes: Vec::new(),
             })
             .collect();
@@ -211,6 +214,7 @@ mod tests {
                 codepoint: 0,
                 wide: Wide::Narrow,
                 style: Style::DEFAULT,
+                semantic: Semantic::Output,
                 graphemes: Vec::new(),
             });
         }

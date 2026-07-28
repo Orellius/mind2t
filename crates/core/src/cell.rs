@@ -8,6 +8,8 @@
 //!   live (`grid.rs`), or page-internal offset allocation (deferred to slice 3).
 //! Test strategy: the 8-byte guarantee is a compile-time assertion, not a hope.
 
+use ruuah_vt_snapshot::Semantic;
+
 use crate::style::{DEFAULT_STYLE_ID, StyleId};
 
 /// How much horizontal space a cell claims.
@@ -32,6 +34,8 @@ impl CellFlags {
     pub const NONE: CellFlags = CellFlags(0);
 
     const HAS_GRAPHEME: u8 = 1 << 0;
+    const SEMANTIC_SHIFT: u8 = 1;
+    const SEMANTIC_MASK: u8 = 0b11 << Self::SEMANTIC_SHIFT;
 
     /// Whether this cell has continuation codepoints in the grid's grapheme map.
     ///
@@ -47,6 +51,34 @@ impl CellFlags {
         } else {
             self.0 &= !Self::HAS_GRAPHEME;
         }
+    }
+
+    /// What OSC 133 said this cell's content is.
+    ///
+    /// Two spare bits rather than a field: `Cell` is asserted at 8 bytes and every one of
+    /// them is already spoken for, so a new field would double scrollback's per-cell cost to
+    /// carry two bits. Ghostty packs the same value into the same slack for the same reason.
+    pub fn semantic(self) -> Semantic {
+        match (self.0 & Self::SEMANTIC_MASK) >> Self::SEMANTIC_SHIFT {
+            1 => Semantic::Input,
+            2 => Semantic::Prompt,
+            _ => Semantic::Output,
+        }
+    }
+
+    pub fn set_semantic(&mut self, semantic: Semantic) {
+        let bits = match semantic {
+            Semantic::Output => 0,
+            Semantic::Input => 1,
+            Semantic::Prompt => 2,
+        };
+        self.0 = (self.0 & !Self::SEMANTIC_MASK) | (bits << Self::SEMANTIC_SHIFT);
+    }
+
+    pub fn with_semantic(semantic: Semantic) -> CellFlags {
+        let mut flags = CellFlags::NONE;
+        flags.set_semantic(semantic);
+        flags
     }
 }
 

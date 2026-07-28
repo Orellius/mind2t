@@ -99,17 +99,36 @@ impl FontStack {
         })
     }
 
-    /// macOS defaults: Menlo for text and box drawing, Arial Hebrew behind it.
+    /// The macOS default stack, in preference order, skipping whatever is not installed.
     ///
-    /// Both are needed and neither is enough -- see the module card.
+    /// Menlo leads because it is the only one of the three carrying box drawing, blocks and
+    /// powerline -- Miriam Mono CLM covers **0 of 128** box-drawing codepoints, measured, so
+    /// it cannot lead a stack that has to draw a TUI.
+    ///
+    /// Miriam Mono CLM (Culmus) is the Hebrew of choice and is worth installing. Measured
+    /// 2026-07-28 by shaping through swash: it composes shin+shin-dot and bet+dagesh via GSUB
+    /// into single glyphs, positions a qamats via GPOS at exactly half the advance so the
+    /// mark is centred under its base, gives marks zero advance so a pointed cluster stays
+    /// ONE cell, and advances Latin and Hebrew identically at 0.6em -- the same advance as
+    /// Menlo, so the two share a grid exactly.
+    ///
+    /// Arial Hebrew is the last resort: it ships on every macOS but is proportional, so
+    /// Hebrew sits unevenly in a fixed grid.
     pub fn system(size: f32) -> Result<FontStack, FontError> {
-        FontStack::load(
-            &[
-                ("/System/Library/Fonts/Menlo.ttc", 0),
-                ("/System/Library/Fonts/ArialHB.ttc", 0),
-            ],
-            size,
-        )
+        let home = std::env::var("HOME").unwrap_or_default();
+        let candidates = [
+            ("/System/Library/Fonts/Menlo.ttc".to_string(), 0),
+            (format!("{home}/Library/Fonts/MiriamMonoCLM-Book.ttf"), 0),
+            ("/System/Library/Fonts/ArialHB.ttc".to_string(), 0),
+        ];
+
+        let present: Vec<(&str, usize)> = candidates
+            .iter()
+            .filter(|(path, _)| std::path::Path::new(path).is_file())
+            .map(|(path, index)| (path.as_str(), *index))
+            .collect();
+
+        FontStack::load(&present, size)
     }
 
     pub fn metrics(&self) -> CellMetrics {
@@ -192,14 +211,38 @@ mod tests {
     }
 
     #[test]
-    fn hebrew_falls_through_to_the_second_font() {
+    fn hebrew_falls_through_past_the_primary_font() {
         // The measurement that forced a stack: Menlo maps aleph to glyph 0. If this ever
         // starts resolving to font 0, either Menlo gained Hebrew or resolution is returning
         // .notdef as if it were a hit -- and the second reads as a rendering bug on screen.
         let mut stack = FontStack::system(16.0).expect("system fonts");
         let aleph = stack.resolve('\u{05D0}').expect("some font has aleph");
-        assert_eq!(aleph.font, 1, "Menlo has no Hebrew");
+        assert_ne!(aleph.font, 0, "Menlo has no Hebrew");
         assert_ne!(aleph.glyph, 0);
+    }
+
+    #[test]
+    fn the_primary_font_is_the_one_that_can_draw_a_tui() {
+        // Miriam Mono CLM covers zero box-drawing codepoints, so a stack that put it first
+        // would render Hebrew beautifully and vim as blanks. Whatever leads must carry both
+        // the frame characters and the blocks.
+        let mut stack = FontStack::system(16.0).expect("system fonts");
+        for c in ['\u{2500}', '\u{2502}', '\u{250C}', '\u{2588}'] {
+            assert_eq!(
+                stack.resolve(c).map(|r| r.font),
+                Some(0),
+                "U+{:04X} must come from the primary font",
+                c as u32
+            );
+        }
+    }
+
+    #[test]
+    fn a_stack_still_loads_on_a_machine_without_the_optional_hebrew_font() {
+        // `system` filters to what is installed, so a machine with no Culmus still gets a
+        // working terminal rather than an error at startup.
+        let stack = FontStack::system(16.0).expect("system fonts");
+        assert!(stack.font_count() >= 2);
     }
 
     #[test]

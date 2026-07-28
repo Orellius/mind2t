@@ -7,3 +7,5 @@ publish.workspace = true
 
 [dependencies]
 ruuah-vt-snapshot.workspace = true
+unicode-width = "0.2"
+vte = "0.15"

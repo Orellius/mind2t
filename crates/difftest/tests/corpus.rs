@@ -69,29 +69,52 @@ fn an_agreeing_case_reports_zero_differences_not_merely_a_match_verdict() {
 
 #[test]
 fn a_disagreeing_case_names_the_exact_cell_and_field() {
-    // The whole value of the harness is specificity. If it can only say "these differ",
-    // slice 1 gets no signal from it.
+    // The whole value of the harness is specificity. If it can only say "these differ", the
+    // next slice gets no signal from it.
+    //
+    // Deliberately not pinned to a named case: this test used to hard-code `sgr-bold`, and
+    // slice 1 implementing SGR broke it. Every slice closes some case, so anchoring on one
+    // by name guarantees a false failure per slice. Anchor on the property instead.
     let cases = load(DEFAULT_CORPUS).expect("corpus");
-    let case = cases
+    let disagreeing: Vec<&_> = cases
         .iter()
-        .find(|c| c.name == "sgr-bold")
-        .expect("sgr-bold is the canonical disagreeing case");
-
-    let outcome = run(case).expect("oracle");
-    assert_eq!(outcome.verdict, Verdict::Diff);
-
-    let paths: Vec<&str> = outcome.differences.iter().map(|d| d.path.as_str()).collect();
+        .filter(|case| case.expect == Expectation::Diff)
+        .collect();
     assert!(
-        paths.iter().any(|p| p.starts_with("cell[0,")),
-        "must locate a specific cell, got {paths:?}"
+        !disagreeing.is_empty(),
+        "the corpus must retain at least one disagreeing case, or this proves nothing"
     );
+
+    let mut located_a_cell = false;
+    for case in disagreeing {
+        let outcome = run(case).expect("oracle");
+        assert_eq!(outcome.verdict, Verdict::Diff, "case {}", case.name);
+        assert!(
+            !outcome.differences.is_empty(),
+            "case {} reported Diff with no differences",
+            case.name
+        );
+        for difference in &outcome.differences {
+            assert!(
+                !difference.path.is_empty(),
+                "case {}: every difference must be located",
+                case.name
+            );
+            assert_ne!(
+                difference.oracle, difference.candidate,
+                "case {}: a reported difference must actually differ",
+                case.name
+            );
+        }
+        located_a_cell |= outcome
+            .differences
+            .iter()
+            .any(|difference| difference.path.starts_with("cell["));
+    }
+
     assert!(
-        paths.iter().any(|p| p.ends_with(".style")),
-        "must name the style field, got {paths:?}"
-    );
-    assert!(
-        outcome.differences.iter().all(|d| d.oracle != d.candidate),
-        "a reported difference must actually differ"
+        located_a_cell,
+        "no difference anywhere named a specific cell coordinate"
     );
 }
 

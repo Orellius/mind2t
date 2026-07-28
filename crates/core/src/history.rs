@@ -137,7 +137,7 @@ mod tests {
     use crate::cell::Wide;
     use crate::grid::RowMeta;
     use crate::page::{HistoryCell, PAGE_ROWS};
-    use ruuah_vt_snapshot::Style;
+    use ruuah_vt_snapshot::{Semantic, Style};
 
     fn row(text: &str) -> HistoryRow {
         HistoryRow {
@@ -147,6 +147,7 @@ mod tests {
                     codepoint: c as u32,
                     wide: Wide::Narrow,
                     style: Style::DEFAULT,
+                    semantic: Semantic::Output,
                     graphemes: Vec::new(),
                 })
                 .collect(),

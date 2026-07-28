@@ -225,10 +225,28 @@ fn both_layers_survive_the_crossing_into_history() {
     );
 }
 
+/// The alternate screen has its own grid but not its own cursor state: switching leaves the
+/// new screen blank and unmarked, while text written after the switch still carries whatever
+/// content type was active before it. The two halves are separate facts and both are load
+/// bearing, so both are asserted rather than inferred from each other.
 #[test]
-fn the_alternate_screen_starts_from_a_clean_slate() {
-    let snap = snapshot_of(12, 2, b"\x1b]133;A\x07$ p\x1b[?1049h");
+fn the_alternate_screen_is_blank_but_inherits_the_cursor_state() {
+    let switched = snapshot_of(12, 2, b"\x1b]133;A\x07$ p\x1b[?1049h");
+    assert_eq!(switched.grid[0].semantic_prompt, RowSemantic::None);
+    assert_eq!(semantics(&switched, 0), run(Semantic::Output, 12));
 
-    assert_eq!(snap.grid[0].semantic_prompt, RowSemantic::None);
-    assert_eq!(semantics(&snap, 0), run(Semantic::Output, 12));
+    // No new OSC 133 here: the mark on `alt` can only have come across the switch.
+    let written = snapshot_of(12, 2, b"\x1b]133;A\x07$ p\x1b[?1049h\ralt");
+    assert_eq!(written.grid[0].cells[0].semantic, Semantic::Prompt);
+    assert_eq!(written.grid[0].semantic_prompt, RowSemantic::None);
+}
+
+/// Returning from the alternate screen restores the primary screen's marks, and the cursor
+/// state that crossed into the alternate screen is still in force.
+#[test]
+fn returning_from_the_alternate_screen_restores_the_primary_marks() {
+    let snap = snapshot_of(12, 2, b"\x1b]133;A\x07$ p\x1b[?1049h\x1b[?1049lX");
+
+    assert_eq!(snap.grid[0].semantic_prompt, RowSemantic::Prompt);
+    assert_eq!(semantics(&snap, 0)[..4], run(Semantic::Prompt, 4)[..]);
 }

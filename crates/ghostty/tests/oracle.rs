@@ -217,3 +217,50 @@ fn a_direct_rgb_background_survives_erase() {
         }
     );
 }
+
+/// Damage is the slice-5 blind spot, so this pins that the oracle reports it AND that a
+/// reset clears it. Without both halves the harness could not tell a correct damage
+/// implementation from one that marks everything dirty forever.
+#[test]
+fn the_oracle_reports_damage_and_a_reset_clears_it() {
+    let mut terminal = Terminal::new(10, 3).expect("terminal");
+    let mut render = ruuah_vt_ghostty::RenderState::new().expect("render state");
+
+    terminal.write(b"hello");
+    render.update(&terminal).expect("update");
+    let after_write = render.damage().expect("damage");
+    assert_ne!(
+        after_write.global,
+        ruuah_vt_snapshot::Dirty::None,
+        "a write must dirty the frame, or the harness is blind"
+    );
+
+    render.clear_dirty().expect("clear");
+    render.update(&terminal).expect("update");
+    let after_reset = render.damage().expect("damage");
+    assert_eq!(
+        after_reset.global,
+        ruuah_vt_snapshot::Dirty::None,
+        "a reset with no further writes must leave the frame clean"
+    );
+    assert!(
+        after_reset.rows.iter().all(|dirty| !dirty),
+        "the reset must clear the per-row layer too, not just the global one: {:?}",
+        after_reset.rows
+    );
+
+    terminal.write(b"\r\nsecond");
+    render.update(&terminal).expect("update");
+    let targeted = render.damage().expect("damage");
+    assert_ne!(targeted.global, ruuah_vt_snapshot::Dirty::None);
+    assert!(
+        targeted.rows.iter().any(|dirty| *dirty),
+        "writing one row must dirty at least that row: {:?}",
+        targeted.rows
+    );
+    assert!(
+        !targeted.rows.iter().all(|dirty| *dirty),
+        "and must NOT dirty every row, or per-row damage carries no information: {:?}",
+        targeted.rows
+    );
+}

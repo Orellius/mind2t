@@ -9,4 +9,6 @@ pub mod difference;
 pub mod grid;
 
 pub use difference::{Difference, diff};
-pub use grid::{Cell, Color, Cursor, Row, Screen, Snapshot, Style, Underline, Wide};
+pub use grid::{
+    Cell, Color, Cursor, Damage, Dirty, Row, Screen, Snapshot, Style, Underline, Wide,
+};

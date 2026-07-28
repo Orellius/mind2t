@@ -89,8 +89,24 @@ impl Screen {
 
     pub fn move_to(&mut self, x: u16, y: u16) {
         self.x = x.min(self.last_col());
-        self.y = y.min(self.last_row());
+        self.set_y(y.min(self.last_row()));
         self.pending_wrap = false;
+    }
+
+    /// Moves the cursor to a row, damaging the one it left and the one it arrives at.
+    ///
+    /// Only when the row actually changes. Measured against libghostty-vt 2026-07-28: moving
+    /// the cursor WITHIN a row damages nothing, and a cursor that leaves a row and returns to
+    /// it still leaves the row it passed through dirty -- so this has to be marked on every
+    /// move rather than derived from where the cursor started and ended.
+    fn set_y(&mut self, y: u16) {
+        if self.y == y {
+            return;
+        }
+        let previous = self.y;
+        self.y = y;
+        self.grid.mark_dirty(previous);
+        self.grid.mark_dirty(y);
     }
 
     /// Moves down one row, scrolling the region if already at its bottom margin.
@@ -102,7 +118,8 @@ impl Screen {
         if self.y == self.scroll_bottom {
             self.scroll_region_up(1, blank);
         } else if self.y < self.last_row() {
-            self.y += 1;
+            let next = self.y + 1;
+            self.set_y(next);
         }
         self.pending_wrap = false;
     }
@@ -113,7 +130,8 @@ impl Screen {
             self.grid
                 .scroll_down(self.scroll_top, self.scroll_bottom, 1, blank);
         } else if self.y > 0 {
-            self.y -= 1;
+            let previous = self.y - 1;
+            self.set_y(previous);
         }
         self.pending_wrap = false;
     }
@@ -260,7 +278,8 @@ impl Screen {
     pub fn restore_cursor(&mut self) {
         if let Some(saved) = self.saved {
             self.x = saved.x.min(self.last_col());
-            self.y = saved.y.min(self.last_row());
+            let y = saved.y.min(self.last_row());
+            self.set_y(y);
             self.pending_wrap = saved.pending_wrap;
         }
     }

@@ -1,6 +1,7 @@
 //! Purpose: the terminal state a differential test is allowed to observe.
 //! Public surface: `Snapshot`, `Row`, `Cell`, `Cursor`, `Style`, `Color`, `Wide`,
-//!   `Underline`, `Screen`, and a `Display` impl that renders a snapshot for human eyes.
+//!   `Underline`, `Screen`, `Dirty`, `Damage`, and a `Display` impl that renders a snapshot
+//!   for human eyes.
 //! Why this file: both implementations must agree on what "the grid" *is* before they
 //!   can be compared, so the shape lives in one place that neither of them owns.
 //! NOT responsible for: parsing, mutation, comparison (see `difference.rs`), or storage
@@ -88,6 +89,32 @@ pub struct Row {
     pub cells: Vec<Cell>,
 }
 
+/// How much of the screen changed since the dirty flags were last reset.
+///
+/// Two independent layers, matching the ABI: a global state saying whether the frame is
+/// clean, partly dirty, or wholly dirty, and a per-row flag for the partial case. Setting one
+/// does not clear the other, which is the trap the header calls out explicitly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dirty {
+    /// Nothing changed; a renderer can skip the frame entirely.
+    None,
+    /// Some rows changed. Consult the per-row flags.
+    Partial,
+    /// Everything changed; redraw without consulting rows.
+    Full,
+}
+
+/// What a renderer would have to repaint.
+///
+/// Optional on a `Snapshot` because most corpus cases do not ask for it: damage is
+/// accumulated between two writes, so a case has to opt in to be meaningful at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Damage {
+    pub global: Dirty,
+    /// One flag per active row, top to bottom.
+    pub rows: Vec<bool>,
+}
+
 /// Cursor position and the style newly printed cells will take.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cursor {
@@ -114,6 +141,10 @@ pub struct Snapshot {
     /// coordinates: `cell[0,0]` means the same thing whether or not history exists, which
     /// keeps every pre-scrollback corpus case and its recorded diffs valid.
     pub history: Vec<Row>,
+    /// What changed since the case reset the dirty flags, when the case asked to observe it.
+    /// `None` on both sides for every case that does not, which is how the pre-slice-5
+    /// corpus stays untouched.
+    pub damage: Option<Damage>,
 }
 
 impl Style {
@@ -200,6 +231,14 @@ impl fmt::Display for Snapshot {
         )?;
         if !self.cursor.style.is_default() {
             writeln!(f, "cursor style {}", describe_style(&self.cursor.style))?;
+        }
+        if let Some(damage) = &self.damage {
+            let rows: String = damage
+                .rows
+                .iter()
+                .map(|dirty| if *dirty { '#' } else { '.' })
+                .collect();
+            writeln!(f, "damage {:?} rows |{rows}|", damage.global)?;
         }
         for (y, row) in self.history.iter().enumerate() {
             let text = self.history_text(y);

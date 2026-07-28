@@ -5,8 +5,10 @@
 //! so agreement here is agreement with a shipping terminal, not with a model of one.
 
 pub mod sys;
+pub mod render;
 pub mod terminal;
 
+pub use render::RenderState;
 pub use terminal::{Error, Terminal};
 
 /// The library's own description of every C struct layout, as JSON.

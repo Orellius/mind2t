@@ -10,7 +10,7 @@
 //! Test strategy: measured against libghostty-vt by the differential corpus rather than by
 //!   restating expected cell contents here.
 
-use ruuah_vt_snapshot::{Cursor, Screen as SnapshotScreen, Snapshot, Style};
+use ruuah_vt_snapshot::{Cursor, Damage, Dirty, Screen as SnapshotScreen, Snapshot, Style};
 use unicode_width::UnicodeWidthChar;
 use vte::{Params, Perform};
 
@@ -48,8 +48,43 @@ impl Terminal {
         self.state.resize(cols, rows);
     }
 
+    /// Discards accumulated damage, starting a fresh observation window.
+    pub fn clear_damage(&mut self) {
+        self.state.full_damage = false;
+        self.state.screen_mut().grid.clear_dirty();
+    }
+
+    /// What a renderer would have to repaint since damage was last cleared.
+    pub fn damage(&self) -> Option<Damage> {
+        Some(self.state.damage())
+    }
+
     pub fn snapshot(&self) -> Snapshot {
         self.state.snapshot()
+    }
+
+    /// The active screen buffer, for a consumer that reads the grid directly.
+    ///
+    /// `snapshot` allocates a `String` per cell, which is right for a corpus case and wrong
+    /// for a renderer reading every frame. This is the same state without the convenience.
+    pub fn screen(&self) -> &Screen {
+        self.state.screen()
+    }
+
+    pub fn cursor(&self) -> Cursor {
+        let screen = self.state.screen();
+        Cursor {
+            x: screen.x,
+            y: screen.y,
+            pending_wrap: screen.pending_wrap,
+            visible: self.state.cursor_visible,
+            style: self.state.pen,
+        }
+    }
+
+    /// Whether the accumulated damage is a whole-frame event rather than a set of rows.
+    pub fn is_wholly_damaged(&self) -> bool {
+        self.state.full_damage
     }
 }
 
@@ -77,6 +112,12 @@ pub(crate) struct State {
     /// cluster it belongs to. Cleared by anything that moves the cursor.
     pub(crate) last_print: Option<usize>,
     pub(crate) max_scrollback: usize,
+    /// Something changed that no per-row flag can express, so the whole frame is stale.
+    ///
+    /// Four triggers, each confirmed in upstream's `Terminal.zig` as the places that set its
+    /// `dirty.clear` bit: a complete erase (ED 2, but NOT ED 0/1/3), a resize, a screen
+    /// switch in either direction, and RIS. Measured the same way from the outside.
+    pub(crate) full_damage: bool,
 }
 
 impl State {
@@ -94,7 +135,38 @@ impl State {
             cursor_visible: true,
             last_print: None,
             max_scrollback,
+            full_damage: false,
         }
+    }
+
+    /// Flags the whole frame as stale, and every row with it.
+    ///
+    /// Both halves: upstream rebuilds the entire render state for these events, so every row
+    /// comes back dirty as well as the global flag. Setting only the global one would report
+    /// a clean row set for a frame that is entirely stale.
+    pub(crate) fn mark_full_damage(&mut self) {
+        self.full_damage = true;
+        let rows = self.screen().rows();
+        for y in 0..rows {
+            self.screen_mut().grid.mark_dirty(y);
+        }
+    }
+
+    /// What a renderer would have to repaint.
+    ///
+    /// `Partial` whenever any row is dirty, `Full` only for the whole-frame triggers. A
+    /// scroll dirties every row and is still `Partial`: the distinction is not "how many
+    /// rows" but "is per-row information meaningful at all".
+    fn damage(&self) -> Damage {
+        let rows: Vec<bool> = self.screen().grid.dirty_rows().to_vec();
+        let global = if self.full_damage {
+            Dirty::Full
+        } else if rows.iter().any(|dirty| *dirty) {
+            Dirty::Partial
+        } else {
+            Dirty::None
+        };
+        Damage { global, rows }
     }
 
     pub(crate) fn screen(&self) -> &Screen {
@@ -143,6 +215,7 @@ impl State {
             },
             grid: screen.grid.to_rows(),
             history: screen.history.to_rows(),
+            damage: None,
         }
     }
 
@@ -295,12 +368,16 @@ impl State {
 
         self.tabs = TabStops::new(cols);
         self.last_print = None;
+        // After the grids are rebuilt, so the whole NEW geometry is marked rather than the
+        // old row count. Upstream sets the same clear bit from its own resize.
+        self.mark_full_damage();
     }
 
     pub(crate) fn full_reset(&mut self) {
         let cols = self.screen().cols();
         let rows = self.screen().rows();
         *self = State::new(cols, rows, self.max_scrollback);
+        self.mark_full_damage();
     }
 }
 

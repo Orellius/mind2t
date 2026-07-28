@@ -4,6 +4,8 @@ members = [
     "crates/snapshot",
     "crates/ghostty",
     "crates/core",
+    "crates/frame",
+    "crates/pty",
     "crates/difftest",
 ]
 
@@ -16,6 +18,8 @@ publish = false
 ruuah-vt-snapshot = { path = "crates/snapshot" }
 ruuah-vt-ghostty = { path = "crates/ghostty" }
 ruuah-vt-core = { path = "crates/core" }
+ruuah-vt-frame = { path = "crates/frame" }
+ruuah-vt-pty = { path = "crates/pty" }
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"

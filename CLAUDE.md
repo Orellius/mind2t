@@ -25,7 +25,34 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
-**Slices 0 through 4 are done.**
+**Slices 0 through 4 are done. Slice 5 is in progress: steps 1, 2 and 3 of 5 landed.**
+
+Slice 5 step 3, `[tested]`: the frame channel and the pty host, in two new crates.
+`ruuah-vt-frame` publishes a whole frame from the parse thread to a renderer through a
+**seqlock** -- a generation counter that is odd while a publish is in flight, so a reader
+that arrives mid-write discards that frame instead of drawing half of one. `ruuah-vt-pty`
+owns the pseudoterminal and the child, keeps the `Terminal` on its own pump thread, and is
+the only crate in the project that performs I/O. 137 tests green; corpus unchanged at 78
+cases, 71 match / 7 diff, 78/78 met expectation.
+
+The harness came first here too, and this time the blind spot was total: a seqlock whose
+reader ignores the counter passes every single-threaded test ever written against it.
+`crates/frame/tests/tearing.rs` runs a writer and a reader flat out against a frame carrying
+a self-consistency invariant, and **proves the invariant is sensitive** by running the same
+load through a reader with the protocol removed, which must observe tearing. Both directions
+were then confirmed by mutation: deleting the reader's `generation != before` re-check makes
+the passing test fail with a real torn frame (`cell (1,0) is from publish 16 but (0,0) is
+from 15`).
+
+Slice 5 step 2, `[tested]`: damage tracking -- per-row dirty flags, a whole-frame flag, and
+the cursor's contribution to both, measured against the oracle's `GhosttyRenderState`.
+
+Slice 5 step 1, `[tested]`: the harness learned to see damage at all. `Snapshot` represented
+neither dirty layer, so any damage implementation would have reported MATCH.
+
+Remaining in slice 5: **step 4** (glyph atlas + damage-driven redraw; done = renders vim) and
+**step 5** (the renderer consumes visual runs). Step 5's seam is already built and tested --
+see the `Run` / `Direction` note below -- so step 4 draws through it from its first line.
 
 Slice 4, `[tested]`: reflow. Resize rejoins soft-wrapped rows into logical lines, re-splits at
 the new width, and maps the cursor through the transform. Scrollback takes part -- a logical
@@ -82,8 +109,10 @@ table **compacts** against live cells once it exceeds `cols * rows`, so neither 
 bound.
 
 **esctest2 is deferred, not skipped.** It drives a terminal through a real PTY and reads state
-back via DSR/DA query responses. This core has neither by design, so wiring it up needs a PTY
-host — slice 5/6 territory. The differential corpus covers the same semantics without one.
+back via DSR/DA query responses. The PTY host now exists (`ruuah-vt-pty`, slice 5 step 3), so
+the remaining blocker is the *reply* half: the core still has no DSR/DA response path, because
+answering a query means writing bytes back, and the core does no I/O. The seam for it is
+`Host::send`. The differential corpus covers the same semantics without either.
 
 **Slice 0 detail.** The differential oracle harness runs, and the project is real.
 
@@ -106,9 +135,8 @@ peak memory during a resize is roughly double the scrollback. Resize is a human-
 which is what makes that trade acceptable; a streaming page-at-a-time reflow is the fix if it
 ever stops being.
 
-Next: **slice 5 — render.** Glyph atlas, damage-driven redraw from a dirty-row bitset, and a
-seqlock between the PTY thread and the renderer. Bidi lives here if it lives anywhere, and
-never in the core (see below).
+Next: **slice 5 step 4 — the glyph atlas and damage-driven redraw.** Done = renders vim. Bidi
+lives in the renderer if it lives anywhere, and never in the core (see below).
 
 ## Project rules & gotchas
 
@@ -183,6 +211,36 @@ never in the core (see below).
   `feedback-no-bidi-in-terminals`: emulator bidi structurally cannot serve a cursor-addressed
   TUI, because the cursor has no mapping after reorder. **"Support most languages" is not
   bidi** — it is grapheme clusters plus correct width tables, both of which are slice 1.
+- **Darwin refuses `TIOCSWINSZ` on the pty MASTER.** Measured 2026-07-28 on macOS 25.5, and
+  confirmed with raw `libc::ioctl` as well as through rustix, so it is a kernel rule and not
+  a binding bug: setting the window size on the master returns `ENOTTY` (errno 25,
+  "Inappropriate ioctl for device"). It must go to the **user side**; reading it back with
+  `TIOCGWINSZ` works from either end. Linux accepts both, which is exactly why this is easy
+  to write wrong and only fails on the machine the project targets. `host.rs` therefore
+  *reopens* the pts by path for each resize rather than holding a slave fd — holding one open
+  would mean the master never reports EOF when the child exits, because this process would
+  still have the other end open. Cost: eight failing integration tests with a misleading
+  errno. Do not re-derive it.
+- **The seqlock payload is `AtomicU64` read and written `Relaxed`, and there is no `unsafe`
+  in it.** A classic seqlock races the reader against the writer, which in Rust's model is a
+  data race and therefore undefined — the usual workarounds are `read_volatile` or a raw
+  `copy_nonoverlapping`, both of which are formally still UB. The way out is that the standard
+  library defines a data race as requiring a *non-atomic* access, so relaxed atomic loads that
+  race are merely unordered, never undefined; the generation counter's `Acquire`/`Release`
+  pair supplies the ordering that makes a set of atomic words into one consistent frame. This
+  is why `Cell` being exactly 8 bytes pays off twice: one cell is one `u64`.
+  The `seqlock` crate (0.2.0, May 2026) was checked and does not fit — it requires `T: Copy`
+  and has no dynamically-sized payload, and a terminal grid is sized at runtime.
+- **The renderer's only input is `Frame::runs`, and a `Run` carries a `Direction`.** Nothing
+  produces a `RightToLeft` run yet; the variant and `Run::column_of` exist so that slice 5.5
+  changes the run builder and not one line of drawing code. A renderer that adds an index to
+  `run.start` itself compiles fine today and draws every Hebrew line backwards later. This is
+  slice 5's acceptance criterion 5, built before the renderer rather than after it.
+- **A published cell carries 16 bytes of inline UTF-8, not a pointer into an arena.** An arena
+  needs an offset and a length, and a torn offset/length pair is the one thing that could turn
+  a discarded frame into a fault. Sixteen bytes holds a base letter plus roughly seven
+  combining marks, which covers Hebrew niqqud with room over; a longer cluster (multi-person
+  emoji ZWJ sequences) is **flagged** via `PackedCell::is_truncated`, never silently shortened.
 - **The shipped artifact is `libruuah-vt.a`, but cargo cannot name it that.** Measured
   2026-07-28: a package called `libruuah-vt` emits `lib`**`lib`**`ruuah_vt.a`, and
   `[lib] name = "ruuah-vt"` is a hard cargo error — *"library target names cannot contain
@@ -219,6 +277,13 @@ overnight is indistinguishable from a regression you caused.
 
 Rust 1.93.1, edition 2024, resolver 3. `cargo test --workspace` is the gate.
 
+Dependencies stay deliberately few: `vte`, `unicode-width`, `thiserror`, `serde`, `toml`, and
+`rustix` (slice 5 step 3). `portable-pty` was evaluated for the pty host and rejected — on
+macOS it costs thirteen crates including `serial2`, a serial-port library, and a second
+`thiserror` major version alongside the workspace's. `rustix` costs three and the pty dance is
+about sixty lines we own. **`cargo fmt --all` reformats the whole repo**, which was never
+rustfmt-clean; format only the files a change actually touches, or the diff drowns.
+
 ```sh
 ./scripts/build-oracle.sh      # build libghostty-vt into vendor/ (../ruuah stays clean)
 cargo test --workspace         # 32 tests
@@ -242,6 +307,13 @@ and `lib/`, bypassing the build script).
 - `crates/core/src/resize.rs` — the storage round-trip around that transform: drain, reflow,
   split back into history and active area.
 - `crates/snapshot/src/difference.rs` — how disagreement is located and reported.
+- `crates/frame/src/seqlock.rs` — the thread handoff. Read the module card before touching the
+  ordering; every `fence` in it is load-bearing.
+- `crates/frame/src/frame.rs` — what a renderer is allowed to draw from. The `Run` /
+  `Direction` seam that keeps bidi out of the renderer.
+- `crates/frame/tests/tearing.rs` — the concurrency harness, including the control that proves
+  it can fail.
+- `crates/pty/src/host.rs` — the only I/O in the project, and the one `unsafe` block.
 - `crates/ghostty/tests/abi_layout.rs` — the ABI pin. Read before touching `sys`.
 - `crates/ghostty/tests/oracle.rs` — what the oracle is known to read correctly.
 - Conformance canon (not yet wired in): xterm ctlseqs, DEC STD 070, esctest2 (the CI

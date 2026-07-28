@@ -149,6 +149,29 @@ impl Grid {
         self.styles.get(id)
     }
 
+    pub fn styles(&self) -> &StyleTable {
+        &self.styles
+    }
+
+    /// Writes a cell's grapheme cluster into a caller-owned buffer.
+    ///
+    /// The allocation-free counterpart to `cell_text`, for the publish path: a renderer
+    /// reads every cell of every frame, so one `String` per cell per frame is not a cost it
+    /// can carry.
+    pub fn cluster_into(&self, index: usize, out: &mut String) {
+        out.clear();
+        let cell = self.cell(index);
+        let Some(first) = char::from_u32(cell.codepoint).filter(|_| cell.has_text()) else {
+            return;
+        };
+        out.push(first);
+        if cell.flags.has_grapheme() {
+            if let Some(rest) = self.graphemes.get(&index) {
+                out.extend(rest.iter());
+            }
+        }
+    }
+
     pub fn row_meta(&self, y: u16) -> RowMeta {
         self.row_meta
             .get(usize::from(y))

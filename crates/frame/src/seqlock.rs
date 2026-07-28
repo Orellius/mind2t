@@ -44,8 +44,13 @@ pub enum ReadOutcome {
     Fresh(u64),
     /// Nothing has been published since the frame was last filled.
     Unchanged,
-    /// A publish was in progress, or one landed mid-read. The frame is untouched and the
-    /// caller should come back rather than draw a mixture of two frames.
+    /// A publish was in progress, or one landed mid-read. The frame must not be drawn.
+    ///
+    /// It is left either untouched (the publish was already in flight when the read started)
+    /// or overwritten and explicitly invalidated (one landed mid-copy). Which of the two is
+    /// deliberately not distinguished, because the only correct response to either is the
+    /// same: come back, and draw the last good frame in the meantime. `Frame::is_valid` is
+    /// what tells a careless caller which it is holding.
     Skipped,
 }
 
@@ -262,6 +267,12 @@ impl FrameReader {
         // overwritten during the copy could still look untouched.
         fence(Ordering::Acquire);
         if shared.generation.load(Ordering::Relaxed) != before {
+            // The copy already wrote into `frame`, and undoing it would need the shadow buffer
+            // this design exists to avoid. So the frame is marked as belonging to no publish
+            // rather than left claiming the one it held before the call: without this it holds
+            // a mixture of two publishes while reporting a third's generation, and a caller
+            // that ignores the outcome draws it without anything looking wrong.
+            frame.generation = 0;
             return ReadOutcome::Skipped;
         }
 

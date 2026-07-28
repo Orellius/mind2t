@@ -61,6 +61,9 @@ impl Outcome {
 ///
 /// The byte stream is written in a single call to each side. Chunking is a separate
 /// property and is covered by the oracle's own tests, not here.
+///
+/// A case may resize between its two streams. The second stream is what makes the reflowed
+/// cursor observable at all: a grid comparison cannot see a cursor that never writes.
 pub fn run(case: &Case) -> Result<Outcome, RunError> {
     let bytes = case.bytes.as_bytes();
 
@@ -70,6 +73,15 @@ pub fn run(case: &Case) -> Result<Outcome, RunError> {
             source,
         })?;
     oracle_terminal.write(bytes);
+    if let Some(resize) = case.resize {
+        oracle_terminal
+            .resize(resize.cols, resize.rows)
+            .map_err(|source| RunError::Oracle {
+                case: case.name.clone(),
+                source,
+            })?;
+    }
+    oracle_terminal.write(case.after.as_bytes());
     let oracle = oracle_terminal
         .snapshot()
         .map_err(|source| RunError::Oracle {
@@ -79,6 +91,10 @@ pub fn run(case: &Case) -> Result<Outcome, RunError> {
 
     let mut candidate_terminal = ruuah_vt_core::Terminal::with_scrollback(case.cols, case.rows, case.scrollback);
     candidate_terminal.write(bytes);
+    if let Some(resize) = case.resize {
+        candidate_terminal.resize(resize.cols, resize.rows);
+    }
+    candidate_terminal.write(case.after.as_bytes());
     let candidate = candidate_terminal.snapshot();
 
     let differences = diff(&oracle, &candidate);

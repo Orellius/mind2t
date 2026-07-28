@@ -1,11 +1,12 @@
 //! Purpose: drive two screen buffers from a byte stream, using `vte` as the parser.
-//! Public surface: `Terminal::new`, `Terminal::write`, `Terminal::snapshot`.
+//! Public surface: `Terminal::new`, `Terminal::write`, `Terminal::resize`,
+//!   `Terminal::snapshot`.
 //! Why this file: the plan is explicit that VT parsing is solved and must not be rewritten,
 //!   so this is only the `Perform` side -- what each parsed action does. It is the
 //!   imperative shell over a functional core: no I/O, no clock, fully deterministic.
 //! NOT responsible for: parsing (`vte`), control-sequence dispatch (`dispatch.rs`), buffer
-//!   operations (`screen.rs`, `grid.rs`), style decoding (`sgr.rs`), or tabs (`tabs.rs`). Scrollback and reflow are slices 3
-//!   and 4 and are deliberately absent.
+//!   operations (`screen.rs`, `grid.rs`), style decoding (`sgr.rs`), tabs (`tabs.rs`),
+//!   scrollback (`history.rs`) or reflow (`reflow.rs`, `resize.rs`).
 //! Test strategy: measured against libghostty-vt by the differential corpus rather than by
 //!   restating expected cell contents here.
 
@@ -14,6 +15,7 @@ use unicode_width::UnicodeWidthChar;
 use vte::{Params, Perform};
 
 use crate::cell::{Cell, CellFlags, Wide};
+use crate::reflow::Mode;
 use crate::screen::Screen;
 use crate::tabs::TabStops;
 
@@ -39,6 +41,11 @@ impl Terminal {
     /// sequences across calls, so a sequence split mid-stream is handled.
     pub fn write(&mut self, bytes: &[u8]) {
         self.parser.advance(&mut self.state, bytes);
+    }
+
+    /// Resizes both screens. The primary reflows, the alternate does not.
+    pub fn resize(&mut self, cols: u16, rows: u16) {
+        self.state.resize(cols, rows);
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -270,6 +277,23 @@ impl State {
             self.screen_mut().x = previous;
         }
         self.screen_mut().pending_wrap = false;
+        self.last_print = None;
+    }
+
+    /// Resizes both screens and rebuilds the tab stops for the new width.
+    ///
+    /// Both screens, not just the active one: a program that resizes while in the alternate
+    /// screen and then leaves it would otherwise find the primary still at the old geometry.
+    pub(crate) fn resize(&mut self, cols: u16, rows: u16) {
+        if cols == 0 || rows == 0 {
+            return;
+        }
+        // The primary rejoins soft-wrapped lines; the alternate is documented by the ABI as
+        // not reflowing, so its rows only gain or lose columns.
+        crate::resize::apply(&mut self.primary, cols, rows, Mode::Rejoin);
+        crate::resize::apply(&mut self.alternate, cols, rows, Mode::Truncate);
+
+        self.tabs = TabStops::new(cols);
         self.last_print = None;
     }
 

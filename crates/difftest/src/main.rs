@@ -79,12 +79,14 @@ fn main() -> ExitCode {
 
 fn report(case: &ruuah_vt_difftest::Case, outcome: &Outcome, ok: bool, dump: bool) {
     let flag = if ok { "ok" } else { "UNEXPECTED" };
+    let geometry = match case.resize {
+        Some(resize) => format!("{}x{}->{}x{}", case.cols, case.rows, resize.cols, resize.rows),
+        None => format!("{}x{}", case.cols, case.rows),
+    };
     println!(
-        "{:<6} {:<26} {}x{}  expected {:<5} {flag}",
+        "{:<6} {:<34} {geometry:<12} expected {:<5} {flag}",
         outcome.verdict.to_string(),
         case.name,
-        case.cols,
-        case.rows,
         case.expect
     );
     if !case.note.is_empty() {

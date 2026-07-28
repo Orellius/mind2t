@@ -10,7 +10,7 @@
 //! Test strategy: measured against libghostty-vt by the differential corpus rather than by
 //!   restating expected cell contents here.
 
-use ruuah_vt_snapshot::{Cursor, Screen as SnapshotScreen, Snapshot, Style};
+use ruuah_vt_snapshot::{Cursor, Damage, Screen as SnapshotScreen, Snapshot, Style};
 use unicode_width::UnicodeWidthChar;
 use vte::{Params, Perform};
 
@@ -46,6 +46,18 @@ impl Terminal {
     /// Resizes both screens. The primary reflows, the alternate does not.
     pub fn resize(&mut self, cols: u16, rows: u16) {
         self.state.resize(cols, rows);
+    }
+
+    /// Discards accumulated damage, starting a fresh observation window.
+    ///
+    /// A no-op until damage is tracked. Present now because the harness needs the shape to
+    /// be expressible before the behaviour exists -- that is the whole point of extending it
+    /// first, and a corpus case records the gap as a disagreement in the meantime.
+    pub fn clear_damage(&mut self) {}
+
+    /// What a renderer would have to repaint. `None` until damage is tracked.
+    pub fn damage(&self) -> Option<Damage> {
+        None
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -143,6 +155,7 @@ impl State {
             },
             grid: screen.grid.to_rows(),
             history: screen.history.to_rows(),
+            damage: None,
         }
     }
 

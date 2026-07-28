@@ -33,10 +33,41 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
-**Slices 0 through 5.6 are done**, tagged `v0.5.6`. Reordering, shaping, and now the semantic
-prompt layer and the caret that follows its cell: bytes in, correctly ordered, correctly
-pointed, correctly addressed pixels out. 227 tests green; corpus 97 cases, 90 match / 7 diff,
-97/97 met expectation.
+**Slices 0 through 7 are done**, tagged `v0.7.0`, and the **S1 audit wave** on top of them is
+tagged `v0.7.1`. 252 tests green; corpus 124 cases, 98 match / 26 diff, 124/124 met
+expectation; `libruuah-vt.a` at 13/13 exports.
+
+**The S1 wave, `[tested]`.** A full audit on 2026-07-28 found 31 defects, 7 at S1, and the
+pattern behind nearly all of them was that **the harness rule had been applied to the core and
+never to the comparator or the ABI**. Ten of the 24 fields `difference.rs` compares had no test
+that failed when the comparison was deleted; because 90 of 97 cases expected MATCH, deleting a
+comparison only ever made more snapshots agree. So the two harness repairs landed FIRST, and
+everything after them was measured against a gate that could actually go red.
+
+All seven are fixed, each with a control that was run against the broken version and seen to
+fail: the GPU op log now retires on read rather than replaying all history (hard ceiling was
+1,048,576 ops); a seqlock read interrupted mid-copy invalidates the caller's frame instead of
+leaving it wearing a stale generation; CUU/CUD/CNL/CPL are bounded by the scroll region;
+`ED 3` clears the scrollback; `ghostty_terminal_new` NULLs its out-param on failure; the
+comparator's damage/screen/cursor comparisons have controls; and a corpus that loses cases is
+refused rather than reported on.
+
+Three things worth keeping from it, because each cost a wrong first attempt:
+
+- **A control aimed at the wrong workload proves nothing.** The seqlock's tearing harness ran
+  a writer flat out, which holds the counter odd almost continuously, so reads bail before
+  copying: **6,802,136 skips in one run, zero of them the path being tested.** The bug needed
+  an orchestrated workload (large grid, writer publishing 60us after the reader enters the
+  copy) to reach it about half the time.
+- **Self-consistency was the wrong question there too.** An interrupted copy usually finishes
+  with clean content wearing the wrong generation, so every cell agrees with every other one.
+  The test asks whether the frame was TOUCHED instead.
+- **A check placed before the thing it guards does not guard it.** The corpus size floor in
+  `load` passes, then the loader truncates on the way out -- re-running the original mutation
+  with the floor in place still exited 0. The fix is a count re-derived from the raw file text
+  in `tests/corpus.rs`, which shares no code with the loader.
+
+Findings 8 through 31 (S2/S3/S4) remain open in the audit's order.
 
 Slice 5.6, `[tested]`: **OSC 133 and the visual caret.** The core tracks prompt / input /
 output regions (`crates/core/src/semantic.rs`), and the renderer draws the caret at
@@ -156,8 +187,14 @@ the cursor's contribution to both, measured against the oracle's `GhosttyRenderS
 Slice 5 step 1, `[tested]`: the harness learned to see damage at all. `Snapshot` represented
 neither dirty layer, so any damage implementation would have reported MATCH.
 
-Next after 5.6: **slice 6**, the GPU backend behind `Canvas`, and the rename of the shipped
-artifact to `libruuah-vt.a` so RUUAH's link flag mirrors `-lghostty-vt` exactly.
+Slice 6 (the C ABI) and slice 7 (the GPU backend) both landed after this, and the shipped
+artifact is now built and export-checked by `scripts/build-lib.sh`.
+
+Next after the audit backlog: **slice 8, a minimal Swift host.** Not RUUAH -- measured
+2026-07-28, its Swift app calls 99 `ghostty_*` symbols and not one is a VT-core symbol. The
+host is what makes slice 7's GPU backend mean anything (it renders into a buffer nobody
+displays today), and its key-encoder path is the same `Host::send` seam esctest2 needs for
+DSR/DA replies, so slice 9 gets its blocker removed as a by-product.
 
 Slice 4, `[tested]`: reflow. Resize rejoins soft-wrapped rows into logical lines, re-splits at
 the new width, and maps the cursor through the transform. Scrollback takes part -- a logical

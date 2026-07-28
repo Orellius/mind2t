@@ -106,6 +106,29 @@ reported path (`cell[0,1].style`, `row[0].wrap`, `cursor.pending_wrap`) is a thi
   `libruuah-vt.a` in the build step** so RUUAH's link flag mirrors `-lghostty-vt` exactly.
   Do not try to make cargo produce the hyphen directly.
 
+## Repo and git workflow
+
+`Orellius/ruuah-vt`, **private**. `origin` only.
+
+**There is no `upstream` remote, deliberately.** ruuah-vt is original code with no shared
+history to track, so a second remote would be theatre. The upstream that actually matters is
+the **oracle**: libghostty-vt is a moving reference implementation, and when Ghostty changes
+behaviour the corpus verdicts move with it. `oracle.lock` pins the exact Ghostty commit the
+current oracle was built from, `scripts/build-oracle.sh` rewrites it and **announces when the
+oracle moved**. Commit `oracle.lock` whenever it changes — without it, a corpus case flipping
+overnight is indistinguishable from a regression you caused.
+
+- **`main` holds verified slices only.** Every commit on it has `cargo test --workspace`
+  green and `difftest` exiting 0.
+- **One branch per slice**, `slice-N-<name>`, merged with `--no-ff` so slice boundaries stay
+  visible in the history. `git log --first-parent main` then reads as one line per slice.
+- **Annotated tag per completed slice**, `v0.N.0`. The tag message records the corpus state
+  (case counts and verdicts), the test count, and the `oracle.lock` describe string — so a
+  tag answers "what worked, measured against which Ghostty" without checking anything out.
+  `v0.0.0` = slice 0 harness, `v0.1.0` = slice 1 parser + grid.
+- Never push a slice branch that leaves the corpus failing its own expectations. A case whose
+  verdict changed is either promoted (with its note rewritten) or explained.
+
 ## Toolchain
 
 Rust 1.93.1, edition 2024, resolver 3. `cargo test --workspace` is the gate.

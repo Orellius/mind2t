@@ -1,0 +1,9 @@
+# Which libghostty-vt the differential oracle was built from. Written by
+# scripts/build-oracle.sh; commit this file when it changes.
+#
+# ruuah-vt has no git upstream. This is the upstream that matters: the oracle is the
+# reference implementation, and when it moves the corpus can move with it.
+source = "/Users/orelohayon/Desktop/Studio/tools/ruuah"
+commit = "b2afcdc1deda92b4ea667bfc283636fa2a9a3a7b"
+describe = "v1.3.2-ruuah.1-1-gb2afcdc1d"
+zig = "0.16.0"

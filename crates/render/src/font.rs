@@ -147,6 +147,29 @@ impl FontStack {
         Some(self.faces.get(usize::from(index))?.font())
     }
 
+    /// How far a resolved glyph advances the pen, in pixels at this stack's size.
+    ///
+    /// The grid test: a fallback whose advance differs from the primary's puts its script
+    /// off the cell grid, which is the difference between Hebrew that lines up with code and
+    /// Hebrew that drifts.
+    pub fn advance(&self, resolved: Resolved) -> f32 {
+        self.face(resolved.font)
+            .map(|font| {
+                font.glyph_metrics(&[])
+                    .scale(self.size)
+                    .advance_width(resolved.glyph)
+            })
+            .unwrap_or(0.0)
+    }
+
+    /// The full name of one font in the stack, for diagnostics.
+    pub fn name(&self, index: u16) -> Option<String> {
+        let font = self.face(index)?;
+        font.localized_strings()
+            .find_by_id(swash::StringId::Full, None)
+            .map(|name| name.to_string())
+    }
+
     /// The first font in the stack that has a glyph for `c`.
     ///
     /// `None` when nothing covers it, which is a real answer: drawing glyph 0 from the first
@@ -235,6 +258,25 @@ mod tests {
                 c as u32
             );
         }
+    }
+
+    #[test]
+    fn the_hebrew_font_advances_on_the_same_grid_as_latin() {
+        // The assertion that proves the CHOSEN stack is live, not merely a working one.
+        // `hebrew_falls_through_past_the_primary_font` passes just as happily when Miriam
+        // Mono CLM fails to load and proportional Arial Hebrew answers instead -- and that
+        // degradation is invisible until Hebrew drifts off the grid on screen. Miriam
+        // advances 0.6em exactly like Menlo; Arial Hebrew does not.
+        let mut stack = FontStack::system(16.0).expect("system fonts");
+        let latin = stack.resolve('A').expect("A resolves");
+        let aleph = stack.resolve('\u{05D0}').expect("aleph resolves");
+
+        assert_eq!(
+            stack.advance(aleph).round(),
+            stack.advance(latin).round(),
+            "Hebrew is coming from {:?}, which does not share Latin's advance",
+            stack.name(aleph.font)
+        );
     }
 
     #[test]

@@ -470,3 +470,28 @@ fn an_out_of_range_point_is_refused() {
         ghostty_terminal_free(handle);
     }
 }
+
+/// Parity on the failure path, which the corpus cannot reach.
+///
+/// Every case in this file drives a terminal that was created successfully; nothing here
+/// otherwise observes what happens when creation fails. The oracle's behaviour is measured in
+/// `ruuah-vt-ghostty`'s `a_failed_creation_nulls_the_out_param`, and this is the same
+/// assertion against our export, so the two move together or the test says so.
+#[test]
+fn a_failed_creation_nulls_the_out_param_here_too() {
+    let sentinel = 0xDEAD_BEEF_usize as GhosttyTerminal;
+    let mut handle = sentinel;
+    let options = GhosttyTerminalOptions {
+        cols: 0,
+        rows: 24,
+        max_scrollback: 0,
+    };
+
+    let code = unsafe { ghostty_terminal_new(std::ptr::null(), &mut handle, options) };
+
+    assert_eq!(code, GHOSTTY_INVALID_VALUE);
+    assert!(
+        handle.is_null(),
+        "left {handle:?} in the out-param; a stale non-null handle reads as success"
+    );
+}

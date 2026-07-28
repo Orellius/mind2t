@@ -267,7 +267,8 @@ fn quote(text: &str) -> String {
 mod tests {
     use super::*;
     use crate::grid::{
-        Color, Cursor, RowSemantic, Screen, Semantic, Underline, Wide, describe_color,
+        Color, Cursor, Damage, Dirty, RowSemantic, Screen, Semantic, Underline, Wide,
+        describe_color,
     };
 
     fn snapshot(cols: u16, rows: u16) -> Snapshot {
@@ -426,6 +427,123 @@ mod tests {
 
         let paths: Vec<String> = diff(&a, &b).into_iter().map(|d| d.path).collect();
         assert_eq!(paths, ["cursor.x", "cursor.pending_wrap"]);
+    }
+
+    /// The four controls below exist because mutation proved the ones above did not cover
+    /// these fields: `diff_damage` could be replaced with a no-op, and the `screen`,
+    /// `cursor.visible` and `cursor.style` comparisons deleted, with every gate still green.
+    /// The corpus structurally cannot catch that -- 90 of its cases expect MATCH, so removing
+    /// a comparison only makes more snapshots agree.
+    #[test]
+    fn a_hidden_cursor_is_reported() {
+        let a = snapshot(4, 2);
+        let mut b = a.clone();
+        b.cursor.visible = false;
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "cursor.visible");
+        assert_eq!(found[0].oracle, "true");
+        assert_eq!(found[0].candidate, "false");
+    }
+
+    /// The pen the cursor will print with is state a grid comparison cannot otherwise see:
+    /// an SGR that never gets written to a cell leaves no trace anywhere else.
+    #[test]
+    fn the_cursor_pen_is_compared() {
+        let a = snapshot(4, 2);
+        let mut b = a.clone();
+        b.cursor.style.bold = true;
+        b.cursor.style.fg = Color::Palette(4);
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "cursor.style");
+        assert_eq!(found[0].oracle, "default");
+        assert_eq!(found[0].candidate, "fg=palette(4) bold");
+    }
+
+    /// Two grids can be cell-for-cell identical and still be different screens. Without this,
+    /// an alt-screen bug that leaves the right content behind is invisible.
+    #[test]
+    fn the_alternate_screen_is_not_mistaken_for_the_primary() {
+        let a = snapshot(4, 2);
+        let mut b = a.clone();
+        b.screen = Screen::Alternate;
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "screen");
+        assert_eq!(found[0].oracle, "Primary");
+        assert_eq!(found[0].candidate, "Alternate");
+    }
+
+    #[test]
+    fn every_damage_layer_is_compared() {
+        // Each of the three is a separate failure a renderer would show: a wrong global state
+        // skips or forces a whole frame, a wrong row count misaligns every flag after it, and
+        // a wrong row flag leaves one stale line on screen.
+        let mut a = snapshot(4, 2);
+        a.damage = Some(Damage {
+            global: Dirty::Partial,
+            rows: vec![true, false],
+        });
+
+        let mut global = a.clone();
+        global.damage = Some(Damage {
+            global: Dirty::Full,
+            rows: vec![true, false],
+        });
+        let found = diff(&a, &global);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "damage.global");
+        assert_eq!(found[0].candidate, "Full");
+
+        let mut row = a.clone();
+        row.damage = Some(Damage {
+            global: Dirty::Partial,
+            rows: vec![true, true],
+        });
+        let found = diff(&a, &row);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "damage.row[1]");
+
+        let mut count = a.clone();
+        count.damage = Some(Damage {
+            global: Dirty::Partial,
+            rows: vec![true],
+        });
+        let found = diff(&a, &count);
+        assert_eq!(found[0].path, "damage.rows.len");
+    }
+
+    /// One side observing damage and the other not is a harness fault, not a terminal
+    /// disagreement, and it must be reported rather than silently skipped.
+    #[test]
+    fn damage_observed_on_only_one_side_is_reported() {
+        let a = snapshot(4, 2);
+        let mut b = a.clone();
+        b.damage = Some(Damage {
+            global: Dirty::None,
+            rows: vec![false, false],
+        });
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "damage.observed");
+        assert_eq!(found[0].oracle, "false");
+        assert_eq!(found[0].candidate, "true");
+    }
+
+    #[test]
+    fn identical_damage_is_not_reported() {
+        let mut a = snapshot(4, 2);
+        a.damage = Some(Damage {
+            global: Dirty::Partial,
+            rows: vec![false, true],
+        });
+        let b = a.clone();
+        assert_eq!(diff(&a, &b), vec![]);
     }
 
     #[test]

@@ -372,12 +372,13 @@ impl State {
         self.last_print = None;
     }
 
+    /// Upstream's horizontalTab is a bare cursorRight loop that never touches
+    /// `pending_wrap` (Terminal.zig:2111) -- at the last column it does nothing at all.
     pub(crate) fn tab_forward(&mut self, count: u16) {
         for _ in 0..count.max(1) {
             let next = self.tabs.next(self.screen().x);
             self.screen_mut().x = next;
         }
-        self.screen_mut().pending_wrap = false;
         self.last_print = None;
     }
 

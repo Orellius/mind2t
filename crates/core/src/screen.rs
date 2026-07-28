@@ -284,13 +284,18 @@ impl Screen {
         });
     }
 
+    /// With nothing saved, upstream restores a synthetic default cursor
+    /// (Terminal.zig:1872): home, no pending wrap. The pen half lives in `Terminal`.
     pub fn restore_cursor(&mut self) {
-        if let Some(saved) = self.saved {
-            self.x = saved.x.min(self.last_col());
-            let y = saved.y.min(self.last_row());
-            self.set_y(y);
-            self.pending_wrap = saved.pending_wrap;
-        }
+        let saved = self.saved.unwrap_or(SavedCursor {
+            x: 0,
+            y: 0,
+            pending_wrap: false,
+        });
+        self.x = saved.x.min(self.last_col());
+        let y = saved.y.min(self.last_row());
+        self.set_y(y);
+        self.pending_wrap = saved.pending_wrap;
     }
 
     /// Clears the whole buffer, its history and the cursor, as entering the alternate

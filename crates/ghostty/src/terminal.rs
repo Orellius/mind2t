@@ -37,12 +37,21 @@ pub struct Terminal {
 }
 
 impl Terminal {
-    /// Creates a terminal with no scrollback. Slice 0 compares the active area only.
+    /// Creates a terminal with no scrollback.
     pub fn new(cols: u16, rows: u16) -> Result<Terminal, Error> {
+        Terminal::with_scrollback(cols, rows, 0)
+    }
+
+    /// Creates a terminal retaining up to `max_scrollback` lines of history.
+    pub fn with_scrollback(
+        cols: u16,
+        rows: u16,
+        max_scrollback: usize,
+    ) -> Result<Terminal, Error> {
         let options = sys::GhosttyTerminalOptions {
             cols,
             rows,
-            max_scrollback: 0,
+            max_scrollback,
         };
         let mut raw: sys::GhosttyTerminal = std::ptr::null_mut();
         let code = unsafe { sys::ghostty_terminal_new(std::ptr::null(), &mut raw, options) };
@@ -70,13 +79,42 @@ impl Terminal {
             grid.push(self.read_row(y, cols)?);
         }
 
+        // History is read top-down in the HISTORY coordinate space, which addresses the
+        // scrollback alone. Reading it as SCREEN would require knowing where the active area
+        // starts, which is exactly the arithmetic a differential harness should not restate.
+        let scrollback = self.scrollback_rows()?;
+        let mut history = Vec::with_capacity(scrollback);
+        for y in 0..scrollback {
+            history.push(self.read_row_at(
+                sys::GhosttyPointTag_GHOSTTY_POINT_TAG_HISTORY,
+                u32::try_from(y).unwrap_or(u32::MAX),
+                cols,
+            )?);
+        }
+
         Ok(Snapshot {
             cols,
             rows,
             screen: self.screen()?,
             cursor: self.cursor()?,
             grid,
+            history,
         })
+    }
+
+    /// Total rows in the active screen including scrollback.
+    pub fn total_rows(&self) -> Result<usize, Error> {
+        unsafe { self.get(sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_TOTAL_ROWS, "TOTAL_ROWS") }
+    }
+
+    /// Rows of scrollback history above the active area.
+    pub fn scrollback_rows(&self) -> Result<usize, Error> {
+        unsafe {
+            self.get(
+                sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS,
+                "SCROLLBACK_ROWS",
+            )
+        }
     }
 
     fn cursor(&self) -> Result<Cursor, Error> {
@@ -128,7 +166,11 @@ impl Terminal {
     }
 
     fn read_row(&self, y: u16, cols: u16) -> Result<Row, Error> {
-        let first = self.grid_ref(0, y)?;
+        self.read_row_at(sys::GhosttyPointTag_GHOSTTY_POINT_TAG_ACTIVE, u32::from(y), cols)
+    }
+
+    fn read_row_at(&self, tag: sys::GhosttyPointTag, y: u32, cols: u16) -> Result<Row, Error> {
+        let first = self.grid_ref_at(tag, 0, y)?;
         let mut raw_row: sys::GhosttyRow = 0;
         check("ghostty_grid_ref_row", unsafe {
             sys::ghostty_grid_ref_row(&first, &mut raw_row)
@@ -136,7 +178,7 @@ impl Terminal {
 
         let mut cells = Vec::with_capacity(cols as usize);
         for x in 0..cols {
-            cells.push(self.read_cell(x, y)?);
+            cells.push(self.read_cell_at(tag, x, y)?);
         }
 
         Ok(Row {
@@ -152,8 +194,8 @@ impl Terminal {
         })
     }
 
-    fn read_cell(&self, x: u16, y: u16) -> Result<Cell, Error> {
-        let cell_ref = self.grid_ref(x, y)?;
+    fn read_cell_at(&self, tag: sys::GhosttyPointTag, x: u16, y: u32) -> Result<Cell, Error> {
+        let cell_ref = self.grid_ref_at(tag, x, y)?;
 
         let mut raw_cell: sys::GhosttyCell = 0;
         check("ghostty_grid_ref_cell", unsafe {
@@ -170,7 +212,7 @@ impl Terminal {
             unsafe { cell_get(raw_cell, sys::GhosttyCellData_GHOSTTY_CELL_DATA_WIDE, "WIDE") }?;
 
         Ok(Cell {
-            text: read_graphemes(&cell_ref, x, y)?,
+            text: read_graphemes(&cell_ref, x, u16::try_from(y).unwrap_or(u16::MAX))?,
             wide: convert_wide(wide)?,
             style: self.read_style(raw_cell, &raw_style)?,
         })
@@ -232,13 +274,15 @@ impl Terminal {
         Ok(style)
     }
 
-    fn grid_ref(&self, x: u16, y: u16) -> Result<sys::GhosttyGridRef, Error> {
+    fn grid_ref_at(
+        &self,
+        tag: sys::GhosttyPointTag,
+        x: u16,
+        y: u32,
+    ) -> Result<sys::GhosttyGridRef, Error> {
         let mut value: sys::GhosttyPointValue = unsafe { mem::zeroed() };
-        value.coordinate = sys::GhosttyPointCoordinate { x, y: y as u32 };
-        let point = sys::GhosttyPoint {
-            tag: sys::GhosttyPointTag_GHOSTTY_POINT_TAG_ACTIVE,
-            value,
-        };
+        value.coordinate = sys::GhosttyPointCoordinate { x, y };
+        let point = sys::GhosttyPoint { tag, value };
 
         let mut out: sys::GhosttyGridRef = unsafe { mem::zeroed() };
         out.size = mem::size_of::<sys::GhosttyGridRef>();

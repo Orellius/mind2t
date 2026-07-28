@@ -25,7 +25,14 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
-**Slices 0, 1 and 2 are done.**
+**Slices 0 through 3 are done.**
+
+Slice 3, `[tested]`: paged scrollback. History is a list of fixed-capacity pages, each owning
+its own cells, style table and grapheme storage, so dropping a page frees all of it. The row
+budget is exact (rows are pruned individually from the front; the page is released once it
+empties). Trailing blank cells are trimmed on the way in and re-padded on read, so scrollback
+cost follows content rather than width. 94 tests green; 36 corpus cases, 30 MATCH / 6 DIFF,
+36/36 met expectation.
 
 Slice 2, `[tested]`: the autowrap phantom state (with DECAWM), scrolling and scroll regions
 (DECSTBM, IND, RI, NEL, SU, SD), the alternate screen (47/1047/1048/1049), tab stops
@@ -43,8 +50,9 @@ mode 2027, and reverse wraparound (mode 45).
 
 Cell layout is settled and enforced: `Cell` is **8 bytes**, asserted at compile time in
 `cell.rs`. Style is an interned `u16` into a `StyleTable`; grapheme continuations live in a
-side map keyed by flat cell index. Moving that map and table into a page's own allocation is
-slice 3 work, and is what unlocks scrollback compression.
+side map keyed by flat cell index. History pages carry their own tables; the active grid's
+table **compacts** against live cells once it exceeds `cols * rows`, so neither grows without
+bound.
 
 **esctest2 is deferred, not skipped.** It drives a terminal through a real PTY and reads state
 back via DSR/DA query responses. This core has neither by design, so wiring it up needs a PTY
@@ -61,12 +69,18 @@ host — slice 5/6 territory. The differential corpus covers the same semantics 
 - `[tested]` Struct layouts pinned against the library's own `ghostty_type_json()`.
 - `[tested]` `../ruuah` byte-identical and `git status` clean after a from-scratch oracle build.
 
-Next: **slice 3 — scrollback.** A paged structure with bounded memory, not an array of rows.
-Cost is driven by terminal WIDTH, not content: every blank cell to the right of the text still
-allocates. Ghostty's `PageList.zig` is 17,852 lines for exactly this reason — read it before
-designing. Two things already point at it: `Grid::move_row` is O(cols) with a map operation per
-cell (a page list moves pointers instead), and `StyleTable` has no eviction, so a program
-cycling through 65k+ distinct styles silently drops to default.
+**Deliberate divergence from Ghostty, slice 3.** Ghostty keeps the active area and the history
+in ONE page list, so scrolling moves a pointer. Here the active area stays a flat fixed-size
+grid (already bounded at `cols * rows`) and only the *history* is paged, because that is where
+the unbounded growth was. The cost is that scrolling a row into history is O(cols) rather than
+a pointer move. Recorded rather than hidden; slice 4's reflow is the point at which unifying
+them might start paying for itself.
+
+Next: **slice 4 — reflow.** Resize joins soft-wrapped rows into logical lines, re-splits at the
+new width, and maps the cursor through the transform. The per-row soft-vs-hard wrap flag it
+needs has been carried since slice 2 and now survives into history (there is a corpus case
+pinning that). The plan says budget for getting this wrong twice; shipped terminals still have
+open bugs here.
 
 ## Project rules & gotchas
 
@@ -94,8 +108,18 @@ cycling through 65k+ distinct styles silently drops to default.
   the case *fails*, and it gets promoted to `expect = "match"`. That is the mechanism, not a
   nuisance: a harness that cannot be wrong is not evidence. `tests/corpus.rs` additionally
   refuses a corpus that has drifted to a single direction.
-- **The oracle is only the *active area*.** `max_scrollback = 0`. Scrollback comparison
-  arrives with slice 3; do not read `GHOSTTY_POINT_TAG_SCREEN` before then.
+- **Ghostty's scrollback limit is a memory budget scaled by WIDTH, not a row count.** Measured
+  2026-07-28 against the real library: `max_scrollback` behaves as a boolean (0 disables, any
+  non-zero value behaves the same), and writing 3000 lines kept **2998** rows at 6 columns but
+  only **634** at 80. This core budgets in rows instead. The two prune POLICIES are therefore
+  not comparable and must never be corpus-tested against each other — every scrollback case
+  stays far under both thresholds, where contents agree exactly, and the policy is unit-tested
+  in `history.rs`. This is the plan's ranked failure mode 4, confirmed on the real thing.
+- **Only rows leaving the TOP OF THE SCREEN become history.** A scroll region that starts
+  below row 0 pushes rows out inside the screen, not off it, and `delete_lines` removes them
+  outright. Neither feeds scrollback; there is a corpus case pinning each.
+- **The alternate screen has no scrollback**, by protocol. It is constructed with a zero
+  budget, so this is structural rather than a check that can be forgotten.
 - Cell text is a **grapheme cluster**, not a codepoint — encoded in `Snapshot` from day one
   because it is ranked failure mode 2 and 32 bits per cell is structurally insufficient.
 - **Bidi is a slice 5 (renderer) item and must never enter the core.** Decided 2026-07-28.

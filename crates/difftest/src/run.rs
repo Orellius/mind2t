@@ -65,7 +65,7 @@ pub fn run(case: &Case) -> Result<Outcome, RunError> {
     let bytes = case.bytes.as_bytes();
 
     let mut oracle_terminal =
-        ruuah_vt_ghostty::Terminal::new(case.cols, case.rows).map_err(|source| RunError::Oracle {
+        ruuah_vt_ghostty::Terminal::with_scrollback(case.cols, case.rows, case.scrollback).map_err(|source| RunError::Oracle {
             case: case.name.clone(),
             source,
         })?;
@@ -77,7 +77,7 @@ pub fn run(case: &Case) -> Result<Outcome, RunError> {
             source,
         })?;
 
-    let mut candidate_terminal = ruuah_vt_core::Terminal::new(case.cols, case.rows);
+    let mut candidate_terminal = ruuah_vt_core::Terminal::with_scrollback(case.cols, case.rows, case.scrollback);
     candidate_terminal.write(bytes);
     let candidate = candidate_terminal.snapshot();
 

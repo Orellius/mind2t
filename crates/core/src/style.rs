@@ -40,8 +40,9 @@ impl StyleTable {
     ///
     /// If the table is exhausted the style is dropped to default rather than panicking:
     /// the core must absorb hostile input without dying, and a wrong colour is a visible
-    /// diff while a panic takes the process. Slice 3 revisits this with per-page tables and
-    /// reference counting, which is how Ghostty keeps the space bounded.
+    /// diff while a panic takes the process. Exhaustion is now unreachable in practice --
+    /// `Grid` compacts before the table can approach the u16 ceiling -- but the branch stays
+    /// because "unreachable" and "cannot happen" are different claims.
     pub fn intern(&mut self, style: Style) -> StyleId {
         if style.is_default() {
             return DEFAULT_STYLE_ID;
@@ -63,6 +64,28 @@ impl StyleTable {
             .get(usize::from(id))
             .copied()
             .unwrap_or(Style::DEFAULT)
+    }
+
+    /// Rebuilds the table around `live`, returning an old-ID to new-ID map.
+    ///
+    /// Without this the table only grows: a session cycling through colours accumulates an
+    /// entry per distinct style forever, even after every cell using it has been overwritten.
+    /// Ghostty avoids this with per-page tables and reference counting; the active area here
+    /// is a single long-lived grid, so it compacts instead. Pages need none of this -- they
+    /// are immutable once written and freed whole.
+    pub fn compact(&mut self, live: &[StyleId]) -> HashMap<StyleId, StyleId> {
+        let mut fresh = StyleTable::new();
+        let mut remap = HashMap::with_capacity(live.len() + 1);
+        remap.insert(DEFAULT_STYLE_ID, DEFAULT_STYLE_ID);
+        for &old in live {
+            if old == DEFAULT_STYLE_ID {
+                continue;
+            }
+            let style = self.get(old);
+            remap.insert(old, fresh.intern(style));
+        }
+        *self = fresh;
+        remap
     }
 
     /// Number of distinct styles held, including the default at index 0.
@@ -122,6 +145,31 @@ mod tests {
         assert_ne!(bold_id, red_id);
         assert_eq!(table.get(bold_id), bold());
         assert_eq!(table.get(red_id), red);
+    }
+
+    #[test]
+    fn compaction_keeps_live_styles_and_drops_the_rest() {
+        let mut table = StyleTable::new();
+        let keep = table.intern(bold());
+        let drop = table.intern(Style {
+            italic: true,
+            ..Style::DEFAULT
+        });
+        assert_eq!(table.len(), 3);
+
+        let remap = table.compact(&[keep]);
+        assert_eq!(table.len(), 2, "default plus the one live style");
+        assert_eq!(table.get(remap[&keep]), bold());
+        assert!(!remap.contains_key(&drop), "the dead style is gone");
+    }
+
+    #[test]
+    fn compaction_leaves_the_default_at_zero() {
+        let mut table = StyleTable::new();
+        let id = table.intern(bold());
+        let remap = table.compact(&[id]);
+        assert_eq!(remap[&DEFAULT_STYLE_ID], DEFAULT_STYLE_ID);
+        assert_eq!(table.get(DEFAULT_STYLE_ID), Style::DEFAULT);
     }
 
     #[test]

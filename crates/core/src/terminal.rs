@@ -25,9 +25,13 @@ pub struct Terminal {
 
 impl Terminal {
     pub fn new(cols: u16, rows: u16) -> Terminal {
+        Terminal::with_scrollback(cols, rows, 0)
+    }
+
+    pub fn with_scrollback(cols: u16, rows: u16, max_scrollback: usize) -> Terminal {
         Terminal {
             parser: vte::Parser::new(),
-            state: State::new(cols, rows),
+            state: State::new(cols, rows, max_scrollback),
         }
     }
 
@@ -65,13 +69,15 @@ pub(crate) struct State {
     /// Flat index of the last printed cell, so a following zero-width codepoint knows which
     /// cluster it belongs to. Cleared by anything that moves the cursor.
     pub(crate) last_print: Option<usize>,
+    pub(crate) max_scrollback: usize,
 }
 
 impl State {
-    fn new(cols: u16, rows: u16) -> State {
+    fn new(cols: u16, rows: u16, max_scrollback: usize) -> State {
         State {
-            primary: Screen::new(cols, rows),
-            alternate: Screen::new(cols, rows),
+            primary: Screen::new(cols, rows, max_scrollback),
+            // The alternate screen has no scrollback, by protocol.
+            alternate: Screen::new(cols, rows, 0),
             active: Active::Primary,
             pen: Style::DEFAULT,
             saved_pen: None,
@@ -80,6 +86,7 @@ impl State {
             origin: false,
             cursor_visible: true,
             last_print: None,
+            max_scrollback,
         }
     }
 
@@ -128,6 +135,7 @@ impl State {
                 style: self.pen,
             },
             grid: screen.grid.to_rows(),
+            history: screen.history.to_rows(),
         }
     }
 
@@ -268,7 +276,7 @@ impl State {
     pub(crate) fn full_reset(&mut self) {
         let cols = self.screen().cols();
         let rows = self.screen().rows();
-        *self = State::new(cols, rows);
+        *self = State::new(cols, rows, self.max_scrollback);
     }
 }
 

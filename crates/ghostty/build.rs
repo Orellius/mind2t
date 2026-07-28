@@ -42,7 +42,7 @@ fn main() {
         .header("src/wrapper.h")
         .clang_arg(format!("-I{}", include.display()))
         .clang_arg("-DGHOSTTY_STATIC")
-        .allowlist_function("ghostty_terminal_(new|free|vt_write|get|grid_ref)")
+        .allowlist_function("ghostty_terminal_(new|free|vt_write|get|grid_ref|resize)")
         .allowlist_function("ghostty_grid_ref_(cell|row|graphemes|style)")
         .allowlist_function("ghostty_(cell|row)_get")
         .allowlist_function("ghostty_style_default")

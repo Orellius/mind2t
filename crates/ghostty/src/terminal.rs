@@ -1,5 +1,6 @@
 //! Purpose: drive a real libghostty-vt terminal and read its grid out as a `Snapshot`.
-//! Public surface: `Terminal::new`, `Terminal::write`, `Terminal::snapshot`, `Error`.
+//! Public surface: `Terminal::new`, `Terminal::write`, `Terminal::resize`,
+//!   `Terminal::snapshot`, `Error`.
 //! Why this file: the oracle side of the differential harness. Every unsafe call to the
 //!   C ABI is confined here, so the rest of the workspace is ordinary safe Rust.
 //! NOT responsible for: judging correctness (`ruuah-vt-snapshot::diff` does that), PTY, or
@@ -67,6 +68,20 @@ impl Terminal {
     /// corpus depends on.
     pub fn write(&mut self, bytes: &[u8]) {
         unsafe { sys::ghostty_terminal_vt_write(self.raw, bytes.as_ptr(), bytes.len()) };
+    }
+
+    /// Resizes the terminal, reflowing the primary screen as the library sees fit.
+    ///
+    /// The pixel dimensions are nominal. They feed image protocols and size reports, neither
+    /// of which the snapshot observes, but the call requires them and passing zero would
+    /// claim a zero-sized cell.
+    pub fn resize(&mut self, cols: u16, rows: u16) -> Result<(), Error> {
+        const CELL_WIDTH_PX: u32 = 10;
+        const CELL_HEIGHT_PX: u32 = 20;
+        let code = unsafe {
+            sys::ghostty_terminal_resize(self.raw, cols, rows, CELL_WIDTH_PX, CELL_HEIGHT_PX)
+        };
+        check("ghostty_terminal_resize", code)
     }
 
     /// Reads the whole active area out into an implementation-neutral snapshot.

@@ -1,5 +1,5 @@
 //! Purpose: load the corpus of byte streams, each with the verdict it is expected to get.
-//! Public surface: `Case`, `Expectation`, `load`, `CorpusError`, `DEFAULT_CORPUS`.
+//! Public surface: `Case`, `Resize`, `Expectation`, `load`, `CorpusError`, `DEFAULT_CORPUS`.
 //! Why this file: a harness that is never wrong about anything is not evidence. Declaring
 //!   the expected verdict per case makes the harness itself testable -- if the stub starts
 //!   agreeing with Ghostty on SGR, that is a corpus failure demanding an explanation.
@@ -51,6 +51,13 @@ impl std::fmt::Display for Expectation {
     }
 }
 
+/// New dimensions to resize to, mid-case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct Resize {
+    pub cols: u16,
+    pub rows: u16,
+}
+
 /// One byte stream, the geometry to run it at, and its expected verdict.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Case {
@@ -67,6 +74,15 @@ pub struct Case {
     /// The stream to feed both implementations, as a TOML basic string. Control
     /// bytes use TOML's own escapes, so ESC is written u001B with a leading backslash.
     pub bytes: String,
+    /// A resize applied after `bytes`. Absent means the case never resizes, which is every
+    /// case written before slice 4.
+    #[serde(default)]
+    pub resize: Option<Resize>,
+    /// A second stream, written after the resize. This is what makes the reflowed cursor
+    /// position observable: where the next character lands is the only way to see it
+    /// through a grid comparison.
+    #[serde(default)]
+    pub after: String,
     /// Why this case exists, in one line. Shown in the report.
     #[serde(default)]
     pub note: String,

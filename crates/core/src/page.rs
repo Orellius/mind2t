@@ -131,6 +131,33 @@ impl Page {
         true
     }
 
+    /// Hands a stored row back out in transfer form, styles resolved.
+    ///
+    /// Trailing blanks are not re-padded here: reflow pads to whatever width it is working
+    /// from, and padding twice would only make a short row look like content.
+    pub fn take_row(&self, index: usize) -> Option<HistoryRow> {
+        let stored = self.rows.get(self.start + index)?;
+        let cells = stored
+            .cells
+            .iter()
+            .enumerate()
+            .map(|(x, cell)| HistoryCell {
+                codepoint: cell.codepoint,
+                wide: cell.wide,
+                style: self.styles.get(cell.style_id),
+                graphemes: stored
+                    .graphemes
+                    .get(&(x as u16))
+                    .cloned()
+                    .unwrap_or_default(),
+            })
+            .collect();
+        Some(HistoryRow {
+            cells,
+            meta: stored.meta,
+        })
+    }
+
     /// Expands a stored row back to full width for comparison.
     pub fn row(&self, index: usize) -> Option<Row> {
         let stored = self.rows.get(self.start + index)?;

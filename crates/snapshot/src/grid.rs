@@ -108,6 +108,12 @@ pub struct Snapshot {
     pub cursor: Cursor,
     /// Active-area rows, top to bottom. Length is `rows`; each row holds `cols` cells.
     pub grid: Vec<Row>,
+    /// Scrollback rows above the active area, oldest first.
+    ///
+    /// Separate from `grid` rather than prepended to it so the active area keeps stable
+    /// coordinates: `cell[0,0]` means the same thing whether or not history exists, which
+    /// keeps every pre-scrollback corpus case and its recorded diffs valid.
+    pub history: Vec<Row>,
 }
 
 impl Style {
@@ -150,7 +156,16 @@ impl Cell {
 impl Snapshot {
     /// The row's text with trailing blanks removed, for legible reports.
     pub fn row_text(&self, y: usize) -> String {
-        let Some(row) = self.grid.get(y) else {
+        self.text_of(self.grid.get(y))
+    }
+
+    /// The same, for a scrollback row.
+    pub fn history_text(&self, y: usize) -> String {
+        self.text_of(self.history.get(y))
+    }
+
+    fn text_of(&self, row: Option<&Row>) -> String {
+        let Some(row) = row else {
             return String::new();
         };
         let mut out = String::new();
@@ -170,7 +185,14 @@ impl fmt::Display for Snapshot {
     /// Rows that are entirely blank and unstyled collapse to `~` so a mostly-empty
     /// 24-row grid does not bury the interesting rows.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "dims {}x{} screen={:?}", self.cols, self.rows, self.screen)?;
+        writeln!(
+            f,
+            "dims {}x{} screen={:?} history={}",
+            self.cols,
+            self.rows,
+            self.screen,
+            self.history.len()
+        )?;
         writeln!(
             f,
             "cursor x={} y={} pending_wrap={} visible={}",
@@ -178,6 +200,11 @@ impl fmt::Display for Snapshot {
         )?;
         if !self.cursor.style.is_default() {
             writeln!(f, "cursor style {}", describe_style(&self.cursor.style))?;
+        }
+        for (y, row) in self.history.iter().enumerate() {
+            let text = self.history_text(y);
+            let flags = wrap_flags(row);
+            writeln!(f, "h{y:>2} |{text}|{flags}")?;
         }
         for (y, row) in self.grid.iter().enumerate() {
             let text = self.row_text(y);
@@ -189,18 +216,22 @@ impl fmt::Display for Snapshot {
                 writeln!(f, "{y:3} ~")?;
                 continue;
             }
-            let flags = match (row.wrap, row.wrap_continuation) {
-                (true, true) => " [wrap cont]",
-                (true, false) => " [wrap]",
-                (false, true) => " [cont]",
-                (false, false) => "",
-            };
+            let flags = wrap_flags(row);
             writeln!(f, "{y:3} |{text}|{flags}")?;
             for run in styled {
                 writeln!(f, "    style {run}")?;
             }
         }
         Ok(())
+    }
+}
+
+fn wrap_flags(row: &Row) -> &'static str {
+    match (row.wrap, row.wrap_continuation) {
+        (true, true) => " [wrap cont]",
+        (true, false) => " [wrap]",
+        (false, true) => " [cont]",
+        (false, false) => "",
     }
 }
 

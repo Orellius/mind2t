@@ -16,6 +16,8 @@
 pub mod cell;
 pub mod dispatch;
 pub mod grid;
+pub mod history;
+pub mod page;
 pub mod screen;
 pub mod sgr;
 pub mod style;
@@ -24,6 +26,8 @@ pub mod terminal;
 
 pub use cell::{Cell, CellFlags, Wide};
 pub use grid::{Grid, RowMeta};
+pub use history::History;
+pub use page::Page;
 pub use screen::Screen;
 pub use style::{DEFAULT_STYLE_ID, StyleId, StyleTable};
 pub use tabs::TabStops;

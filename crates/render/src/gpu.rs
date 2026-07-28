@@ -74,6 +74,11 @@ struct Params {
 pub struct GpuSurface {
     width: u32,
     height: u32,
+    /// Retained across reads, which is what lets a read dispatch only the operations recorded
+    /// since the last one. Replaying new work onto the kept buffer is equivalent to replaying
+    /// the whole history onto a cleared one, and the ops can then be retired instead of
+    /// accumulating for the lifetime of the surface.
+    pixels: wgpu::Buffer,
     device: wgpu::Device,
     queue: wgpu::Queue,
     fill: wgpu::ComputePipeline,
@@ -84,6 +89,17 @@ pub struct GpuSurface {
 }
 
 impl GpuSurface {
+    /// How much work is queued but not yet dispatched.
+    ///
+    /// Exposed so a test can pin the retirement directly. Every behavioural test here would
+    /// still pass with the log growing for the lifetime of the surface -- the pixels are
+    /// right either way, and it is the unbounded memory and the quadratic dispatch cost that
+    /// are the defect.
+    #[doc(hidden)]
+    pub fn recorded_ops(&self) -> usize {
+        self.ops.len()
+    }
+
     pub fn new(width: u32, height: u32) -> Result<GpuSurface, GpuError> {
         let instance = wgpu::Instance::default();
         let adapter =
@@ -154,9 +170,22 @@ impl GpuSurface {
             })
         };
 
+        let pixel_bytes = ((width as u64) * (height as u64) * 4).max(4);
+        let pixels = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("pixels"),
+            size: pixel_bytes,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        // A surface starts cleared to transparent black, exactly as the CPU canvas does.
+        queue.write_buffer(&pixels, 0, &vec![0u8; pixel_bytes as usize]);
+
         Ok(GpuSurface {
             width,
             height,
+            pixels,
             fill: make("fill"),
             blend: make("blend"),
             layout,
@@ -167,21 +196,16 @@ impl GpuSurface {
         })
     }
 
-    /// Replays every recorded operation and reads the buffer back.
-    fn execute(&self) -> Result<Vec<u8>, GpuError> {
-        let pixel_bytes = (self.width as u64) * (self.height as u64) * 4;
-        let pixels = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("pixels"),
-            size: pixel_bytes.max(4),
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // A surface starts cleared to transparent black, exactly as the CPU canvas does.
-        self.queue
-            .write_buffer(&pixels, 0, &vec![0u8; pixel_bytes as usize]);
+    /// Dispatches the operations recorded since the last read, then reads the buffer back.
+    ///
+    /// The pixel buffer is NOT cleared here. It carries every earlier operation's result, so
+    /// dispatching only the new ones lands on the same pixels as replaying the whole history
+    /// onto a fresh buffer -- and lets the log be retired, which is the whole point. Clearing
+    /// it and replaying only the recent ops would silently drop everything painted before the
+    /// previous read.
+    fn execute(&mut self) -> Result<Vec<u8>, GpuError> {
+        let pixel_bytes = ((self.width as u64) * (self.height as u64) * 4).max(4);
+        let pixels = &self.pixels;
 
         let alignment = self
             .device
@@ -234,7 +258,7 @@ impl GpuSurface {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: pixels.as_entire_binding(),
+                    resource: self.pixels.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -253,7 +277,7 @@ impl GpuSurface {
 
         let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("readback"),
-            size: pixel_bytes.max(4),
+            size: pixel_bytes,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -278,7 +302,7 @@ impl GpuSurface {
             pass.dispatch_workgroups(op.width.div_ceil(8), op.height.div_ceil(8), 1);
         }
 
-        encoder.copy_buffer_to_buffer(&pixels, 0, &readback, 0, pixel_bytes.max(4));
+        encoder.copy_buffer_to_buffer(pixels, 0, &readback, 0, pixel_bytes);
         self.queue.submit(Some(encoder.finish()));
 
         let slice = readback.slice(..);
@@ -298,6 +322,10 @@ impl GpuSurface {
         let out = data[..pixel_bytes as usize].to_vec();
         drop(data);
         readback.unmap();
+
+        // Retired: their result now lives in the retained buffer.
+        self.ops.clear();
+        self.coverage.clear();
         Ok(out)
     }
 }
@@ -369,7 +397,7 @@ impl Surface for GpuSurface {
         });
     }
 
-    fn read_pixels(&self) -> Vec<u8> {
+    fn read_pixels(&mut self) -> Vec<u8> {
         self.execute().expect("the GPU replayed the recorded frame")
     }
 }

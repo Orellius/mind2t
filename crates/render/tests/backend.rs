@@ -161,3 +161,99 @@ fn the_gpu_backend_matches_the_cpu_reference_byte_for_byte() {
         );
     }
 }
+
+/// Reading the pixels between draws must not change the final image.
+///
+/// The blind spot this closes: every other test here reads once, at the end, so all recorded
+/// work is replayed in a single batch and an incremental backend is never exercised at all.
+/// The GPU surface retains its pixel buffer and dispatches only the operations recorded since
+/// the last read -- equivalent to replaying the whole history onto a cleared buffer, but only
+/// if the retention actually works. Clearing the buffer per read, or replaying only the last
+/// frame's operations, both lose everything painted before the previous read and are caught
+/// here rather than in a screenshot months later.
+#[test]
+fn reading_between_draws_leaves_the_same_image_as_reading_once() {
+    fn render_reading_every_step<S: Surface>() -> Vec<u8> {
+        let mut terminal = Terminal::new(COLS, ROWS);
+        let (writer, reader) = channel(COLS, ROWS);
+        let mut publisher = Publisher::new(writer);
+        let mut frame = Frame::new();
+        let mut renderer: Renderer<S> = Renderer::with_surface(fonts(), COLS, ROWS);
+
+        let mut last = Vec::new();
+        for step in SCRIPT {
+            terminal.write(step);
+            publisher.publish(&mut terminal).expect("fits");
+            assert!(matches!(
+                reader.read_into(&mut frame),
+                ReadOutcome::Fresh(_)
+            ));
+            renderer.draw(&frame);
+            last = renderer.pixels();
+        }
+        last
+    }
+
+    assert_eq!(
+        render_reading_every_step::<Canvas>(),
+        render_through::<Canvas>(),
+        "the CPU reference must not care when it is read, or it cannot judge the GPU"
+    );
+    assert_eq!(
+        render_reading_every_step::<GpuSurface>(),
+        render_through::<GpuSurface>(),
+        "reading between draws changed the GPU's final image, so painting is not cumulative"
+    );
+    assert_eq!(
+        render_reading_every_step::<GpuSurface>(),
+        render_through::<Canvas>(),
+        "and the incrementally-read GPU image must still equal the CPU reference"
+    );
+}
+
+/// The recorded work is retired by a read, not accumulated for the surface's lifetime.
+///
+/// This is the defect itself rather than a symptom of it, and no image comparison can see it:
+/// replaying the entire history onto a cleared buffer produces exactly the right pixels, which
+/// is why it survived a slice. What it does not survive is a long-running terminal -- the
+/// dispatch cost grows with everything ever drawn, and the log has a hard ceiling at 1,048,576
+/// operations.
+#[test]
+fn a_read_retires_the_recorded_work() {
+    let mut terminal = Terminal::new(COLS, ROWS);
+    let (writer, reader) = channel(COLS, ROWS);
+    let mut publisher = Publisher::new(writer);
+    let mut frame = Frame::new();
+    let mut renderer: Renderer<GpuSurface> = Renderer::with_surface(fonts(), COLS, ROWS);
+
+    let mut high_water = 0;
+    for round in 0..12 {
+        terminal.write(format!("\r\nline {round} with some text").as_bytes());
+        publisher.publish(&mut terminal).expect("fits");
+        assert!(matches!(
+            reader.read_into(&mut frame),
+            ReadOutcome::Fresh(_)
+        ));
+        renderer.draw(&frame);
+
+        let queued = renderer.canvas().recorded_ops();
+        assert!(queued > 0, "round {round} recorded no work at all");
+        high_water = high_water.max(queued);
+
+        let _ = renderer.pixels();
+        assert_eq!(
+            renderer.canvas().recorded_ops(),
+            0,
+            "round {round}: a read left {} operations behind; they accumulate for the lifetime \
+             of the surface and every later read replays them again",
+            renderer.canvas().recorded_ops()
+        );
+    }
+
+    // Twelve rounds of a full-screen redraw would be several thousand operations if they were
+    // kept; the ceiling here is what one round costs.
+    assert!(
+        high_water < 12 * COLS as usize * ROWS as usize,
+        "the per-round backlog reached {high_water}, which is more than one round of work"
+    );
+}

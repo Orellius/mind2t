@@ -118,16 +118,23 @@ impl Screen {
         self.pending_wrap = false;
     }
 
-    /// Resolves a deferred wrap: marks the row soft-wrapped, moves to the next line, and
-    /// marks that one a continuation. Both flags are what makes reflow possible in slice 4.
+    /// Resolves a deferred wrap: moves to the next line and, if the cursor was genuinely at
+    /// the right edge, marks the two rows as one soft-wrapped line.
+    ///
+    /// The edge test is not redundant. A deferred wrap survives a reflow verbatim, so the
+    /// cursor can arrive here sitting well short of the last column -- widening a screen
+    /// leaves exactly that state. Marking a wrap there would join two lines that never were
+    /// one, and the next reflow would rejoin them into nonsense. Upstream applies the same
+    /// test in `printWrap`.
     pub fn wrap_line(&mut self, blank: Cell) {
-        if let Some(meta) = self.grid.row_meta_mut(self.y) {
+        let at_edge = self.x == self.last_col();
+        if at_edge && let Some(meta) = self.grid.row_meta_mut(self.y) {
             meta.wrap = true;
         }
         self.line_feed(blank);
         self.x = 0;
         self.pending_wrap = false;
-        if let Some(meta) = self.grid.row_meta_mut(self.y) {
+        if at_edge && let Some(meta) = self.grid.row_meta_mut(self.y) {
             meta.wrap_continuation = true;
         }
     }
@@ -436,6 +443,7 @@ mod tests {
     fn a_wrapped_line_records_both_flags_for_reflow() {
         let mut screen = Screen::new(6, 3, 0);
         screen.y = 0;
+        screen.x = 5;
         screen.pending_wrap = true;
         screen.wrap_line(Cell::BLANK);
 
@@ -446,6 +454,22 @@ mod tests {
         );
         assert_eq!((screen.x, screen.y), (0, 1));
         assert!(!screen.pending_wrap);
+    }
+
+    #[test]
+    fn a_deferred_wrap_away_from_the_edge_moves_down_without_joining_the_lines() {
+        // Only reachable after a reflow, which carries the phantom state verbatim: widening
+        // the screen leaves the cursor mid-row with the wrap still pending. Marking it would
+        // fuse two unrelated lines, and the next reflow would rejoin them.
+        let mut screen = Screen::new(6, 3, 0);
+        screen.y = 0;
+        screen.x = 2;
+        screen.pending_wrap = true;
+        screen.wrap_line(Cell::BLANK);
+
+        assert!(!screen.grid.row_meta(0).wrap);
+        assert!(!screen.grid.row_meta(1).wrap_continuation);
+        assert_eq!((screen.x, screen.y), (0, 1));
     }
 
     #[test]

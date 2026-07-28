@@ -284,3 +284,270 @@ rows = 5
 scrollback = 50
 bytes = "a\r\nb\r\nc\r\nd\r\ne\u001B[2;4r\u001B[4;1Hx\r\ny\r\nz"
 note = "A region that does not start at the top of the screen pushes rows out inside the screen, not off it. Those must not become history."
+
+[[case]]
+name = "reflow-narrow-rejoins-and-resplits"
+expect = "match"
+cols = 10
+rows = 4
+bytes = "abcdefghijklmno"
+resize = { cols = 5, rows = 4 }
+note = "The slice in one case: a soft-wrapped line rejoins into one logical line and re-splits at the new width."
+
+[[case]]
+name = "reflow-widen-rejoins-the-rows"
+expect = "match"
+cols = 5
+rows = 4
+bytes = "abcdefghijklmno"
+resize = { cols = 10, rows = 4 }
+note = "The same line widened. Three rows become two, and the deferred wrap is carried verbatim."
+
+[[case]]
+name = "reflow-cursor-lands-past-the-content"
+expect = "match"
+cols = 10
+rows = 3
+bytes = "hi\r\nthere"
+resize = { cols = 5, rows = 3 }
+note = "The cursor sat one cell past the text, so the line extends by an empty continuation row to give that cell a home. Trailing blanks on the OTHER line are trimmed instead."
+
+[[case]]
+name = "reflow-write-through-the-cursor-narrowed"
+expect = "match"
+cols = 10
+rows = 4
+bytes = "abcdefghijklmno"
+resize = { cols = 5, rows = 4 }
+after = "XY"
+note = "Where the cursor ended up, made observable: a grid comparison cannot see a cursor that never writes."
+
+[[case]]
+name = "reflow-write-through-the-cursor-widened"
+expect = "match"
+cols = 5
+rows = 4
+bytes = "abcdefghijklmno"
+resize = { cols = 10, rows = 4 }
+after = "XY"
+note = "The same widening. Also pins that a deferred wrap resolved away from the last column moves down WITHOUT marking a soft wrap."
+
+[[case]]
+name = "reflow-rows-shrink-pushes-into-history"
+expect = "match"
+cols = 10
+rows = 4
+scrollback = 50
+bytes = "l1\r\nl2\r\nl3\r\nl4"
+resize = { cols = 10, rows = 2 }
+note = "Rows leave the top into scrollback rather than being cut from the bottom."
+
+[[case]]
+name = "reflow-rows-grow-pulls-from-history"
+expect = "match"
+cols = 10
+rows = 2
+scrollback = 50
+bytes = "l1\r\nl2\r\nl3\r\nl4"
+resize = { cols = 10, rows = 4 }
+note = "Growth is the inverse: the active area reclaims rows out of scrollback."
+
+[[case]]
+name = "reflow-history-reflows-at-the-new-width"
+expect = "match"
+cols = 10
+rows = 2
+scrollback = 50
+bytes = "abcdefghijklmno\r\nx\r\ny\r\nz"
+resize = { cols = 5, rows = 2 }
+note = "Scrollback is not exempt. History rows re-split like any others, which is why the whole buffer goes through one pass."
+
+[[case]]
+name = "reflow-line-spans-history-and-active"
+expect = "match"
+cols = 10
+rows = 2
+scrollback = 50
+bytes = "abcdefghijklmnopqrstuvwxyz"
+resize = { cols = 5, rows = 2 }
+note = "A logical line straddling the scrollback boundary is still ONE line and rejoins as one."
+
+[[case]]
+name = "reflow-alt-screen-does-not-reflow"
+expect = "match"
+cols = 10
+rows = 3
+bytes = "\u001B[?1049habcdefghijklmno"
+resize = { cols = 5, rows = 3 }
+note = "The ABI documents the alternate screen as not reflowing. Its rows lose columns and keep their identity."
+
+[[case]]
+name = "reflow-alt-screen-rows-shrink"
+expect = "match"
+cols = 10
+rows = 4
+bytes = "\u001B[?1049ha\r\nb\r\nc\r\nd"
+resize = { cols = 10, rows = 2 }
+note = "It has no scrollback, so rows leaving the top are discarded rather than kept."
+
+[[case]]
+name = "reflow-wide-cell-at-the-new-edge"
+expect = "match"
+cols = 10
+rows = 3
+bytes = "abc世界世"
+resize = { cols = 6, rows = 3 }
+note = "A wide cell that cannot fit before the new right edge leaves a spacer head, exactly as printing one there does."
+
+[[case]]
+name = "reflow-grapheme-cluster-survives"
+expect = "match"
+cols = 10
+rows = 3
+bytes = "abcde\u0301fghijklm"
+resize = { cols = 4, rows = 3 }
+note = "Combining marks travel with their cell across the re-split. A cell is not a codepoint."
+
+[[case]]
+name = "reflow-single-column"
+expect = "match"
+cols = 10
+rows = 3
+bytes = "abcde"
+resize = { cols = 1, rows = 3 }
+note = "The degenerate width: every character becomes its own row, and only the last three survive."
+
+[[case]]
+name = "reflow-interior-blank-rows-are-content"
+expect = "match"
+cols = 10
+rows = 5
+bytes = "a\r\n\r\n\r\nd"
+resize = { cols = 10, rows = 3 }
+note = "Blank rows BETWEEN content are real rows and must not be collapsed, while the trailing one is dropped."
+
+[[case]]
+name = "reflow-trailing-blank-rows-are-trimmed-first"
+expect = "match"
+cols = 10
+rows = 4
+bytes = "hi"
+resize = { cols = 10, rows = 2 }
+note = "Shrinking prefers to trim blank rows off the bottom over pushing content into history."
+
+[[case]]
+name = "reflow-no-op-resize"
+expect = "match"
+cols = 10
+rows = 3
+bytes = "abcdefghijklmno"
+resize = { cols = 10, rows = 3 }
+note = "Identical dimensions change nothing, including the wrap flags."
+
+[[case]]
+name = "reflow-resets-the-scroll-region"
+expect = "match"
+cols = 10
+rows = 5
+bytes = "\u001B[2;4r\u001B[3;1Hmid"
+resize = { cols = 10, rows = 4 }
+after = "\r\na\r\nb\r\nc"
+note = "DECSTBM is set against a screen of a known height, so a resize resets it rather than carrying it."
+
+[[case]]
+name = "reflow-pending-wrap-at-the-real-edge"
+expect = "match"
+cols = 10
+rows = 3
+bytes = "abcdefghij"
+resize = { cols = 5, rows = 3 }
+after = "Z"
+note = "A wrap deferred at the true last column stays deferred through the reflow, and Z proves where it resolves."
+
+[[case]]
+name = "reflow-styled-blanks-are-content"
+expect = "match"
+cols = 10
+rows = 3
+bytes = "\u001B[41mabc\u001B[K\r\nx"
+resize = { cols = 5, rows = 3 }
+note = "Cells carrying only a background are content, not padding: the trailing-blank trim must not eat them."
+
+[[case]]
+name = "reflow-cursor-parked-past-the-content"
+expect = "match"
+cols = 10
+rows = 3
+bytes = "ab\u001B[1;8H"
+resize = { cols = 5, rows = 3 }
+note = "The cursor addressed beyond the text still has to land somewhere, so the line extends to reach it."
+
+[[case]]
+name = "reflow-both-axes-at-once"
+expect = "match"
+cols = 5
+rows = 2
+scrollback = 50
+bytes = "abcdefghijklmno\r\ntail"
+resize = { cols = 10, rows = 4 }
+note = "Width and height together, with history to reclaim."
+
+[[case]]
+name = "reflow-overflow-reaches-history-in-order"
+expect = "match"
+cols = 10
+rows = 2
+scrollback = 50
+bytes = "abcdefghijklmnopqrst"
+resize = { cols = 4, rows = 2 }
+note = "Narrowing multiplies rows past the screen; the excess reaches scrollback oldest-first."
+
+[[case]]
+name = "reflow-cursor-above-the-rows-that-leave"
+expect = "match"
+cols = 10
+rows = 4
+scrollback = 50
+bytes = "a\r\nb\r\nc\r\nd\u001B[1;1H"
+resize = { cols = 10, rows = 2 }
+note = "A cursor whose row is pushed above the active area cannot follow it, so it clamps to the top."
+
+[[case]]
+name = "reflow-empty-screen"
+expect = "match"
+cols = 10
+rows = 4
+bytes = ""
+resize = { cols = 5, rows = 2 }
+note = "Nothing written at all still has to produce a well-formed grid."
+
+[[case]]
+name = "reflow-saved-cursor-tracks-its-row"
+expect = "match"
+cols = 10
+rows = 4
+scrollback = 50
+bytes = "a\r\nb\r\nc\u001B7\r\nd"
+resize = { cols = 10, rows = 2 }
+after = "\u001B8Q"
+note = "A saved (DECSC) cursor follows its row through the resize; Q lands where DECRC put it."
+
+[[case]]
+name = "reflow-saved-cursor-above-the-active-area"
+expect = "match"
+cols = 10
+rows = 4
+bytes = "abcdefghijklmnop\u001B[1;4H\u001B7\u001B[4;1Hz"
+resize = { cols = 5, rows = 4 }
+after = "\u001B8Q"
+note = "Its row did not survive the reflow, so the saved cursor falls back to the top-left. Upstream calls this case unspecified."
+
+[[case]]
+name = "reflow-saved-cursor-in-trailing-blanks"
+expect = "diff"
+cols = 10
+rows = 3
+bytes = "ab\r\ncdef\u001B7\u001B[3;1Hz"
+resize = { cols = 5, rows = 3 }
+after = "\u001B8Q"
+note = "NAMED OMISSION. A saved cursor sitting in the blanks past its row's text is clamped by upstream against the column its sequential writer happens to be parked on (PageList.zig reflowRow, the p.x >= cols_len branch) -- a stale value carried from the PREVIOUS line. Measured 2026-07-28: Q lands at column 2 there and at column 4 here. Reproducing it means emulating that writer's leftover state; the adjacent upstream branch calls this whole area unspecified."

@@ -1039,11 +1039,11 @@ note = "CPL is cursor_up followed by carriage_return (stream.zig:1247). The curs
 
 [[case]]
 name = "decrc-without-decsc-homes-and-resets-the-pen"
-expect = "diff"
+expect = "match"
 cols = 10
 rows = 3
 bytes = "\u001B[2;5H\u001B[31m\u001B8X"
-note = "restoreCursor falls back to a synthetic default cursor when nothing was saved (Terminal.zig:1872), so DECRC with no DECSC is a home plus a pen reset rather than a no-op. Both halves of restore_cursor here are guarded on Some."
+note = "restoreCursor falls back to a synthetic default cursor when nothing was saved (Terminal.zig:1872), so DECRC with no DECSC is a home plus a pen reset rather than a no-op. Promoted by the S2 wave: restore_cursor substitutes the default SavedCursor and the pen falls back to Style::DEFAULT."
 
 [[case]]
 name = "decrc-restores-origin-mode"

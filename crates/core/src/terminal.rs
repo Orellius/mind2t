@@ -368,9 +368,7 @@ impl State {
 
     pub(crate) fn restore_cursor(&mut self) {
         self.screen_mut().restore_cursor();
-        if let Some(pen) = self.saved_pen {
-            self.pen = pen;
-        }
+        self.pen = self.saved_pen.unwrap_or(Style::DEFAULT);
         self.last_print = None;
     }
 

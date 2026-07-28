@@ -102,14 +102,8 @@ impl State {
         match action {
             'm' => sgr::apply(&mut self.pen, params),
 
-            'A' => {
-                let (x, y) = (self.cursor_x(), self.cursor_y().saturating_sub(arg(params, 0)));
-                self.goto(x, y);
-            }
-            'B' => {
-                let (x, y) = (self.cursor_x(), self.cursor_y().saturating_add(arg(params, 0)));
-                self.goto(x, y);
-            }
+            'A' => self.cursor_up(arg(params, 0)),
+            'B' => self.cursor_down(arg(params, 0)),
             'C' => {
                 let (x, y) = (self.cursor_x().saturating_add(arg(params, 0)), self.cursor_y());
                 self.goto(x, y);
@@ -118,12 +112,16 @@ impl State {
                 let (x, y) = (self.cursor_x().saturating_sub(arg(params, 0)), self.cursor_y());
                 self.goto(x, y);
             }
+            // CNL and CPL are a clamped vertical move followed by a carriage return
+            // (stream.zig:1224 and :1247), so they inherit the scroll-region bound.
             'E' => {
-                let y = self.cursor_y().saturating_add(arg(params, 0));
+                self.cursor_down(arg(params, 0));
+                let y = self.cursor_y();
                 self.goto(0, y);
             }
             'F' => {
-                let y = self.cursor_y().saturating_sub(arg(params, 0));
+                self.cursor_up(arg(params, 0));
+                let y = self.cursor_y();
                 self.goto(0, y);
             }
             'G' | '`' => {

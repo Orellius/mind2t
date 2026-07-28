@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 121
+declared_cases = 123
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -998,19 +998,35 @@ note = "horizontalTab (Terminal.zig:2111) is a bare cursorRight loop bounded by 
 
 [[case]]
 name = "cursor-up-clamps-at-the-scroll-region-top"
-expect = "diff"
+expect = "match"
 cols = 10
 rows = 6
 bytes = "\u001B[3;5r\u001B[6;1H\u001B[10AX"
-note = "cursorUp caps the move at y - scrolling_region.top when the cursor is at or below the top margin (Terminal.zig:1703), so CUU cannot leave the region from below it. dispatch.rs uses a plain saturating_sub into goto, which clamps only to the screen."
+note = "cursorUp caps the move at y - scrolling_region.top when the cursor is at or below the top margin (Terminal.zig:1703), so CUU cannot leave the region from below it. Promoted when terminal.rs gained cursor_up; a cursor ABOVE the region is bounded by the screen instead, which is the branch a naive clamp gets wrong."
 
 [[case]]
 name = "cursor-down-clamps-at-the-scroll-region-bottom"
-expect = "diff"
+expect = "match"
 cols = 10
 rows = 6
 bytes = "\u001B[2;4r\u001B[1;1H\u001B[10BX"
-note = "The mirror rule: cursorDown caps at scrolling_region.bottom - y (Terminal.zig:1721)."
+note = "The mirror rule: cursorDown caps at scrolling_region.bottom - y (Terminal.zig:1721). Promoted with its CUU twin."
+
+[[case]]
+name = "cnl-clamps-at-the-scroll-region-bottom"
+expect = "match"
+cols = 10
+rows = 6
+bytes = "\u001B[2;4r\u001B[1;1H\u001B[10EX"
+note = "CNL is cursor_down followed by carriage_return (stream.zig:1224), so it inherits the same margin clamp. This case is why the fix covers four call sites and not two: it DIFFed before the fix and matched after, measured both ways."
+
+[[case]]
+name = "cpl-clamps-at-the-scroll-region-top"
+expect = "match"
+cols = 10
+rows = 6
+bytes = "\u001B[3;5r\u001B[6;1H\u001B[10FX"
+note = "CPL is cursor_up followed by carriage_return (stream.zig:1247). The cursor starts below the region, so the clamp is y - top rather than the top of the screen."
 
 [[case]]
 name = "decrc-without-decsc-homes-and-resets-the-pen"

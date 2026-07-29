@@ -278,6 +278,24 @@ impl FontStack {
     /// `None` when nothing covers it, which is a real answer: drawing glyph 0 from the first
     /// font would put a tofu box on screen and look like a rendering bug rather than a
     /// missing font.
+    /// Resolution for a cluster carrying VS16 (emoji presentation): the EMOJI face is
+    /// asked first, even when a text font also covers the base character -- that is
+    /// the entire meaning of the selector. Falls back to normal resolution so a
+    /// machine without the emoji font still draws the text form.
+    pub fn resolve_emoji(&mut self, c: char) -> Option<Resolved> {
+        for (index, face) in self.faces.iter().enumerate() {
+            let font = face.font();
+            let glyph = font.charmap().map(c);
+            if glyph != 0 && font.color_palettes().len() + font.color_strikes().len() + font.alpha_strikes().len() > 0 {
+                return Some(Resolved {
+                    font: index as u16,
+                    glyph,
+                });
+            }
+        }
+        self.resolve(c)
+    }
+
     pub fn resolve(&mut self, c: char) -> Option<Resolved> {
         if let Some(hit) = self.resolved.get(&c) {
             return *hit;

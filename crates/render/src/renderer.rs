@@ -312,6 +312,47 @@ impl<S: Surface> Renderer<S> {
             }
         }
 
+        // VS16 (emoji presentation): the selector's entire meaning is "take the emoji
+        // face even though a text font covers the base". Resolved directly -- the
+        // shaper would pick the face by the FIRST character and never consult the
+        // selector. Width stays 1 (oracle-measured, vs16-cluster-stays-narrow); the
+        // color arm below fits the artwork inside the single cell.
+        if cluster.contains('\u{FE0F}') {
+            if let Some(base) = cluster.chars().next() {
+                if let Some(resolved) = self.fonts.resolve_emoji(base) {
+                    let key = crate::atlas::GlyphKey {
+                        font: resolved.font,
+                        glyph: resolved.glyph,
+                    };
+                    if let Some(glyph) = self.atlas.glyph(&self.fonts, key) {
+                        if let crate::atlas::GlyphData::Color(rgba) = &glyph.data {
+                            let span_px = metrics.width * u32::from(span.max(1));
+                            let (width, height) = if glyph.width > span_px {
+                                // Refit by WIDTH so a square heart cannot bleed into
+                                // the neighbor cell; deterministic fixed-point scale,
+                                // both backends get the same bytes.
+                                let height =
+                                    (glyph.height as u64 * span_px as u64 / glyph.width as u64)
+                                        .max(1) as u32;
+                                (span_px, height)
+                            } else {
+                                (glyph.width, glyph.height)
+                            };
+                            let scaled = if (width, height) == (glyph.width, glyph.height) {
+                                rgba.clone()
+                            } else {
+                                crate::images::scale_to(glyph.width, glyph.height, rgba, width, height)
+                            };
+                            let x = left + (span_px as i32 - width as i32) / 2;
+                            let y = top + (metrics.height as i32 - height as i32) / 2;
+                            self.canvas.blend_image(x, y, width, height, &scaled);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         // UBA rule L4: paired punctuation at an RTL resolved level draws its mirrored
         // counterpart -- reordering alone turns `[OK]` into `]OK[`. Display-only, single
         // codepoints only (a cluster with marks is never a bracket), and the CELL is

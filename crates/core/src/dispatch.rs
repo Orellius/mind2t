@@ -54,6 +54,15 @@ impl State {
         // identical, because only the active screen's region is ever read or written, and
         // both screens always share one geometry.
         let (scroll_top, scroll_bottom) = (self.screen().scroll_top, self.screen().scroll_bottom);
+        // The OSC 133 state travels WITH the cursor: 47/1047 copy the cursor in both
+        // directions and 1049 copies it on entry (`Terminal.zig:4383`), but a 1049 exit is
+        // `restoreCursor`, which restores everything EXCEPT `semantic_content` -- so a `C`
+        // issued on the alternate screen must not leak back onto the primary (finding 20).
+        let semantic = (
+            self.screen().semantic_content,
+            self.screen().semantic_clear_at_eol,
+        );
+        let carry_semantic = to_alternate || !save;
 
         if to_alternate {
             if save {
@@ -79,6 +88,10 @@ impl State {
         }
         self.screen_mut().scroll_top = scroll_top;
         self.screen_mut().scroll_bottom = scroll_bottom;
+        if carry_semantic {
+            self.screen_mut().semantic_content = semantic.0;
+            self.screen_mut().semantic_clear_at_eol = semantic.1;
+        }
         self.last_print = None;
     }
 

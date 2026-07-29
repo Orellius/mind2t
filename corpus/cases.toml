@@ -920,13 +920,12 @@ note = "The C ABI builds terminals with shell_redraws_prompt = .false (c/termina
 
 [[case]]
 name = "osc133-state-does-not-follow-back-out-of-the-alt-screen"
-expect = "diff"
-diff_paths = ["cell[0,2].semantic", "cell[0,3].semantic"]
+expect = "match"
 cols = 12
 rows = 2
 after = "ls"
 bytes = "\u001B]133;A\u0007$ \u001B]133;B\u0007\u001B[?1049h\u001B]133;C\u0007\u001B[?1049l"
-note = "semantic_content lives on Screen.cursor upstream. 1049-enter copies the whole cursor across (Terminal.zig:4383), which semantic-alt-screen-inherits-the-cursor-state already pins, but 1049-exit calls restoreCursor (Terminal.zig:1872), which restores style, charset, origin and pending_wrap and NOT semantic_content. This core shares one State::semantic_content between screens, so the C issued on the alt screen leaks back."
+note = "semantic_content lives on Screen.cursor upstream. 1049-enter copies the whole cursor across (Terminal.zig:4383), which semantic-alt-screen-inherits-the-cursor-state already pins, but 1049-exit calls restoreCursor (Terminal.zig:1872), which restores style, charset, origin and pending_wrap and NOT semantic_content. Promoted by the S2 wave: the state is per-Screen now and a 1049 exit is the one switch that does not carry it, so the C issued on the alt screen stays there."
 
 [[case]]
 name = "osc133-spacer-head-carries-the-cursor-semantic"

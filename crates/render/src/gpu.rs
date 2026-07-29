@@ -286,20 +286,28 @@ impl GpuSurface {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-        // One pass per operation. Passes in a single encoder are ordered, which is what a
-        // blend needs: it reads the pixel the previous operation wrote.
-        for (index, op) in self.ops.iter().enumerate() {
+        // One pass for every operation. Ordering still holds: in a compute pass each
+        // dispatch is its own usage scope, and the implementation synchronizes the hazard
+        // between a dispatch that writes `pixels` and the next one that reads it -- which is
+        // what a blend needs. One pass PER operation, the first shape of this loop, was a
+        // deadlock wearing a correctness argument: wgpu's Metal backend opens a command
+        // buffer per pass, none can complete before the one submit below, and Metal's
+        // 64-buffer queue pool blocks the 65th request forever, mid-encoding. Any frame
+        // with more operations than the pool -- a full screen of glyphs -- hung.
+        {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: None,
                 timestamp_writes: None,
             });
-            pass.set_pipeline(if op.kind == KIND_FILL {
-                &self.fill
-            } else {
-                &self.blend
-            });
-            pass.set_bind_group(0, &bind_group, &[(index * alignment) as u32]);
-            pass.dispatch_workgroups(op.width.div_ceil(8), op.height.div_ceil(8), 1);
+            for (index, op) in self.ops.iter().enumerate() {
+                pass.set_pipeline(if op.kind == KIND_FILL {
+                    &self.fill
+                } else {
+                    &self.blend
+                });
+                pass.set_bind_group(0, &bind_group, &[(index * alignment) as u32]);
+                pass.dispatch_workgroups(op.width.div_ceil(8), op.height.div_ceil(8), 1);
+            }
         }
 
         encoder.copy_buffer_to_buffer(pixels, 0, &readback, 0, pixel_bytes);

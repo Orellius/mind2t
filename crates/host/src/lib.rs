@@ -15,13 +15,17 @@
 // The rlib dependency is what carries the 13 `ghostty_*` exports into this staticlib.
 use ruuah_vt as _;
 
-use std::ffi::{CStr, c_char};
+pub mod config;
+
+use std::ffi::{CStr, CString, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::Path;
 use std::process::Command;
 
+use config::Config;
 use ruuah_vt_frame::{BaseDirection, Frame};
 use ruuah_vt_pty::{Geometry, Host, Options};
-use ruuah_vt_render::{FontStack, GpuSurface, Renderer, Surface};
+use ruuah_vt_render::{FontStack, GpuSurface, Palette, Renderer, Surface};
 
 /// The font size used when `RuuahHostOptions.font_size` is 0 -- the same size every
 /// render-crate test measures with.
@@ -48,6 +52,18 @@ pub struct RuuahHostOptions {
     pub font_size: f32,
     pub command: *const c_char,
     pub auto_direction: bool,
+    /// Contributes ONLY the theme palette; NULL keeps the built-in scheme. The scalar
+    /// settings are read by the embedder through the `ruuah_config_*` getters instead,
+    /// because the embedder owns their precedence (CLI flags, Retina scaling).
+    pub config: *const RuuahConfig,
+}
+
+/// The state behind the opaque config handle: one loaded `Config` plus the C strings
+/// its getters lend out.
+pub struct RuuahConfig {
+    config: Config,
+    shell: Option<CString>,
+    error: Option<CString>,
 }
 
 /// Mirrors `RuuahHostFrame` in `ruuah_host.h`.
@@ -80,6 +96,9 @@ pub struct RuuahHost {
     pixels: Vec<u8>,
     drawn_generation: u64,
     font_size: f32,
+    /// The theme, kept because resize rebuilds the renderer -- a rebuild that forgot it
+    /// would silently revert to the built-in scheme (pinned by the host_abi resize test).
+    palette: Palette,
     exited: bool,
 }
 
@@ -203,11 +222,20 @@ pub unsafe extern "C" fn ruuah_host_spawn(
     } else {
         DEFAULT_FONT_SIZE
     };
+    // The theme rides the config handle; NULL keeps the built-in scheme. Cloned out
+    // because the handle's lifetime is the caller's -- freeing it after spawn is legal.
+    let palette = if options.config.is_null() {
+        Palette::default()
+    } else {
+        unsafe { &*options.config }.config.palette.clone()
+    };
+
     // The renderer is built before the child so a machine that cannot render never spawns
     // a process it would immediately have to reap.
-    let Some(renderer) = build_renderer(font_size, options.cols, options.rows) else {
+    let Some(mut renderer) = build_renderer(font_size, options.cols, options.rows) else {
         return RuuahHostResult::RenderFailed;
     };
+    renderer.set_palette(palette.clone());
 
     let (host, reader) = match Host::spawn(command, Options::new(options.cols, options.rows)) {
         Ok(spawned) => spawned,
@@ -231,6 +259,7 @@ pub unsafe extern "C" fn ruuah_host_spawn(
         pixels: Vec::new(),
         drawn_generation: 0,
         font_size,
+        palette,
         exited: false,
     });
     unsafe { out.write(Box::into_raw(handle)) };
@@ -357,9 +386,11 @@ pub unsafe extern "C" fn ruuah_host_resize(
     if host.host.resize(Geometry { cols, rows }).is_err() {
         return RuuahHostResult::ResizeRefused;
     }
-    let Some(renderer) = build_renderer(host.font_size, cols, rows) else {
+    let Some(mut renderer) = build_renderer(host.font_size, cols, rows) else {
         return RuuahHostResult::RenderFailed;
     };
+    // The rebuild starts from the built-in scheme; the theme must survive it.
+    renderer.set_palette(host.palette.clone());
     host.renderer = renderer;
     // Everything is owed again on the new canvas, and the old pixels describe a dead
     // geometry -- the borrowed pointer contract says they die here.
@@ -379,4 +410,115 @@ pub unsafe extern "C" fn ruuah_host_free(host: *mut RuuahHost) {
         return;
     }
     drop(unsafe { Box::from_raw(host) });
+}
+
+/// Loads `dir/config.toml` (and the theme it names) into a new handle.
+///
+/// Always yields a usable config: a missing file is the defaults, and a file that could
+/// not be honoured is the defaults plus `ruuah_config_error`. `dir` NULL means `~/.ruuah`.
+/// Fails only on a NULL out-param or a non-UTF-8 dir.
+///
+/// # Safety
+/// `dir` must be NULL or a NUL-terminated string; `out` must be non-NULL and valid for
+/// the duration of the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_config_load(
+    dir: *const c_char,
+    out: *mut *mut RuuahConfig,
+) -> RuuahHostResult {
+    if out.is_null() {
+        return RuuahHostResult::InvalidValue;
+    }
+    unsafe { out.write(std::ptr::null_mut()) };
+    let dir = if dir.is_null() {
+        None
+    } else {
+        match unsafe { CStr::from_ptr(dir) }.to_str() {
+            Ok(text) => Some(Path::new(text).to_path_buf()),
+            Err(_) => return RuuahHostResult::InvalidValue,
+        }
+    };
+
+    let config = Config::load(dir.as_deref());
+    // Interior NULs cannot occur: both strings come from TOML text that CStr::from_ptr
+    // sources would have terminated -- but a file can contain anything, so fall back.
+    let shell = config.shell.as_deref().and_then(|text| CString::new(text).ok());
+    let error = config.error.as_deref().and_then(|text| CString::new(text).ok());
+    let handle = Box::new(RuuahConfig { config, shell, error });
+    unsafe { out.write(Box::into_raw(handle)) };
+    RuuahHostResult::Success
+}
+
+/// Font size in logical pixels, 0 when the config does not set one. The embedder applies
+/// its own default and backing-scale factor.
+///
+/// # Safety
+/// `config` must be a live handle from `ruuah_config_load`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_config_font_size(config: *const RuuahConfig) -> f32 {
+    if config.is_null() {
+        return 0.0;
+    }
+    unsafe { &*config }.config.font_size
+}
+
+/// The configured auto-direction, or `fallback` when the config does not say.
+///
+/// # Safety
+/// `config` must be a live handle from `ruuah_config_load`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_config_auto_direction(
+    config: *const RuuahConfig,
+    fallback: bool,
+) -> bool {
+    if config.is_null() {
+        return fallback;
+    }
+    unsafe { &*config }.config.auto_direction.unwrap_or(fallback)
+}
+
+/// The configured shell command line, or NULL when unset. Borrowed: valid until
+/// `ruuah_config_free` on the same handle.
+///
+/// # Safety
+/// `config` must be a live handle from `ruuah_config_load`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_config_shell(config: *const RuuahConfig) -> *const c_char {
+    if config.is_null() {
+        return std::ptr::null();
+    }
+    match &unsafe { &*config }.shell {
+        Some(shell) => shell.as_ptr(),
+        None => std::ptr::null(),
+    }
+}
+
+/// Everything that went wrong while loading, newline-joined -- or NULL when the load was
+/// clean. Borrowed: valid until `ruuah_config_free` on the same handle. A GUI shows this
+/// loudly; a config that silently half-applies is worse than one that errors.
+///
+/// # Safety
+/// `config` must be a live handle from `ruuah_config_load`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_config_error(config: *const RuuahConfig) -> *const c_char {
+    if config.is_null() {
+        return std::ptr::null();
+    }
+    match &unsafe { &*config }.error {
+        Some(error) => error.as_ptr(),
+        None => std::ptr::null(),
+    }
+}
+
+/// Frees a config handle. NULL is a no-op. Strings lent by the getters die here.
+///
+/// # Safety
+/// `config` must be NULL or a live handle from `ruuah_config_load`, and must not be used
+/// again after this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_config_free(config: *mut RuuahConfig) {
+    if config.is_null() {
+        return;
+    }
+    drop(unsafe { Box::from_raw(config) });
 }

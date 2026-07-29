@@ -27,12 +27,12 @@ final class Session {
 
     init?(
         command: String?, cols: UInt16, rows: UInt16, fontSize: Float, autoDirection: Bool,
-        title: String
+        config: OpaquePointer? = nil, title: String
     ) {
         guard
             let host = spawnHost(
                 cols: cols, rows: rows, fontSize: fontSize, command: command,
-                autoDirection: autoDirection)
+                autoDirection: autoDirection, config: config)
         else { return nil }
         self.host = host
         self.cols = cols

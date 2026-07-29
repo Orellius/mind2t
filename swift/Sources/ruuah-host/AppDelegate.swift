@@ -13,6 +13,14 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 {
     private let command: String?
     private let autoDirection: Bool
+    /// The loaded settings handle; contributes the theme palette at every spawn. Owned
+    /// for the app's lifetime (the borrowed strings read at launch depend on it).
+    private let config: OpaquePointer?
+    /// Logical font size from the config (or the default); scaled per spawn.
+    private let baseFontSize: Float
+    /// What could not be honoured in the config, shown once at launch -- a settings file
+    /// that silently half-applies looks like a broken app, so the failure is loud.
+    private let configError: String?
     private var window: NSWindow!
     private var view: TerminalView!
     private var sidebar: SessionListController!
@@ -27,9 +35,15 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// Background sessions are polled once per this many active ticks (~2 Hz at 60).
     private static let backgroundEvery: UInt64 = 30
 
-    init(command: String?, autoDirection: Bool) {
+    init(
+        command: String?, autoDirection: Bool, config: OpaquePointer?,
+        baseFontSize: Float, configError: String?
+    ) {
         self.command = command
         self.autoDirection = autoDirection
+        self.config = config
+        self.baseFontSize = baseFontSize
+        self.configError = configError
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -103,6 +117,15 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         FileHandle.standardOutput.write(
             Data("RUUAH_HOST_WINDOW=\(window.windowNumber)\n".utf8))
 
+        if let configError {
+            FileHandle.standardError.write(Data("config: \(configError)\n".utf8))
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Settings could not be fully applied"
+            alert.informativeText = "\(configError)\n\nDefaults are in effect for the parts that failed."
+            alert.runModal()
+        }
+
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) {
             [weak self] _ in
             self?.pollTick()
@@ -124,8 +147,8 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         let scale = Float(window.backingScaleFactor)
         guard
             let session = Session(
-                command: command, cols: cols, rows: rows, fontSize: 16 * scale,
-                autoDirection: autoDirection, title: title)
+                command: command, cols: cols, rows: rows, fontSize: baseFontSize * scale,
+                autoDirection: autoDirection, config: config, title: title)
         else { return }
         sessions.append(session)
         activate(index: sessions.count - 1)

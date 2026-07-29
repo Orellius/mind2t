@@ -23,6 +23,9 @@ extern "C" {
 /* Opaque. Create with ruuah_host_spawn, destroy with ruuah_host_free. */
 typedef struct RuuahHost RuuahHost;
 
+/* Opaque. Create with ruuah_config_load, destroy with ruuah_config_free. */
+typedef struct RuuahConfig RuuahConfig;
+
 typedef enum {
   RUUAH_HOST_SUCCESS = 0,
   /* A NULL pointer, a zero geometry, or an otherwise malformed argument. */
@@ -48,6 +51,11 @@ typedef struct {
    * rows flow right-to-left; rows that resolve LTR are laid out exactly as with false).
    * False keeps the terminal default: left-to-right base, RTL runs reordered in place. */
   bool auto_direction;
+  /* Contributes ONLY the theme palette; NULL keeps the built-in scheme. Read during the
+   * spawn call and not retained -- freeing the config afterwards is legal. The scalar
+   * settings are read through the ruuah_config_* getters instead, because the embedder
+   * owns their precedence (CLI flags, Retina scaling). */
+  const RuuahConfig *config;
 } RuuahHostOptions;
 
 /* One rendered frame, filled by ruuah_host_poll. */
@@ -105,6 +113,44 @@ RuuahHostResult ruuah_host_resize(RuuahHost *host, uint16_t cols, uint16_t rows)
 /* Tears down the child, the pump thread and the renderer. NULL is a no-op. Any pixels
  * pointer previously returned for this handle is dead after this call. */
 void ruuah_host_free(RuuahHost *host);
+
+/* -- Settings (S1): dir/config.toml plus dir/themes/<name>.toml. --------------------------
+ *
+ * config.toml keys (all optional; unknown keys are an error, not ignored):
+ *   font-size = 16.0          logical pixels; the embedder applies scale and defaults
+ *   auto-direction = true     per-row Hebrew-first layout
+ *   shell = "/bin/bash"       command line for new sessions, run via /bin/sh -c
+ *   theme = "name"            themes/name.toml
+ *
+ * themes/<name>.toml keys (all optional):
+ *   foreground = "#rrggbb"
+ *   background = "#rrggbb"
+ *   palette = ["#rrggbb", x16]   the named system colors; the cube/ramp stay absolute
+ *
+ * Loading never fails into an unusable state: a missing file is the defaults, and a file
+ * that could not be honoured is the defaults plus ruuah_config_error -- which a GUI must
+ * show loudly. A bad theme applies NOTHING (never a half-theme). */
+
+/* Loads dir/config.toml into a new handle. dir NULL means ~/.ruuah. Fails only on a NULL
+ * out-param or a non-UTF-8 dir; on failure writes NULL to *out. */
+RuuahHostResult ruuah_config_load(const char *dir, RuuahConfig **out);
+
+/* Font size in logical pixels, 0 when the config does not set one. */
+float ruuah_config_font_size(const RuuahConfig *config);
+
+/* The configured auto-direction, or `fallback` when the config does not say. */
+bool ruuah_config_auto_direction(const RuuahConfig *config, bool fallback);
+
+/* The configured shell command line, or NULL when unset. Borrowed: valid until
+ * ruuah_config_free on the same handle. */
+const char *ruuah_config_shell(const RuuahConfig *config);
+
+/* Everything that went wrong while loading, newline-joined; NULL when clean. Borrowed:
+ * valid until ruuah_config_free on the same handle. */
+const char *ruuah_config_error(const RuuahConfig *config);
+
+/* Frees a config handle. NULL is a no-op. Strings lent by the getters die here. */
+void ruuah_config_free(RuuahConfig *config);
 
 #ifdef __cplusplus
 }

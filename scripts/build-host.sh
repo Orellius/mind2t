@@ -53,6 +53,7 @@ EXPECTED=(
   ruuah_host_spawn
   ruuah_host_poll
   ruuah_host_send
+  ruuah_host_paste
   ruuah_host_resize
   ruuah_host_free
 )

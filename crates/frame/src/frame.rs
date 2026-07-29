@@ -107,6 +107,10 @@ pub struct Frame {
     /// Generation of the last whole-frame invalidation.
     pub full_generation: u64,
     pub cursor: FrameCursor,
+    /// Terminal mode bits (`Frame::MODE_*`). The frame is how mode state crosses the
+    /// thread boundary: the pump owns the terminal, so a host deciding how to encode a
+    /// paste reads the mode here rather than reaching into the core.
+    pub modes: u64,
     /// How rows are laid out. Left-to-right by default; see `BaseDirection`.
     pub base_direction: BaseDirection,
     pub(crate) cells: Vec<PackedCell>,
@@ -116,8 +120,16 @@ pub struct Frame {
 }
 
 impl Frame {
+    /// Bit set in `modes` while the child has bracketed paste (DEC 2004) enabled.
+    pub const MODE_BRACKETED_PASTE: u64 = 1 << 0;
+
     pub fn new() -> Frame {
         Frame::default()
+    }
+
+    /// Whether the child enabled bracketed paste (DEC 2004).
+    pub fn bracketed_paste(&self) -> bool {
+        self.modes & Frame::MODE_BRACKETED_PASTE != 0
     }
 
     pub(crate) fn resize(&mut self, cols: u16, rows: u16) {
@@ -330,6 +342,7 @@ mod tests {
             generation: 1,
             full_generation: 0,
             cursor: FrameCursor::default(),
+            modes: 0,
             base_direction: BaseDirection::default(),
             cells,
             row_generation: vec![1],

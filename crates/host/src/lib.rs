@@ -283,6 +283,43 @@ pub unsafe extern "C" fn ruuah_host_send(
     }
 }
 
+/// Encodes clipboard bytes for the child and writes them to the pty.
+///
+/// The transform is the oracle-measured paste encoding (`ruuah_vt_pty::paste`): xterm's
+/// strip set becomes spaces always, then the data is wrapped in `ESC[200~`/`ESC[201~`
+/// when the child has bracketed paste (mode 2004) on, or has its newlines folded to
+/// carriage returns when it does not. Callers pass raw clipboard bytes and never build
+/// either form themselves.
+///
+/// The mode rides the last polled frame -- the pump thread owns the terminal, so the
+/// frame is how its state crosses to this thread. A host must therefore have polled
+/// since the child enabled the mode; any host that renders does so continuously.
+///
+/// # Safety
+/// `host` must be a live handle; `bytes` must point to `len` readable bytes, or be NULL
+/// when `len` is 0.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_host_paste(
+    host: *mut RuuahHost,
+    bytes: *const u8,
+    len: usize,
+) -> RuuahHostResult {
+    if host.is_null() || (bytes.is_null() && len != 0) {
+        return RuuahHostResult::InvalidValue;
+    }
+    let host = unsafe { &mut *host };
+    let bytes = if len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(bytes, len) }
+    };
+    let encoded = ruuah_vt_pty::paste::encode(bytes, host.frame.bracketed_paste());
+    match host.host.send(&encoded) {
+        Ok(()) => RuuahHostResult::Success,
+        Err(_) => RuuahHostResult::SendFailed,
+    }
+}
+
 /// Resizes the pty, the terminal and the render target.
 ///
 /// # Safety

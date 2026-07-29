@@ -257,6 +257,7 @@ fn is_blank(cell: &HistoryCell) -> bool {
 
 pub(crate) fn blank_cell() -> HistoryCell {
     HistoryCell {
+        link: None,
         codepoint: 0,
         wide: Wide::Narrow,
         style: Style::DEFAULT,
@@ -281,6 +282,7 @@ mod tests {
             cells: text
                 .chars()
                 .map(|c| HistoryCell {
+                    link: None,
                     codepoint: c as u32,
                     wide: Wide::Narrow,
                     style: Style::DEFAULT,
@@ -371,6 +373,7 @@ mod tests {
             style: Style::DEFAULT,
             semantic: Semantic::Output,
             graphemes: Vec::new(),
+            link: None,
         }];
         cells.push(HistoryCell {
             codepoint: '世' as u32,
@@ -378,6 +381,7 @@ mod tests {
             style: Style::DEFAULT,
             semantic: Semantic::Output,
             graphemes: Vec::new(),
+            link: None,
         });
         cells.push(HistoryCell {
             codepoint: 0,
@@ -385,6 +389,7 @@ mod tests {
             style: Style::DEFAULT,
             semantic: Semantic::Output,
             graphemes: Vec::new(),
+            link: None,
         });
         let rows = [HistoryRow {
             cells,

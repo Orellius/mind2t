@@ -131,6 +131,14 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         // scripted capture reads it while the app is still running.
         FileHandle.standardOutput.write(
             Data("RUUAH_HOST_WINDOW=\(window.windowNumber)\n".utf8))
+        // The frame too, top-left origin, so scripted captures and synthetic-input
+        // tests (SCAR-014 live taps) can aim without a window-server query.
+        let screenHeight = window.screen?.frame.height ?? 0
+        let frame = window.frame
+        FileHandle.standardOutput.write(
+            Data(
+                "RUUAH_HOST_FRAME=\(Int(frame.origin.x)),\(Int(screenHeight - frame.origin.y - frame.height)),\(Int(frame.width)),\(Int(frame.height))\n"
+                    .utf8))
 
         if let configError {
             FileHandle.standardError.write(Data("config: \(configError)\n".utf8))
@@ -351,8 +359,13 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         guard x >= 0, yTop >= 0 else { return }
         let col = UInt16(clamping: Int(x) / session.cellWidth)
         let row = UInt16(clamping: Int(yTop) / session.cellHeight)
-        guard let uri = session.linkAt(col: col, row: row), let url = URL(string: uri)
-        else { return }
+        let uri = session.linkAt(col: col, row: row)
+        // Permanent seam trace (SCAR-014): one line per cmd+click, so "nothing opened"
+        // is always attributable to the event path, the cell math, or the lookup --
+        // never a guess. Terminal apps live and die on their stderr being honest.
+        FileHandle.standardError.write(
+            Data("link: cell (\(col),\(row)) -> \(uri ?? "none")\n".utf8))
+        guard let uri, let url = URL(string: uri) else { return }
         NSWorkspace.shared.open(url)
     }
 

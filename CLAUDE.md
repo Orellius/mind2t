@@ -609,6 +609,10 @@ current oracle was built from, `scripts/build-oracle.sh` rewrites it and **annou
 oracle moved**. Commit `oracle.lock` whenever it changes — without it, a corpus case flipping
 overnight is indistinguishable from a regression you caused.
 
+- **PR WORKFLOW LAW (Orel's order, 2026-07-30): work lands through pull requests.** One
+  branch per slice or fix, pushed to origin, `gh pr create`, gates green in the PR,
+  merged `--no-ff` (via `gh pr merge --merge`). No direct pushes to `main`. GUI-facing
+  changes carry a live-tap result or an explicit untested note in the PR body (SCAR-014).
 - **`main` holds verified slices only.** Every commit on it has `cargo test --workspace`
   green and `difftest` exiting 0.
 - **One branch per slice**, `slice-N-<name>`, merged with `--no-ff` so slice boundaries stay

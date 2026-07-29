@@ -79,6 +79,7 @@ pub const GHOSTTY_ROW_DATA_SEMANTIC_PROMPT: GhosttyRowData = 6;
 
 pub type GhosttyCellContentTag = i32;
 pub const GHOSTTY_CELL_CONTENT_CODEPOINT: GhosttyCellContentTag = 0;
+pub const GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME: GhosttyCellContentTag = 1;
 
 pub type GhosttyCellWide = i32;
 pub const GHOSTTY_CELL_WIDE_NARROW: GhosttyCellWide = 0;

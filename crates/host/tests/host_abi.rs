@@ -21,9 +21,10 @@ use std::time::{Duration, Instant};
 use ruuah_vt_core::Terminal;
 use ruuah_vt_frame::{BaseDirection, Frame, Publisher, channel};
 use ruuah_vt_host::{
-    DEFAULT_FONT_SIZE, RuuahHost, RuuahHostFrame, RuuahHostOptions, RuuahHostResult,
-    ruuah_host_free, ruuah_host_paste, ruuah_host_poll, ruuah_host_poll_skipping_row_for_testing,
-    ruuah_host_send, ruuah_host_spawn,
+    DEFAULT_FONT_SIZE, RuuahConfig, RuuahHost, RuuahHostFrame, RuuahHostOptions, RuuahHostResult,
+    ruuah_config_error, ruuah_config_free, ruuah_config_load, ruuah_host_free, ruuah_host_paste,
+    ruuah_host_poll, ruuah_host_poll_skipping_row_for_testing, ruuah_host_resize, ruuah_host_send,
+    ruuah_host_spawn,
 };
 use ruuah_vt_render::{FontStack, Renderer};
 
@@ -78,6 +79,7 @@ fn host_pixels_match_a_reference_renderer_fed_the_same_bytes() {
         font_size: 0.0,
         command: command.as_ptr(),
         auto_direction: false,
+        config: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     let result = unsafe { ruuah_host_spawn(&options, &mut host) };
@@ -149,6 +151,7 @@ fn a_refused_spawn_nulls_the_out_param() {
         font_size: 0.0,
         command: ptr::null(),
         auto_direction: false,
+        config: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::dangling_mut();
     let result = unsafe { ruuah_host_spawn(&options, &mut host) };
@@ -172,6 +175,7 @@ fn a_host_that_skips_a_row_is_caught() {
         font_size: 0.0,
         command: command.as_ptr(),
         auto_direction: false,
+        config: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     let result = unsafe { ruuah_host_spawn(&options, &mut host) };
@@ -246,6 +250,7 @@ fn send_reaches_the_child_and_comes_back_as_pixels() {
         font_size: 0.0,
         command: command.as_ptr(),
         auto_direction: false,
+        config: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -315,6 +320,7 @@ fn auto_direction_reorders_a_hebrew_row_through_the_c_boundary() {
         font_size: 0.0,
         command: command.as_ptr(),
         auto_direction: true,
+        config: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     let result = unsafe { ruuah_host_spawn(&options, &mut host) };
@@ -404,6 +410,7 @@ fn a_paste_is_fenced_when_the_child_enabled_2004() {
         font_size: 0.0,
         command: command.as_ptr(),
         auto_direction: false,
+        config: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -443,6 +450,7 @@ fn a_paste_is_bare_when_the_child_did_not_enable_2004() {
         font_size: 0.0,
         command: command.as_ptr(),
         auto_direction: false,
+        config: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -464,4 +472,155 @@ fn a_paste_is_bare_when_the_child_did_not_enable_2004() {
     let matched = poll_until_pixels(host, &want);
     unsafe { ruuah_host_free(host) };
     assert!(matched, "the bare paste never echoed back as pixels");
+}
+
+/// S1's observable: a theme with a distinct background must recolor the grid AND the
+/// reported margin background through the C surface -- and survive a resize, because
+/// resize rebuilds the renderer and a rebuild that forgets the theme silently reverts
+/// to the built-in scheme (the looks-like-success shape).
+///
+/// The control is `a_null_config_keeps_the_builtin_scheme` below: together the pair
+/// proves the color comes from the theme file rather than either default.
+#[test]
+fn a_theme_background_reaches_the_pixels_and_survives_a_resize() {
+    const THEME_BG: [u8; 4] = [0x20, 0x40, 0x60, 255];
+
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("themes")).expect("themes dir");
+    std::fs::write(dir.join("config.toml"), "theme = \"deep\"\n").expect("config");
+    std::fs::write(dir.join("themes/deep.toml"), "background = \"#204060\"\n").expect("theme");
+
+    let dir_c = CString::new(dir.to_str().expect("utf-8 tempdir")).expect("dir");
+    let mut config: *mut RuuahConfig = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_config_load(dir_c.as_ptr(), &mut config) },
+        RuuahHostResult::Success
+    );
+    assert!(
+        unsafe { ruuah_config_error(config) }.is_null(),
+        "this config must load clean"
+    );
+
+    // A child that keeps producing output, so frames keep arriving after the resize.
+    let command = CString::new("while :; do printf X; sleep 0.2; done").expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+        config,
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+    // The config contributes at spawn/resize only; freeing it here pins that lifetime.
+    unsafe { ruuah_config_free(config) };
+
+    let polled = poll_until_background(host, THEME_BG)
+        .unwrap_or_else(|got| die(host, format!("themed background never appeared; last {got:?}")));
+    assert_corner_pixel(&polled, THEME_BG, "after spawn");
+
+    // The trap this test exists for: resize rebuilds the renderer.
+    assert_eq!(
+        unsafe { ruuah_host_resize(host, COLS - 20, ROWS - 4) },
+        RuuahHostResult::Success
+    );
+    let polled = poll_until_background(host, THEME_BG).unwrap_or_else(|got| {
+        die(host, format!("the theme did not survive the resize; last {got:?}"))
+    });
+    assert_corner_pixel(&polled, THEME_BG, "after resize");
+    unsafe { ruuah_host_free(host) };
+}
+
+/// The pair's control: the identical child with a NULL config wears the built-in
+/// near-black. If theme application were hardcoded or leaked between handles, one of
+/// the two tests would fail.
+#[test]
+fn a_null_config_keeps_the_builtin_scheme() {
+    let builtin = ruuah_vt_render::Palette::default().default_background;
+
+    let command = CString::new("while :; do printf X; sleep 0.2; done").expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+        config: ptr::null(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+    let polled = poll_until_background(host, builtin)
+        .unwrap_or_else(|got| die(host, format!("builtin background never appeared; got {got:?}")));
+    assert_corner_pixel(&polled, builtin, "with a NULL config");
+    unsafe { ruuah_host_free(host) };
+}
+
+/// Polls until a drawn frame reports the wanted margin background. Ok carries the frame
+/// for further pixel assertions; Err carries the last background seen.
+fn poll_until_background(
+    host: *mut RuuahHost,
+    want: [u8; 4],
+) -> Result<RuuahHostFrame, [u8; 4]> {
+    let deadline = Instant::now() + PATIENCE;
+    let mut last = [0; 4];
+    while Instant::now() < deadline {
+        let mut polled = RuuahHostFrame {
+            pixels: ptr::null(),
+            width: 0,
+            height: 0,
+            generation: 0,
+            drew: false,
+            child_exited: false,
+            background: [0; 4],
+        };
+        let result = unsafe { ruuah_host_poll(host, &mut polled) };
+        assert_eq!(result, RuuahHostResult::Success, "poll failed: {result:?}");
+        if !polled.pixels.is_null() {
+            if polled.background == want {
+                return Ok(polled);
+            }
+            last = polled.background;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    Err(last)
+}
+
+/// The bottom-right pixel belongs to a cell no child in these tests ever touches, so it
+/// must wear the default background -- which is where a theme shows up as actual ink.
+fn assert_corner_pixel(frame: &RuuahHostFrame, want: [u8; 4], when: &str) {
+    let len = frame.width as usize * frame.height as usize * 4;
+    let pixels = unsafe { std::slice::from_raw_parts(frame.pixels, len) };
+    let corner = &pixels[len - 4..];
+    assert_eq!(
+        &corner[..3],
+        &want[..3],
+        "{when}: the untouched corner pixel does not wear the expected background"
+    );
+}
+
+fn die(host: *mut RuuahHost, message: String) -> ! {
+    unsafe { ruuah_host_free(host) };
+    panic!("{message}");
+}
+
+/// A per-test unique directory under the OS tmp dir; leaked on purpose so a failing
+/// test's files are still there to read.
+fn tempdir() -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "ruuah-host-abi-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&dir).expect("tempdir");
+    dir
 }

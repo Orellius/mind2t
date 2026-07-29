@@ -12,7 +12,8 @@ import AppKit
 import CRuuahHost
 
 func spawnHost(
-    cols: UInt16, rows: UInt16, fontSize: Float, command: String?, autoDirection: Bool = false
+    cols: UInt16, rows: UInt16, fontSize: Float, command: String?, autoDirection: Bool = false,
+    config: OpaquePointer? = nil
 ) -> OpaquePointer? {
     var host: OpaquePointer?
     let result: RuuahHostResult
@@ -20,13 +21,13 @@ func spawnHost(
         result = command.withCString { pointer in
             var options = RuuahHostOptions(
                 cols: cols, rows: rows, font_size: fontSize, command: pointer,
-                auto_direction: autoDirection)
+                auto_direction: autoDirection, config: config)
             return ruuah_host_spawn(&options, &host)
         }
     } else {
         var options = RuuahHostOptions(
             cols: cols, rows: rows, font_size: fontSize, command: nil,
-            auto_direction: autoDirection)
+            auto_direction: autoDirection, config: config)
         result = ruuah_host_spawn(&options, &host)
     }
     guard result == RUUAH_HOST_SUCCESS, let host else {
@@ -84,6 +85,21 @@ if let index = arguments.firstIndex(of: "--command"), index + 1 < arguments.coun
     command = arguments[index + 1]
 }
 
+// Settings (S1): ~/.ruuah/config.toml, or --config-dir for a capture/test that must not
+// touch the real one. Loading never fails into an unusable state; anything that could
+// not be honoured arrives as an error string the app shows loudly on launch.
+var configDir: String?
+if let index = arguments.firstIndex(of: "--config-dir"), index + 1 < arguments.count {
+    configDir = arguments[index + 1]
+}
+var config: OpaquePointer?
+if let configDir {
+    _ = configDir.withCString { pointer in ruuah_config_load(pointer, &config) }
+} else {
+    _ = ruuah_config_load(nil, &config)
+}
+let configError = ruuah_config_error(config).map { String(cString: $0) }
+
 // When the binary runs from an assembled .app (scripts/build-app.sh), the app is
 // Hebrew-first: auto base direction unless --ltr. The bare CLI binary keeps the
 // flag-driven defaults unchanged. A window opens straight into the login shell --
@@ -92,12 +108,30 @@ let bundledBanner = Bundle.main.path(forResource: "banner", ofType: "sh")
 if command == nil, arguments.contains("--splash"), let bundledBanner {
     command = "sh '\(bundledBanner)'"
 }
-let autoDirection =
-    arguments.contains("--auto-direction")
-    || (bundledBanner != nil && !arguments.contains("--ltr"))
+// The config's shell is the default for new sessions; explicit CLI intent outranks it.
+if command == nil, !arguments.contains("--splash"),
+    let shell = ruuah_config_shell(config).map({ String(cString: $0) })
+{
+    command = shell
+}
+// CLI flags outrank the config, which outranks the bundle default (the .app is
+// Hebrew-first; the bare CLI binary defaults LTR).
+let autoDirection: Bool
+if arguments.contains("--auto-direction") {
+    autoDirection = true
+} else if arguments.contains("--ltr") {
+    autoDirection = false
+} else {
+    autoDirection = ruuah_config_auto_direction(config, bundledBanner != nil)
+}
+// Logical size; the delegate multiplies by the backing scale at spawn.
+let configFontSize = ruuah_config_font_size(config)
+let baseFontSize: Float = configFontSize > 0 ? configFontSize : 16
 
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
-let delegate = HostAppDelegate(command: command, autoDirection: autoDirection)
+let delegate = HostAppDelegate(
+    command: command, autoDirection: autoDirection, config: config,
+    baseFontSize: baseFontSize, configError: configError)
 app.delegate = delegate
 app.run()

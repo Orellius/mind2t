@@ -56,6 +56,12 @@ EXPECTED=(
   ruuah_host_paste
   ruuah_host_resize
   ruuah_host_free
+  ruuah_config_load
+  ruuah_config_font_size
+  ruuah_config_auto_direction
+  ruuah_config_shell
+  ruuah_config_error
+  ruuah_config_free
 )
 
 # Captured once, not piped per symbol: `nm` exits non-zero on members with no symbols, and

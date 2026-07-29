@@ -246,6 +246,18 @@ impl State {
         }
     }
 
+    /// Sixel arrives through the same placement path, native-sized, cursor unmoved
+    /// (the v1 boundary shared with kitty's no-c,r case).
+    pub(crate) fn place_sixel(&mut self, id: u32) {
+        let image = self
+            .graphics
+            .images
+            .get(&id)
+            .cloned()
+            .expect("placed immediately after insert");
+        self.place_at_cursor(id, 0, 0, &image);
+    }
+
     fn graphics_delete(&mut self, keys: Keys) {
         match keys.delete {
             b'a' | b'A' => {

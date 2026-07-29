@@ -164,6 +164,10 @@ pub(crate) struct State {
     /// whole command is to be dropped at the terminator.
     pub(crate) apc: Vec<u8>,
     pub(crate) apc_overflow: bool,
+    /// A sixel DCS being decoded, between hook('q') and unhook.
+    pub(crate) sixel: Option<crate::sixel::SixelDecoder>,
+    /// Round-robin id source for sixel images in their private range.
+    pub(crate) sixel_counter: u32,
     /// OSC 8: interned (explicit id, uri) pairs the grids' cell stamps point into.
     /// Terminal-global so a link spanning a screen switch keeps one identity.
     pub(crate) link_table: Vec<(String, String)>,
@@ -198,6 +202,8 @@ impl State {
             graphics: crate::graphics::Graphics::default(),
             apc: Vec::new(),
             apc_overflow: false,
+            sixel: None,
+            sixel_counter: 0,
             link_table: Vec::new(),
             cursor_link: None,
             max_scrollback,
@@ -559,6 +565,35 @@ impl Perform for State {
             }
             _ => {}
         }
+    }
+
+    fn hook(&mut self, _params: &vte::Params, _intermediates: &[u8], _ignore: bool, action: char) {
+        if action == 'q' {
+            self.sixel = Some(crate::sixel::SixelDecoder::new());
+        }
+    }
+
+    fn put(&mut self, byte: u8) {
+        if let Some(decoder) = self.sixel.as_mut() {
+            decoder.put(byte);
+        }
+    }
+
+    fn unhook(&mut self) {
+        let Some(decoder) = self.sixel.take() else {
+            return;
+        };
+        let Some(image) = decoder.finish() else {
+            return;
+        };
+        self.sixel_counter = self.sixel_counter.wrapping_add(1) & 0x000F_FFFF;
+        let id = crate::sixel::SIXEL_ID_BASE + self.sixel_counter;
+        // Through the SAME store and placement path kitty uses -- one pipeline. Budget
+        // and eviction rules apply identically.
+        self.graphics.images.insert(id, image.clone());
+        self.graphics.budget_used += image.rgba.len();
+        self.graphics.ops.push(crate::graphics::ImageOp::Add(id, image.clone()));
+        self.place_sixel(id);
     }
 
     fn apc_start(&mut self) {

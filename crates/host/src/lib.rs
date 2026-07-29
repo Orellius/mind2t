@@ -19,7 +19,7 @@ use std::ffi::{CStr, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::process::Command;
 
-use ruuah_vt_frame::Frame;
+use ruuah_vt_frame::{BaseDirection, Frame};
 use ruuah_vt_pty::{Geometry, Host, Options};
 use ruuah_vt_render::{FontStack, GpuSurface, Renderer, Surface};
 
@@ -47,6 +47,7 @@ pub struct RuuahHostOptions {
     pub rows: u16,
     pub font_size: f32,
     pub command: *const c_char,
+    pub auto_direction: bool,
 }
 
 /// Mirrors `RuuahHostFrame` in `ruuah_host.h`.
@@ -187,11 +188,20 @@ pub unsafe extern "C" fn ruuah_host_spawn(
         Err(_) => return RuuahHostResult::SpawnFailed,
     };
 
+    // Base direction is a reader-side layout preference on the host's own Frame -- the
+    // publish channel never carries it and `read_into`/`resize` never write it, so setting
+    // it once here holds for the handle's lifetime. Auto flips a row's flow only when the
+    // row's own text resolves RTL; column-addressed TUI output stays where it was drawn.
+    let mut frame = Frame::new();
+    if options.auto_direction {
+        frame.base_direction = BaseDirection::Auto;
+    }
+
     let handle = Box::new(RuuahHost {
         host,
         reader,
         renderer,
-        frame: Frame::new(),
+        frame,
         pixels: Vec::new(),
         drawn_generation: 0,
         font_size,

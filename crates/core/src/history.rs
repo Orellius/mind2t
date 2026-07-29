@@ -144,6 +144,7 @@ mod tests {
             cells: text
                 .chars()
                 .map(|c| HistoryCell {
+                    link: None,
                     codepoint: c as u32,
                     wide: Wide::Narrow,
                     style: Style::DEFAULT,

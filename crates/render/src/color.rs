@@ -83,8 +83,10 @@ impl Palette {
 
         Palette {
             colors,
+            // Black-and-gray by Orel's call (2026-07-29): near-black ground, pure white
+            // ink, the sixteen stay vivid. Chrome accents live in the Swift layer.
             default_foreground: [0xff, 0xff, 0xff, 255],
-            default_background: [0x28, 0x2c, 0x34, 255],
+            default_background: [0x0d, 0x0d, 0x0d, 255],
         }
     }
 

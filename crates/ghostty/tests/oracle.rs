@@ -295,6 +295,78 @@ fn a_failed_creation_nulls_the_out_param() {
     );
 }
 
+/// A pure out-param's `.size` is written by the oracle, never read: every one of these is a
+/// whole-struct assign in the source (`style.zig` `default_style`, `grid_ref.zig` `fromPin` /
+/// `grid_ref_style`, `terminal.zig` `.cursor_style`), with `size` coming from the struct's
+/// own `@sizeOf` default -- and upstream's own tests pass `undefined` out-params, which is
+/// sound only because nothing reads them. `GHOSTTY_INIT_SIZED` governs structs passed IN
+/// (`style_is_default` does assert the caller's `.size`), not these. Measured with garbage
+/// in the field, because a consumer following upstream's own test pattern sends exactly that.
+#[test]
+fn a_pure_out_params_size_is_overwritten_not_echoed() {
+    use ruuah_vt_ghostty::sys;
+    const GARBAGE: usize = 0xDEAD;
+    unsafe {
+        let mut handle: sys::GhosttyTerminal = std::ptr::null_mut();
+        let options = sys::GhosttyTerminalOptions {
+            cols: 20,
+            rows: 3,
+            max_scrollback: 0,
+        };
+        assert_eq!(
+            sys::ghostty_terminal_new(std::ptr::null(), &mut handle, options),
+            sys::GhosttyResult_GHOSTTY_SUCCESS
+        );
+        let bytes = b"\x1b[1mB";
+        sys::ghostty_terminal_vt_write(handle, bytes.as_ptr(), bytes.len());
+
+        // ghostty_style_default
+        let mut style: sys::GhosttyStyle = std::mem::zeroed();
+        style.size = GARBAGE;
+        sys::ghostty_style_default(&mut style);
+        assert_eq!(style.size, size_of::<sys::GhosttyStyle>());
+
+        // ghostty_terminal_get(CURSOR_STYLE)
+        let mut cursor_style: sys::GhosttyStyle = std::mem::zeroed();
+        cursor_style.size = GARBAGE;
+        assert_eq!(
+            sys::ghostty_terminal_get(
+                handle,
+                sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_CURSOR_STYLE,
+                (&raw mut cursor_style).cast(),
+            ),
+            sys::GhosttyResult_GHOSTTY_SUCCESS
+        );
+        assert_eq!(cursor_style.size, size_of::<sys::GhosttyStyle>());
+
+        // ghostty_terminal_grid_ref
+        let point = sys::GhosttyPoint {
+            tag: sys::GhosttyPointTag_GHOSTTY_POINT_TAG_ACTIVE,
+            value: sys::GhosttyPointValue {
+                coordinate: sys::GhosttyPointCoordinate { x: 0, y: 0 },
+            },
+        };
+        let mut cell_ref: sys::GhosttyGridRef = std::mem::zeroed();
+        cell_ref.size = GARBAGE;
+        assert_eq!(
+            sys::ghostty_terminal_grid_ref(handle, point, &mut cell_ref),
+            sys::GhosttyResult_GHOSTTY_SUCCESS
+        );
+        assert_eq!(cell_ref.size, size_of::<sys::GhosttyGridRef>());
+
+        // ghostty_grid_ref_style
+        let mut cell_style: sys::GhosttyStyle = std::mem::zeroed();
+        cell_style.size = GARBAGE;
+        assert_eq!(
+            sys::ghostty_grid_ref_style(&cell_ref, &mut cell_style),
+            sys::GhosttyResult_GHOSTTY_SUCCESS
+        );
+        assert_eq!(cell_style.size, size_of::<sys::GhosttyStyle>());
+
+        sys::ghostty_terminal_free(handle);
+    }
+}
+
 /// The oracle's content-tag rule for grapheme clusters, measured through its own C ABI.
 ///
 /// Upstream flips a cell's tag to `codepoint_grapheme` the moment a continuation codepoint is

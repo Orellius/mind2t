@@ -600,3 +600,86 @@ fn a_grapheme_cell_reports_the_grapheme_content_tag() {
         ghostty_terminal_free(handle);
     }
 }
+
+/// A pure out-param's `.size` must be written, never read. The oracle whole-struct-assigns at
+/// all four of these sites (measured in `ruuah-vt-ghostty`'s
+/// `a_pure_out_params_size_is_overwritten_not_echoed`), and its own tests pass `undefined`
+/// out-params -- so a consumer following upstream's pattern hands us uninitialised memory in
+/// that field. Echoing it back is the audit's finding 15: the harness above never saw it
+/// because `read_snapshot` always stamps the correct size before every call.
+#[test]
+fn a_pure_out_params_size_is_overwritten_here_too() {
+    const GARBAGE: usize = 0xDEAD;
+    unsafe {
+        let mut handle: GhosttyTerminal = std::ptr::null_mut();
+        assert_eq!(
+            ghostty_terminal_new(
+                std::ptr::null(),
+                &mut handle,
+                GhosttyTerminalOptions {
+                    cols: 8,
+                    rows: 2,
+                    max_scrollback: 0,
+                },
+            ),
+            GHOSTTY_SUCCESS
+        );
+        let bytes = b"\x1b[1mB";
+        ghostty_terminal_vt_write(handle, bytes.as_ptr(), bytes.len());
+
+        // ghostty_style_default
+        let mut style = GhosttyStyle {
+            size: GARBAGE,
+            ..std::mem::zeroed()
+        };
+        ghostty_style_default(&mut style);
+        assert_eq!(style.size, size_of::<GhosttyStyle>());
+
+        // ghostty_terminal_get(CURSOR_STYLE)
+        let mut cursor_style = GhosttyStyle {
+            size: GARBAGE,
+            ..std::mem::zeroed()
+        };
+        assert_eq!(
+            ghostty_terminal_get(
+                handle,
+                GHOSTTY_TERMINAL_DATA_CURSOR_STYLE,
+                (&raw mut cursor_style).cast::<c_void>(),
+            ),
+            GHOSTTY_SUCCESS
+        );
+        assert_eq!(cursor_style.size, size_of::<GhosttyStyle>());
+
+        // ghostty_terminal_grid_ref
+        let point = GhosttyPoint {
+            tag: GHOSTTY_POINT_TAG_ACTIVE,
+            value: GhosttyPointValue {
+                coordinate: GhosttyPointCoordinate { x: 0, y: 0 },
+            },
+        };
+        let mut cell_ref = GhosttyGridRef {
+            size: GARBAGE,
+            node: std::ptr::null_mut(),
+            x: 0,
+            y: 0,
+        };
+        assert_eq!(
+            ghostty_terminal_grid_ref(handle, point, &mut cell_ref),
+            GHOSTTY_SUCCESS
+        );
+        assert_eq!(cell_ref.size, size_of::<GhosttyGridRef>());
+
+        // ghostty_grid_ref_style
+        let mut cell_style = GhosttyStyle {
+            size: GARBAGE,
+            ..std::mem::zeroed()
+        };
+        assert_eq!(
+            ghostty_grid_ref_style(&cell_ref, &mut cell_style),
+            GHOSTTY_SUCCESS
+        );
+        assert_eq!(cell_style.size, size_of::<GhosttyStyle>());
+
+        ghostty_terminal_free(handle);
+    }
+}

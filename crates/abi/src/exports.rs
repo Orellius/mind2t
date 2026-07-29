@@ -206,8 +206,7 @@ pub unsafe extern "C" fn ghostty_terminal_get(
             }
             GHOSTTY_TERMINAL_DATA_CURSOR_STYLE => {
                 let style = out.cast::<GhosttyStyle>();
-                let size = (*style).size;
-                *style = pack_style(&view.cursor.style, size);
+                *style = pack_style(&view.cursor.style);
             }
             GHOSTTY_TERMINAL_DATA_TOTAL_ROWS => {
                 *out.cast::<usize>() = view.history.len() + usize::from(view.rows)
@@ -253,9 +252,8 @@ pub unsafe extern "C" fn ghostty_terminal_grid_ref(
     }
 
     unsafe {
-        let size = (*out).size;
         *out = GhosttyGridRef {
-            size,
+            size: size_of::<GhosttyGridRef>(),
             // The raw handle, not a reference-derived pointer: the ref must keep the
             // handle's full provenance so it survives later shared reads (finding 22).
             node: handle,
@@ -361,10 +359,7 @@ pub unsafe extern "C" fn ghostty_grid_ref_style(
     else {
         return GHOSTTY_INVALID_VALUE;
     };
-    unsafe {
-        let size = (*out).size;
-        *out = pack_style(&cell.style, size);
-    }
+    unsafe { *out = pack_style(&cell.style) };
     GHOSTTY_SUCCESS
 }
 
@@ -444,10 +439,7 @@ pub unsafe extern "C" fn ghostty_style_default(out: *mut GhosttyStyle) {
     if out.is_null() {
         return;
     }
-    unsafe {
-        let size = (*out).size;
-        *out = pack_style(&ruuah_vt_snapshot::Style::DEFAULT, size);
-    }
+    unsafe { *out = pack_style(&ruuah_vt_snapshot::Style::DEFAULT) };
 }
 
 /// # Safety
@@ -518,9 +510,12 @@ fn pack_row(row: &Row) -> GhosttyRow {
         | (semantic << 4)
 }
 
-fn pack_style(style: &ruuah_vt_snapshot::Style, size: usize) -> GhosttyStyle {
+/// A pure out-param's `.size` is written from the type, never read from the caller -- the
+/// oracle whole-struct-assigns at every equivalent site and its own tests pass `undefined`
+/// out-params, so the incoming field may be uninitialised memory (finding 15).
+fn pack_style(style: &ruuah_vt_snapshot::Style) -> GhosttyStyle {
     GhosttyStyle {
-        size,
+        size: size_of::<GhosttyStyle>(),
         fg_color: pack_color(style.fg),
         bg_color: pack_color(style.bg),
         underline_color: pack_color(style.underline_color),

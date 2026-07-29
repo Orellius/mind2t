@@ -294,3 +294,78 @@ fn a_failed_creation_nulls_the_out_param() {
         "the oracle left {handle:?} in the out-param on failure; the sentinel was {sentinel:?}"
     );
 }
+
+/// The oracle's content-tag rule for grapheme clusters, measured through its own C ABI.
+///
+/// Upstream flips a cell's tag to `codepoint_grapheme` the moment a continuation codepoint is
+/// attached (`page.zig`, `appendGrapheme`), and `hasGrapheme` is defined as exactly that tag --
+/// so the rule is: more than one codepoint in the cell means the grapheme tag, one means plain
+/// `codepoint`. This pins it, because our `ghostty_cell_get` must say the same thing and the
+/// snapshot readout above never touches the tag (it reads clusters via the graphemes call).
+#[test]
+fn a_cell_holding_a_multi_codepoint_cluster_wears_the_grapheme_content_tag() {
+    use ruuah_vt_ghostty::sys;
+    unsafe {
+        let mut handle: sys::GhosttyTerminal = std::ptr::null_mut();
+        let options = sys::GhosttyTerminalOptions {
+            cols: 20,
+            rows: 3,
+            max_scrollback: 0,
+        };
+        assert_eq!(
+            sys::ghostty_terminal_new(std::ptr::null(), &mut handle, options),
+            sys::GhosttyResult_GHOSTTY_SUCCESS
+        );
+
+        // 'A' at column 0; bet + dagesh (U+05D1 U+05BC) as one two-codepoint cell at column 1.
+        let bytes = "A\u{05D1}\u{05BC}".as_bytes();
+        sys::ghostty_terminal_vt_write(handle, bytes.as_ptr(), bytes.len());
+
+        let tag_of = |x: u16| -> sys::GhosttyCellContentTag {
+            let point = sys::GhosttyPoint {
+                tag: sys::GhosttyPointTag_GHOSTTY_POINT_TAG_ACTIVE,
+                value: sys::GhosttyPointValue {
+                    coordinate: sys::GhosttyPointCoordinate { x, y: 0 },
+                },
+            };
+            let mut cell_ref = sys::GhosttyGridRef {
+                size: size_of::<sys::GhosttyGridRef>(),
+                node: std::ptr::null_mut(),
+                x: 0,
+                y: 0,
+            };
+            assert_eq!(
+                sys::ghostty_terminal_grid_ref(handle, point, &mut cell_ref),
+                sys::GhosttyResult_GHOSTTY_SUCCESS
+            );
+            let mut cell: sys::GhosttyCell = 0;
+            assert_eq!(
+                sys::ghostty_grid_ref_cell(&cell_ref, &mut cell),
+                sys::GhosttyResult_GHOSTTY_SUCCESS
+            );
+            let mut tag: sys::GhosttyCellContentTag = sys::GhosttyCellContentTag::MAX;
+            assert_eq!(
+                sys::ghostty_cell_get(
+                    cell,
+                    sys::GhosttyCellData_GHOSTTY_CELL_DATA_CONTENT_TAG,
+                    (&raw mut tag).cast(),
+                ),
+                sys::GhosttyResult_GHOSTTY_SUCCESS
+            );
+            tag
+        };
+
+        assert_eq!(
+            tag_of(1),
+            sys::GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME,
+            "a base-plus-combining-mark cell must wear the grapheme tag"
+        );
+        assert_eq!(
+            tag_of(0),
+            sys::GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_CODEPOINT,
+            "a single-codepoint cell must stay a plain codepoint cell"
+        );
+
+        sys::ghostty_terminal_free(handle);
+    }
+}

@@ -550,3 +550,53 @@ fn a_styled_cell_reports_a_non_zero_style_id() {
         ghostty_terminal_free(handle);
     }
 }
+
+/// The content tag is the other cell field with no consumer inside this harness: `read_cell`
+/// gets the cluster through `read_graphemes`, so a `CONTENT_TAG` frozen at `CODEPOINT` passes
+/// the whole corpus -- which is exactly what the audit's finding 13 found shipping. The
+/// oracle's rule is measured in `ruuah-vt-ghostty`'s
+/// `a_cell_holding_a_multi_codepoint_cluster_wears_the_grapheme_content_tag`: more than one
+/// codepoint in the cell means `CODEPOINT_GRAPHEME`. A consumer gating its graphemes call on
+/// the tag drops every niqqud otherwise.
+#[test]
+fn a_grapheme_cell_reports_the_grapheme_content_tag() {
+    unsafe {
+        let mut handle: GhosttyTerminal = std::ptr::null_mut();
+        assert_eq!(
+            ghostty_terminal_new(
+                std::ptr::null(),
+                &mut handle,
+                GhosttyTerminalOptions {
+                    cols: 8,
+                    rows: 2,
+                    max_scrollback: 0,
+                },
+            ),
+            GHOSTTY_SUCCESS
+        );
+
+        // 'A' at column 0; bet + dagesh (U+05D1 U+05BC) as one two-codepoint cell at column 1.
+        let bytes = "A\u{05D1}\u{05BC}".as_bytes();
+        ghostty_terminal_vt_write(handle, bytes.as_ptr(), bytes.len());
+
+        let tag_of = |x: u16| -> GhosttyCellContentTag {
+            let cell_ref = grid_ref(handle, GHOSTTY_POINT_TAG_ACTIVE, x, 0);
+            let mut raw: GhosttyCell = 0;
+            assert_eq!(ghostty_grid_ref_cell(&cell_ref, &mut raw), GHOSTTY_SUCCESS);
+            cell_get::<GhosttyCellContentTag>(raw, GHOSTTY_CELL_DATA_CONTENT_TAG)
+        };
+
+        assert_eq!(
+            tag_of(1),
+            GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME,
+            "a base-plus-combining-mark cell must wear the grapheme tag, as the oracle does"
+        );
+        assert_eq!(
+            tag_of(0),
+            GHOSTTY_CELL_CONTENT_CODEPOINT,
+            "a single-codepoint cell must stay a plain codepoint cell"
+        );
+
+        ghostty_terminal_free(handle);
+    }
+}

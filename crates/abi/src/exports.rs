@@ -347,11 +347,17 @@ pub unsafe extern "C" fn ghostty_cell_get(
         match data {
             GHOSTTY_CELL_DATA_CODEPOINT => *out.cast::<u32>() = (cell & 0x1F_FFFF) as u32,
             GHOSTTY_CELL_DATA_CONTENT_TAG => {
-                // Every cell this core stores is a codepoint cell. Ghostty additionally keeps
-                // a background-colour-only cell out of its style table and tags it; here the
+                // A multi-codepoint cluster wears the grapheme tag, matching upstream's rule
+                // (`appendGrapheme` flips the tag the moment a continuation codepoint lands).
+                // The bg-color tags are the one deliberate omission: Ghostty keeps a
+                // background-colour-only cell out of its style table and tags it; here the
                 // background always lives in the style, so a consumer reading the style gets
                 // the same answer without the second representation.
-                *out.cast::<GhosttyCellContentTag>() = GHOSTTY_CELL_CONTENT_CODEPOINT
+                *out.cast::<GhosttyCellContentTag>() = if (cell >> 42) & 1 != 0 {
+                    GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME
+                } else {
+                    GHOSTTY_CELL_CONTENT_CODEPOINT
+                }
             }
             GHOSTTY_CELL_DATA_WIDE => {
                 *out.cast::<GhosttyCellWide>() = ((cell >> 21) & 0b11) as GhosttyCellWide
@@ -436,7 +442,13 @@ fn pack_cell(cell: &ruuah_vt_snapshot::Cell) -> GhosttyCell {
     };
     let styled = u64::from(!cell.style.is_default());
     let style_id = u64::from(style_id(&cell.style));
-    codepoint | (wide << 21) | (semantic << 23) | (style_id << 25) | (styled << 41)
+    let grapheme = u64::from(cell.text.chars().count() > 1);
+    codepoint
+        | (wide << 21)
+        | (semantic << 23)
+        | (style_id << 25)
+        | (styled << 41)
+        | (grapheme << 42)
 }
 
 /// The id a consumer reads back through `GHOSTTY_CELL_DATA_STYLE_ID`.

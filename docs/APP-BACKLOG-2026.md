@@ -88,11 +88,11 @@ changed files + unified diff, refreshed on demand (`git status`/`diff`
 host-side, rendered Swift-side), "open in editor" per file. Pairs with S5.
 Oracle: scripted mutation in a worktree must appear in the panel byte-exact.
 
-**S7 — Splits and tabs.** Warp's panes/layouts on our session model: a window
-holds a tree of panes, each pane a session. The renderer already draws into
-per-host buffers; this is AppKit layout work + focus routing + per-pane resize.
-*After S1 (keybinds) and ideally after scrollback viewport (P1.6) so panes are
-fully usable.*
+**S7 — Splits and tabs: REFUSED for now (Orel, 2026-07-29).** The sidebar IS
+the window management: each session is its own full terminal surface, switched
+instantly from the list, closed with its row's X. One thing on screen at a
+time is the model. Revisit only if real daily use produces the sentence "I
+need these two side by side" — and then as a deliberate decision, not a drift.
 
 **S8 — Persistent sessions.** Superset's "closing the laptop doesn't kill the
 sessions". V1 exists today (sessions outlive their window inside the app).

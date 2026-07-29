@@ -1,0 +1,69 @@
+client:
+  name: basic
+  file-system: device-agnostic
+tools: {}
+targets:
+  "PackageStructure": ["<PackageStructure>"]
+  "main": ["<ruuah-host-arm64-apple-macosx-release.exe>","<ruuah-host-arm64-apple-macosx-release.module>"]
+  "ruuah-host-arm64-apple-macosx-release.exe": ["<ruuah-host-arm64-apple-macosx-release.exe>"]
+  "ruuah-host-arm64-apple-macosx-release.module": ["<ruuah-host-arm64-apple-macosx-release.module>"]
+  "test": ["<ruuah-host-arm64-apple-macosx-release.exe>","<ruuah-host-arm64-apple-macosx-release.module>"]
+default: "main"
+nodes:
+  "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/CRuuahHost/":
+    is-directory-structure: true
+    content-exclusion-patterns: [".git",".build"]
+  "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/ruuah-host/":
+    is-directory-structure: true
+    content-exclusion-patterns: [".git",".build"]
+commands:
+  "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah-host.product/Objects.LinkFileList":
+    tool: write-auxiliary-file
+    inputs: ["<link-file-list>","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/Window.swift.o","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/main.swift.o"]
+    outputs: ["/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah-host.product/Objects.LinkFileList"]
+    description: "Write auxiliary file /Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah-host.product/Objects.LinkFileList"
+
+  "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/sources":
+    tool: write-auxiliary-file
+    inputs: ["<sources-file-list>","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/ruuah-host/Window.swift","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/ruuah-host/main.swift"]
+    outputs: ["/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/sources"]
+    description: "Write auxiliary file /Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/sources"
+
+  "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt":
+    tool: write-auxiliary-file
+    inputs: ["<swift-get-version>","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"]
+    outputs: ["/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt"]
+    always-out-of-date: "true"
+    description: "Write auxiliary file /Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt"
+
+  "<ruuah-host-arm64-apple-macosx-release.exe>":
+    tool: phony
+    inputs: ["/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah-host"]
+    outputs: ["<ruuah-host-arm64-apple-macosx-release.exe>"]
+
+  "<ruuah-host-arm64-apple-macosx-release.module>":
+    tool: phony
+    inputs: ["/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/Window.swift.o","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/main.swift.o","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/Modules/ruuah_host.swiftmodule"]
+    outputs: ["<ruuah-host-arm64-apple-macosx-release.module>"]
+
+  "C.ruuah-host-arm64-apple-macosx-release.exe":
+    tool: shell
+    inputs: ["/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/Window.swift.o","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/main.swift.o","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah-host.product/Objects.LinkFileList"]
+    outputs: ["/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah-host"]
+    description: "Linking ./.build/arm64-apple-macosx/release/ruuah-host"
+    args: ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc","-L","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release","-o","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah-host","-module-name","ruuah_host","-Xlinker","-no_warn_duplicate_libraries","-emit-executable","-Xlinker","-dead_strip","-Xlinker","-alias","-Xlinker","_ruuah_host_main","-Xlinker","_main","-Xlinker","-rpath","-Xlinker","@loader_path","@/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah-host.product/Objects.LinkFileList","-Xlinker","-rpath","-Xlinker","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-6.2/macosx","-target","arm64-apple-macosx13.0","-lruuah-vt-host","-framework","Metal","-framework","QuartzCore","-framework","AppKit","-L../target/release","-plugin-path","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing","-sdk","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-I","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-L","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-g"]
+
+  "C.ruuah-host-arm64-apple-macosx-release.module":
+    tool: shell
+    inputs: ["/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/ruuah-host/Window.swift","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/ruuah-host/main.swift","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/sources"]
+    outputs: ["/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/Window.swift.o","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/main.swift.o","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/Modules/ruuah_host.swiftmodule"]
+    description: "Compiling Swift Module 'ruuah_host' (2 sources)"
+    args: ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc","-module-name","ruuah_host","-emit-dependencies","-emit-module","-emit-module-path","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/Modules/ruuah_host.swiftmodule","-output-file-map","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/output-file-map.json","-whole-module-optimization","-num-threads","16","-c","@/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/sources","-I","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/Modules","-target","arm64-apple-macosx13.0","-whole-module-optimization","-num-threads","16","-serialize-diagnostics","-O","-j16","-DSWIFT_PACKAGE","-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE","-Xcc","-fmodule-map-file=/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/CRuuahHost/module.modulemap","-module-cache-path","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ModuleCache","-parseable-output","-Xfrontend","-entry-point-function-name","-Xfrontend","ruuah_host_main","-swift-version","5","-plugin-path","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing","-sdk","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-I","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-L","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-g","-Xcc","-isysroot","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk","-Xcc","-F","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-Xcc","-fPIC","-Xcc","-g","-package-name","swift"]
+
+  "PackageStructure":
+    tool: package-structure-tool
+    inputs: ["/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/CRuuahHost/","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/ruuah-host/","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Package.swift","/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Package.resolved"]
+    outputs: ["<PackageStructure>"]
+    description: "Planning build"
+    allow-missing-inputs: true
+

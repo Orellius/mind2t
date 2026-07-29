@@ -146,7 +146,15 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         if let image = session.poll() ?? session.lastImage {
             view.contentLayer.contents = image
         }
+        applyBackground(of: session)
         window.makeFirstResponder(view)
+    }
+
+    /// The margin around the grid wears the terminal's own background, so a future
+    /// theme colors it without any app-side change.
+    private func applyBackground(of session: Session) {
+        guard let background = session.background else { return }
+        view.layer?.backgroundColor = background
     }
 
     private func refreshSidebar() {
@@ -160,6 +168,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         guard let session = activeSession else { return }
         if let image = session.poll() {
             view.contentLayer.contents = image
+            applyBackground(of: session)
         }
         if !windowSized && session.cellWidth != 0 {
             windowSized = true

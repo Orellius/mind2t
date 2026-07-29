@@ -34,21 +34,26 @@ final class TerminalView: NSView {
     /// clipboard bytes: the host owns the encoding (fenceposts or newline folding, by the
     /// child's mode 2004), and building either sequence here would duplicate the
     /// oracle-measured transform.
+    ///
+    /// Matched on the PHYSICAL key, never on characters: under a Hebrew input source the
+    /// V key reports "ו" in charactersIgnoringModifiers, and a character match silently
+    /// disables every chord for exactly the user this terminal is built for (found live,
+    /// 2026-07-29). ANSI key codes are layout-independent.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let commandOnly: NSEvent.ModifierFlags = [.command]
         guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == commandOnly
         else { return super.performKeyEquivalent(with: event) }
-        switch event.charactersIgnoringModifiers {
-        case "v":
+        switch event.keyCode {
+        case 9:  // kVK_ANSI_V
             if let text = NSPasteboard.general.string(forType: .string) {
                 onPaste?(Array(text.utf8))
                 return true
             }
             return false
-        case "t":
+        case 17:  // kVK_ANSI_T
             onNewSession?()
             return true
-        case "w":
+        case 13:  // kVK_ANSI_W
             onCloseSession?()
             return true
         default:

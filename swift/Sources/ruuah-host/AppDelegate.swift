@@ -74,6 +74,16 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         view.contentLayer.contentsScale = window.backingScaleFactor
         view.contentLayer.magnificationFilter = .nearest
 
+        // Standalone CALayers implicitly ANIMATE property changes -- a 0.25s crossfade on
+        // every `contents` swap. At a 60 Hz blit the overlapping fades read as typing at
+        // five frames a second (found live, 2026-07-29). A terminal frame is a hard cut.
+        let hardCut: [String: CAAction] = [
+            "contents": NSNull(), "backgroundColor": NSNull(),
+            "bounds": NSNull(), "position": NSNull(),
+        ]
+        view.contentLayer.actions = hardCut
+        view.layer?.actions = hardCut
+
         view.onKeyBytes = { [weak self] bytes in self?.activeSession?.send(bytes) }
         view.onPaste = { [weak self] bytes in self?.activeSession?.paste(bytes) }
         view.onNewSession = { [weak self] in self?.newSession() }

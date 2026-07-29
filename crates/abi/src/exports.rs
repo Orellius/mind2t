@@ -12,6 +12,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::ffi::c_void;
 use std::hash::{Hash, Hasher};
+use std::sync::{Mutex, MutexGuard};
 
 use ruuah_vt_snapshot::{Color, Row, Screen, Snapshot, Underline, Wide};
 
@@ -19,48 +20,72 @@ use ruuah_vt_abi_types::*;
 
 /// The boxed terminal a `GhosttyTerminal` handle points at.
 ///
-/// The cached view is what keeps the ref-based readers cheap AND sound: `grid_ref` is the only
-/// entry point that takes the terminal by pointer and can refresh it, so every reader reached
-/// through a `GhosttyGridRef` needs nothing but shared access.
+/// The read entry points must be reads in the Rust-model sense, because they are reads in the
+/// oracle: `ghostty_terminal_get` mutates nothing there (`terminal.zig`, `getTyped`), so a C
+/// consumer may read from two threads at once and may hold a grid ref across an interleaved
+/// read -- refs die on the next *update*, not the next read (`grid_ref.h`). The audit's
+/// findings 14 and 22 were this port conjuring `&mut Terminal` on those paths to fill the
+/// cached view lazily. The cache is therefore interior-mutable: readers share the terminal
+/// and take the lock only for the duration of one call, and only the mutating entry points
+/// (`vt_write`, `resize`) take the terminal exclusively. `tests/soundness.rs` holds both
+/// Miri controls, each seen to fail against the `&mut` version.
 pub struct Terminal {
     core: ruuah_vt_core::Terminal,
-    view: Option<Snapshot>,
+    view: Mutex<Option<Snapshot>>,
 }
 
 impl Terminal {
-    fn refresh(&mut self) {
-        if self.view.is_none() {
-            self.view = Some(self.core.snapshot());
+    /// Locks the cache, filling it if a write emptied it. The two ref-minting entry points
+    /// (`terminal_get`, `grid_ref`) use this.
+    fn view_filled(&self) -> MutexGuard<'_, Option<Snapshot>> {
+        let mut guard = self.view.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.is_none() {
+            *guard = Some(self.core.snapshot());
         }
+        guard
     }
 
+    /// Locks the cache without filling it. A reader reached through a grid ref sees the view
+    /// that existed when its ref was minted -- or nothing, if a write killed the ref, which
+    /// is exactly when the contract says the ref is dead.
+    fn view_current(&self) -> MutexGuard<'_, Option<Snapshot>> {
+        self.view.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Writers hold the terminal exclusively, so this bypasses the lock.
     fn invalidate(&mut self) {
-        self.view = None;
+        *self.view.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
     }
+}
 
-    fn view(&self) -> Option<&Snapshot> {
-        self.view.as_ref()
-    }
-
-    /// The row at an absolute SCREEN-space index: history first, then the active area.
-    fn row_at(&self, y: u16) -> Option<&Row> {
-        let view = self.view()?;
-        let y = usize::from(y);
-        if y < view.history.len() {
-            view.history.get(y)
-        } else {
-            view.grid.get(y - view.history.len())
-        }
+/// The row at an absolute SCREEN-space index: history first, then the active area.
+fn row_at(view: &Snapshot, y: u16) -> Option<&Row> {
+    let y = usize::from(y);
+    if y < view.history.len() {
+        view.history.get(y)
+    } else {
+        view.grid.get(y - view.history.len())
     }
 }
 
 /// # Safety
-/// `handle` must be a pointer returned by `ghostty_terminal_new` and not yet freed.
+/// `handle` must be a pointer returned by `ghostty_terminal_new` and not yet freed, with no
+/// concurrent call in flight -- this is the exclusive access the mutating entry points need.
 unsafe fn terminal<'a>(handle: GhosttyTerminal) -> Option<&'a mut Terminal> {
     if handle.is_null() {
         return None;
     }
     Some(unsafe { &mut *handle.cast::<Terminal>() })
+}
+
+/// # Safety
+/// `handle` must be a pointer returned by `ghostty_terminal_new` and not yet freed. Shared:
+/// the read entry points use this, so concurrent readers and live grid refs stay legal.
+unsafe fn terminal_shared<'a>(handle: GhosttyTerminal) -> Option<&'a Terminal> {
+    if handle.is_null() {
+        return None;
+    }
+    Some(unsafe { &*handle.cast::<Terminal>() })
 }
 
 /// # Safety
@@ -95,7 +120,7 @@ pub unsafe extern "C" fn ghostty_terminal_new(
             options.rows,
             options.max_scrollback,
         ),
-        view: None,
+        view: Mutex::new(None),
     });
     unsafe { *out = Box::into_raw(terminal).cast::<c_void>() };
     GHOSTTY_SUCCESS
@@ -152,14 +177,14 @@ pub unsafe extern "C" fn ghostty_terminal_get(
     data: GhosttyTerminalData,
     out: *mut c_void,
 ) -> GhosttyResult {
-    let Some(terminal) = (unsafe { terminal(handle) }) else {
+    let Some(terminal) = (unsafe { terminal_shared(handle) }) else {
         return GHOSTTY_INVALID_VALUE;
     };
     if out.is_null() {
         return GHOSTTY_INVALID_VALUE;
     }
-    terminal.refresh();
-    let Some(view) = terminal.view() else {
+    let guard = terminal.view_filled();
+    let Some(view) = guard.as_ref() else {
         return GHOSTTY_INVALID_VALUE;
     };
 
@@ -200,14 +225,14 @@ pub unsafe extern "C" fn ghostty_terminal_grid_ref(
     point: GhosttyPoint,
     out: *mut GhosttyGridRef,
 ) -> GhosttyResult {
-    let Some(terminal) = (unsafe { terminal(handle) }) else {
+    let Some(terminal) = (unsafe { terminal_shared(handle) }) else {
         return GHOSTTY_INVALID_VALUE;
     };
     if out.is_null() {
         return GHOSTTY_INVALID_VALUE;
     }
-    terminal.refresh();
-    let Some(view) = terminal.view() else {
+    let guard = terminal.view_filled();
+    let Some(view) = guard.as_ref() else {
         return GHOSTTY_INVALID_VALUE;
     };
 
@@ -231,7 +256,9 @@ pub unsafe extern "C" fn ghostty_terminal_grid_ref(
         let size = (*out).size;
         *out = GhosttyGridRef {
             size,
-            node: (terminal as *mut Terminal).cast::<c_void>(),
+            // The raw handle, not a reference-derived pointer: the ref must keep the
+            // handle's full provenance so it survives later shared reads (finding 22).
+            node: handle,
             x: coordinate.x,
             y: absolute as u16,
         };
@@ -250,8 +277,10 @@ pub unsafe extern "C" fn ghostty_grid_ref_cell(
     if out.is_null() {
         return GHOSTTY_INVALID_VALUE;
     }
-    let Some(cell) = terminal
-        .row_at(grid_ref.y)
+    let guard = terminal.view_current();
+    let Some(cell) = guard
+        .as_ref()
+        .and_then(|view| row_at(view, grid_ref.y))
         .and_then(|row| row.cells.get(usize::from(grid_ref.x)))
     else {
         return GHOSTTY_INVALID_VALUE;
@@ -271,7 +300,8 @@ pub unsafe extern "C" fn ghostty_grid_ref_row(
     if out.is_null() {
         return GHOSTTY_INVALID_VALUE;
     }
-    let Some(row) = terminal.row_at(grid_ref.y) else {
+    let guard = terminal.view_current();
+    let Some(row) = guard.as_ref().and_then(|view| row_at(view, grid_ref.y)) else {
         return GHOSTTY_INVALID_VALUE;
     };
     unsafe { *out = pack_row(row) };
@@ -291,8 +321,10 @@ pub unsafe extern "C" fn ghostty_grid_ref_graphemes(
     if out_len.is_null() {
         return GHOSTTY_INVALID_VALUE;
     }
-    let Some(cell) = terminal
-        .row_at(grid_ref.y)
+    let guard = terminal.view_current();
+    let Some(cell) = guard
+        .as_ref()
+        .and_then(|view| row_at(view, grid_ref.y))
         .and_then(|row| row.cells.get(usize::from(grid_ref.x)))
     else {
         return GHOSTTY_INVALID_VALUE;
@@ -321,8 +353,10 @@ pub unsafe extern "C" fn ghostty_grid_ref_style(
     if out.is_null() {
         return GHOSTTY_INVALID_VALUE;
     }
-    let Some(cell) = terminal
-        .row_at(grid_ref.y)
+    let guard = terminal.view_current();
+    let Some(cell) = guard
+        .as_ref()
+        .and_then(|view| row_at(view, grid_ref.y))
         .and_then(|row| row.cells.get(usize::from(grid_ref.x)))
     else {
         return GHOSTTY_INVALID_VALUE;

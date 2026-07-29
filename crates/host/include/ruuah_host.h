@@ -78,7 +78,20 @@ typedef struct {
    * it follows program backgrounds (vim themes, BCE clears) and future palette themes
    * alike. Never pixel-sampled: the corner pixel is the caret when the cursor is home. */
   uint8_t background[4];
+  /* One byte per grid row (row_count of them): the row's shell-semantic class per
+   * OSC 133 -- RUUAH_ROW_OUTPUT, RUUAH_ROW_PROMPT or RUUAH_ROW_INPUT. What a block
+   * gutter draws from. Borrowed with the same lifetime as pixels: valid until the next
+   * poll, resize, or free. NULL before the first drawn frame. */
+  const uint8_t *row_semantics;
+  uint32_t row_count;
 } RuuahHostFrame;
+
+/* RuuahHostFrame.row_semantics values, and ruuah_host_row_text filters. */
+#define RUUAH_ROW_OUTPUT 0
+#define RUUAH_ROW_PROMPT 1
+#define RUUAH_ROW_INPUT 2
+/* ruuah_host_row_text only: take every cell regardless of its OSC 133 mark. */
+#define RUUAH_TEXT_ALL 255
 
 /* Spawns the command on a fresh pty and starts the parse/publish pipeline.
  *
@@ -109,6 +122,18 @@ RuuahHostResult ruuah_host_paste(RuuahHost *host, const uint8_t *bytes, size_t l
 /* Resizes the pty, the terminal and the render target. Refused (with no state change)
  * when the geometry exceeds the frame channel's capacity or either dimension is 0. */
 RuuahHostResult ruuah_host_resize(RuuahHost *host, uint16_t cols, uint16_t rows);
+
+/* Copies one grid row's text as UTF-8 into out, trailing blanks trimmed. `semantic`
+ * filters by the per-cell OSC 133 mark: RUUAH_TEXT_ALL takes every cell, the RUUAH_ROW_*
+ * values take only cells wearing that mark -- the input filter on a prompt row is what
+ * makes "copy command" return `ls -la` out of `$ ls -la`. Reads the last POLLED frame --
+ * poll at least once first. Writes at most cap bytes (no NUL added; a truncated copy
+ * backs off to a UTF-8 boundary), stores the row's full byte length in *len, and fails
+ * with INVALID_VALUE when the row is out of range or nothing has been polled. Size cap
+ * from a first call's *len, then call again. The copy-command / copy-output seam for
+ * blocks: group rows with row_semantics, then read the text. */
+RuuahHostResult ruuah_host_row_text(
+    RuuahHost *host, uint16_t row, uint8_t semantic, uint8_t *out, size_t cap, size_t *len);
 
 /* Tears down the child, the pump thread and the renderer. NULL is a no-op. Any pixels
  * pointer previously returned for this handle is dead after this call. */

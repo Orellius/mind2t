@@ -161,6 +161,15 @@ impl State {
             return;
         }
 
+        // DA2 (CSI > c) and DA3 (CSI = c): the private markers arrive as intermediates.
+        if action == 'c' {
+            match intermediates.first() {
+                Some(&b'>') => return self.device_attributes_secondary(),
+                Some(&b'=') => return self.device_attributes_tertiary(),
+                _ => {}
+            }
+        }
+
         // Other intermediates carry sequences this slice does not implement. Acting on them
         // half-way would be worse than not acting.
         if !intermediates.is_empty() {
@@ -170,6 +179,13 @@ impl State {
         let blank = self.blank();
         match action {
             'm' => sgr::apply(&mut self.pen, params),
+
+            'n' => self.device_status_report(arg_or_zero(params, 0)),
+            'c' => {
+                if arg_or_zero(params, 0) == 0 {
+                    self.device_attributes_primary();
+                }
+            }
 
             'A' => self.cursor_up(arg(params, 0)),
             'B' => self.cursor_down(arg(params, 0)),
@@ -292,6 +308,16 @@ fn arg(params: &Params, index: usize) -> u16 {
         .and_then(|values| values.first().copied())
         .filter(|value| *value != 0)
         .unwrap_or(1)
+}
+
+/// Like `arg`, but a missing parameter is 0, not 1 -- DSR and DA distinguish the two
+/// (`CSI c` and `CSI 0 c` are both primary DA; `CSI n` is nothing).
+fn arg_or_zero(params: &Params, index: usize) -> u16 {
+    params
+        .iter()
+        .nth(index)
+        .and_then(|values| values.first().copied())
+        .unwrap_or(0)
 }
 
 /// Reads a CSI parameter whose default is 0 rather than 1, as the erase and TBC selectors are.

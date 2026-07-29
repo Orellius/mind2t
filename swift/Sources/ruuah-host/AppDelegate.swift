@@ -1,4 +1,4 @@
-// The app: a sidebar of sessions beside one terminal surface.
+// The app: a top tab strip over one terminal surface.
 //
 // Each session is its own RuuahHost -- pty, pump thread, renderer -- and the app blits
 // whichever is active. Background sessions keep running and are polled at a low rate
@@ -10,7 +10,7 @@ import CRuuahHost
 import UserNotifications
 
 final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
-    SessionListDelegate
+    TabBarDelegate
 {
     private let command: String?
     private let autoDirection: Bool
@@ -27,8 +27,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     private let configError: String?
     private var window: NSWindow!
     private var view: TerminalView!
-    private var sidebar: SessionListController!
-    private var split: NSSplitView!
+    private var tabBar: TabBarView!
     private var timer: Timer?
 
     private var sessions: [Session] = []
@@ -61,36 +60,34 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         view = TerminalView(frame: .zero)
         view.wantsLayer = true
 
-        sidebar = SessionListController()
-        sidebar.delegate = self
+        tabBar = TabBarView(frame: .zero)
+        tabBar.delegate = self
 
-        split = NSSplitView()
-        split.isVertical = true
-        split.dividerStyle = .thin
-        split.addArrangedSubview(sidebar.view)
-        split.addArrangedSubview(view)
-        // The sidebar keeps its width; the terminal pane absorbs every resize.
-        sidebar.view.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        split.setHoldingPriority(.init(260), forSubviewAt: 0)
-        split.setHoldingPriority(.init(250), forSubviewAt: 1)
-
+        // The bar owns the title-bar band: transparent titlebar + full-size content,
+        // traffic lights inline at its left -- the reference's chrome.
         window = NSWindow(
-            contentRect: NSRect(
-                x: 0, y: 0, width: 800 + SessionListController.width, height: 480),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            contentRect: NSRect(x: 0, y: 0, width: 1120, height: 700),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.title =
             (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String)
             ?? "ruuah-vt host"
-        window.contentView = split
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+
+        let content = NSView(frame: window.contentLayoutRect)
+        content.autoresizesSubviews = true
+        content.addSubview(tabBar)
+        content.addSubview(view)
+        window.contentView = content
+        layoutChrome()
         window.delegate = self
         window.center()
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(view)
         NSApp.activate(ignoringOtherApps: true)
-        split.setPosition(SessionListController.width, ofDividerAt: 0)
 
         // Native resolution: the renderer rasterizes at backing scale, the layer declares
         // it, and one buffer pixel is one device pixel.
@@ -148,6 +145,20 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             [weak self] _ in
             self?.pollTick()
         }
+    }
+
+    /// The bar band on top, the terminal pane below it -- recomputed on every window
+    /// resize (manual frames; two views do not earn Auto Layout here).
+    private func layoutChrome() {
+        guard let content = window.contentView else { return }
+        let bounds = content.bounds
+        tabBar.frame = NSRect(
+            x: 0, y: bounds.height - TabBarView.height,
+            width: bounds.width, height: TabBarView.height)
+        tabBar.autoresizingMask = [.width, .minYMargin]
+        view.frame = NSRect(
+            x: 0, y: 0, width: bounds.width, height: bounds.height - TabBarView.height)
+        view.autoresizingMask = [.width, .height]
     }
 
     private var activeSession: Session? {
@@ -210,7 +221,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     }
 
     private func refreshSidebar() {
-        sidebar.update(titles: sessions.map(\.title), activeIndex: activeIndex)
+        tabBar.update(titles: sessions.map(\.title), activeIndex: activeIndex)
     }
 
     // MARK: polling
@@ -319,16 +330,15 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         let scale = window.backingScaleFactor
         let size = NSSize(
             width: CGFloat(session.cellWidth * Int(session.cols)) / scale
-                + TerminalView.padding * 2 + SessionListController.width
-                + split.dividerThickness,
+                + TerminalView.padding * 2,
             height: CGFloat(session.cellHeight * Int(session.rows)) / scale
-                + TerminalView.padding * 2
+                + TerminalView.padding * 2 + TabBarView.height
         )
         window.setContentSize(size)
         window.contentResizeIncrements = NSSize(
             width: CGFloat(session.cellWidth) / scale,
             height: CGFloat(session.cellHeight) / scale)
-        split.setPosition(SessionListController.width, ofDividerAt: 0)
+        layoutChrome()
     }
 
     /// cmd+click: resolve the cell under the point and open its OSC 8 link, if any.
@@ -466,15 +476,15 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     // MARK: SessionListDelegate
 
-    func sessionListDidSelect(index: Int) {
+    func tabBarDidSelect(index: Int) {
         activate(index: index)
     }
 
-    func sessionListDidRequestNew() {
+    func tabBarDidRequestNew() {
         newSession()
     }
 
-    func sessionListDidRequestClose(index: Int) {
+    func tabBarDidRequestClose(index: Int) {
         closeSession(index: index)
     }
 }

@@ -114,6 +114,19 @@ final class Session {
         }
     }
 
+    /// Live zoom: pty resize plus renderer rebuild at the new size, one C call. Cell
+    /// metrics re-derive from the next frame -- the C surface reports pixels, and the
+    /// old numbers describe a dead font.
+    func setFontSize(_ fontSize: Float, cols: UInt16, rows: UInt16) {
+        guard let host else { return }
+        if ruuah_host_set_font_size(host, fontSize, cols, rows) == RUUAH_HOST_SUCCESS {
+            self.cols = cols
+            self.rows = rows
+            cellWidth = 0
+            cellHeight = 0
+        }
+    }
+
     func close() {
         if let host {
             ruuah_host_free(host)

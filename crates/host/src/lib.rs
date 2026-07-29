@@ -441,6 +441,71 @@ pub unsafe extern "C" fn ruuah_host_resize(
     RuuahHostResult::Success
 }
 
+/// Reports the pixel cell size a renderer would use at `font_size`, without a host.
+///
+/// The GUI's zoom flow needs this BEFORE any renderer at the new size exists: the window
+/// keeps its pixel size, so the new grid is window-pixels over these metrics, and only
+/// then is `ruuah_host_set_font_size` called with both. Pure query; builds a font stack
+/// and throws it away.
+///
+/// # Safety
+/// `out_width` and `out_height` must be non-NULL and valid for the duration of the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_host_cell_metrics(
+    font_size: f32,
+    out_width: *mut u32,
+    out_height: *mut u32,
+) -> RuuahHostResult {
+    if out_width.is_null() || out_height.is_null() || !(font_size > 0.0) {
+        return RuuahHostResult::InvalidValue;
+    }
+    let Ok(fonts) = FontStack::system(font_size) else {
+        return RuuahHostResult::RenderFailed;
+    };
+    let metrics = fonts.metrics();
+    unsafe {
+        out_width.write(metrics.width);
+        out_height.write(metrics.height);
+    }
+    RuuahHostResult::Success
+}
+
+/// Changes the font size live: resizes the pty to the new grid and rebuilds the render
+/// target at the new metrics, in one call.
+///
+/// A font change IS a geometry change -- the window keeps its pixel size, so the grid
+/// that fits it moves with the cell metrics. The caller derives `cols`/`rows` from
+/// `ruuah_host_cell_metrics` and passes both here; splitting this into set-size plus
+/// `ruuah_host_resize` would rebuild the renderer twice and race a poll in between.
+///
+/// # Safety
+/// `host` must be a live handle from `ruuah_host_spawn`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_host_set_font_size(
+    host: *mut RuuahHost,
+    font_size: f32,
+    cols: u16,
+    rows: u16,
+) -> RuuahHostResult {
+    if host.is_null() || cols == 0 || rows == 0 || !(font_size > 0.0) {
+        return RuuahHostResult::InvalidValue;
+    }
+    let host = unsafe { &mut *host };
+    if host.host.resize(Geometry { cols, rows }).is_err() {
+        return RuuahHostResult::ResizeRefused;
+    }
+    let Some(mut renderer) = build_renderer(font_size, cols, rows) else {
+        return RuuahHostResult::RenderFailed;
+    };
+    renderer.set_palette(host.palette.clone());
+    host.renderer = renderer;
+    host.font_size = font_size;
+    host.drawn_generation = 0;
+    host.pixels = Vec::new();
+    host.row_semantics = Vec::new();
+    RuuahHostResult::Success
+}
+
 /// Copies one grid row's text as UTF-8 into `out`, trailing blanks trimmed.
 ///
 /// `semantic` filters by the per-cell OSC 133 mark: `RUUAH_TEXT_ALL` (255) takes every

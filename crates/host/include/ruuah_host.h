@@ -123,6 +123,18 @@ RuuahHostResult ruuah_host_paste(RuuahHost *host, const uint8_t *bytes, size_t l
  * when the geometry exceeds the frame channel's capacity or either dimension is 0. */
 RuuahHostResult ruuah_host_resize(RuuahHost *host, uint16_t cols, uint16_t rows);
 
+/* Reports the pixel cell size a renderer would use at font_size, without a host. The
+ * zoom flow needs this BEFORE the new renderer exists: window pixels stay fixed, the
+ * grid that fits them moves with the metrics. Pure query. */
+RuuahHostResult ruuah_host_cell_metrics(
+    float font_size, uint32_t *out_width, uint32_t *out_height);
+
+/* Changes the font size live: pty resize to the new grid plus render-target rebuild at
+ * the new metrics, in one call. Derive cols/rows from ruuah_host_cell_metrics and the
+ * window's fixed pixel size. Refusal rules match ruuah_host_resize. */
+RuuahHostResult ruuah_host_set_font_size(
+    RuuahHost *host, float font_size, uint16_t cols, uint16_t rows);
+
 /* Copies one grid row's text as UTF-8 into out, trailing blanks trimmed. `semantic`
  * filters by the per-cell OSC 133 mark: RUUAH_TEXT_ALL takes every cell, the RUUAH_ROW_*
  * values take only cells wearing that mark -- the input filter on a prompt row is what

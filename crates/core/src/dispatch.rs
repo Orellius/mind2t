@@ -8,10 +8,20 @@
 //!   (`sgr.rs`). It routes; it does not implement.
 //! Test strategy: measured against libghostty-vt by the differential corpus.
 
+use ruuah_vt_snapshot::Semantic;
 use vte::Params;
 
 use crate::sgr;
 use crate::terminal::{Active, State};
+
+/// Which legacy alternate-screen mode is driving the switch. They differ around the edges
+/// -- what erases, what saves, and what happens when the screen does not actually change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AltMode {
+    M47,
+    M1047,
+    M1049,
+}
 
 impl State {
     fn set_mode(&mut self, mode: u16, on: bool) {
@@ -23,7 +33,8 @@ impl State {
             }
             7 => self.autowrap = on,
             25 => self.cursor_visible = on,
-            47 | 1047 => self.switch_screen(on, false),
+            47 => self.switch_screen(on, AltMode::M47),
+            1047 => self.switch_screen(on, AltMode::M1047),
             1048 => {
                 if on {
                     self.save_cursor();
@@ -31,68 +42,103 @@ impl State {
                     self.restore_cursor();
                 }
             }
-            1049 => self.switch_screen(on, true),
+            1049 => self.switch_screen(on, AltMode::M1049),
             _ => {}
         }
     }
 
-    /// Enters or leaves the alternate screen. `save` is the 1049 behaviour: the cursor is
-    /// preserved across the switch and the alternate buffer is cleared on entry.
-    fn switch_screen(&mut self, to_alternate: bool, save: bool) {
-        let target = if to_alternate {
+    /// Enters or leaves the alternate screen, with the per-mode behaviours around the
+    /// switch. Mirrors `switchScreenMode` (`Terminal.zig:4348`), which itself transcribes
+    /// xterm's `charproc.c` -- finding 26 measured all three edges this used to get wrong:
+    /// 47/1047 never erase on entry and copy the cursor in BOTH directions; a second
+    /// `1049h` still saves and still clears, because both sit outside the screen-changed
+    /// guard; and `1049l` on the primary is still a DECRC.
+    fn switch_screen(&mut self, enabled: bool, mode: AltMode) {
+        // Pre-switch behaviours.
+        match mode {
+            AltMode::M47 => {}
+            // Disabling 1047 while on the alternate screen clears it first.
+            AltMode::M1047 => {
+                if !enabled && self.active == Active::Alternate {
+                    self.erase_display_complete();
+                }
+            }
+            // 1049 saves unconditionally on enable, even when already on the alternate.
+            AltMode::M1049 => {
+                if enabled {
+                    self.save_cursor();
+                }
+            }
+        }
+
+        let target = if enabled {
             Active::Alternate
         } else {
             Active::Primary
         };
-        if self.active == target {
-            return;
-        }
+        let changed = self.active != target;
 
         // Upstream keeps ONE `Terminal.scrolling_region` for both screens and
-        // `switchScreenMode` never touches it (`Terminal.zig:67`). Storage here is
-        // per-`Screen`, so the region is carried across the switch instead -- observably
-        // identical, because only the active screen's region is ever read or written, and
-        // both screens always share one geometry.
+        // `switchScreenMode` never touches it (`Terminal.zig:67`); storage here is
+        // per-`Screen`, so the region is carried across (finding 19). The OSC 133 state
+        // travels with the cursor (finding 20): it rides every cursor copy below, and a
+        // 1049 exit restores instead of copying, which is exactly where it must not leak.
         let (scroll_top, scroll_bottom) = (self.screen().scroll_top, self.screen().scroll_bottom);
-        // The OSC 133 state travels WITH the cursor: 47/1047 copy the cursor in both
-        // directions and 1049 copies it on entry (`Terminal.zig:4383`), but a 1049 exit is
-        // `restoreCursor`, which restores everything EXCEPT `semantic_content` -- so a `C`
-        // issued on the alternate screen must not leak back onto the primary (finding 20).
+        let old_cursor = (self.screen().x, self.screen().y);
         let semantic = (
             self.screen().semantic_content,
             self.screen().semantic_clear_at_eol,
         );
-        let carry_semantic = to_alternate || !save;
 
-        if to_alternate {
-            if save {
-                self.save_cursor();
+        if changed {
+            self.active = target;
+            self.mark_full_damage();
+            self.screen_mut().scroll_top = scroll_top;
+            self.screen_mut().scroll_bottom = scroll_bottom;
+            self.last_print = None;
+        }
+
+        // Post-switch behaviours.
+        match mode {
+            // The cursor is copied whenever the screen actually changed, regardless of
+            // direction (`Terminal.zig:4382`).
+            AltMode::M47 | AltMode::M1047 => {
+                if changed {
+                    self.copy_cursor_across(old_cursor, semantic);
+                }
             }
-            // Where the cursor sits before the switch, read while the primary is still
-            // active. Clearing the alternate buffer does NOT home the cursor: measured
-            // against libghostty-vt 2026-07-28, entering the alternate screen leaves it
-            // exactly where it was. `reset` homes it, so it is put back afterwards.
-            let (x, y) = (self.screen().x, self.screen().y);
-            self.active = Active::Alternate;
-            self.mark_full_damage();
-            let blank = self.blank();
-            self.alternate.reset(blank);
-            self.alternate.x = x.min(self.alternate.cols().saturating_sub(1));
-            self.alternate.y = y.min(self.alternate.rows().saturating_sub(1));
-        } else {
-            self.active = Active::Primary;
-            self.mark_full_damage();
-            if save {
-                self.restore_cursor();
+            AltMode::M1049 => {
+                if enabled {
+                    // Outside the changed guard: a second 1049h re-clears.
+                    self.erase_display_complete();
+                    if changed {
+                        self.copy_cursor_across(old_cursor, semantic);
+                    }
+                } else {
+                    // Outside the changed guard: 1049l on the primary is still a DECRC.
+                    self.restore_cursor();
+                }
             }
         }
-        self.screen_mut().scroll_top = scroll_top;
-        self.screen_mut().scroll_bottom = scroll_bottom;
-        if carry_semantic {
-            self.screen_mut().semantic_content = semantic.0;
-            self.screen_mut().semantic_clear_at_eol = semantic.1;
-        }
+    }
+
+    /// The cursor half of upstream's `cursorCopy`: position and the OSC 133 state that
+    /// rides on the cursor. The pen needs no copying because it is terminal-global here.
+    fn copy_cursor_across(&mut self, (x, y): (u16, u16), semantic: (Semantic, bool)) {
+        let screen = self.screen_mut();
+        screen.move_to(x, y);
+        screen.semantic_content = semantic.0;
+        screen.semantic_clear_at_eol = semantic.1;
         self.last_print = None;
+    }
+
+    /// ED 2 as the mode switches perform it: the same complete erase `CSI 2 J` runs,
+    /// including the scroll-into-scrollback at a prompt and the whole-frame damage.
+    fn erase_display_complete(&mut self) {
+        let blank = self.blank();
+        self.mark_full_damage();
+        self.scroll_clear_at_prompt(blank);
+        self.screen_mut().erase_in_display(2, blank);
     }
 
     pub(crate) fn csi(&mut self, params: &Params, intermediates: &[u8], ignore: bool, action: char) {

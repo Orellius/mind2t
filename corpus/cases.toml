@@ -1071,33 +1071,30 @@ note = "saveCursor stores the origin mode (Terminal.zig:1856) and restoreCursor 
 
 [[case]]
 name = "alt-screen-47-neither-clears-nor-strands-the-cursor"
-expect = "diff"
-diff_paths = ["cell[0,0].text", "cell[0,1].text", "cell[0,2].text", "cell[0,3].text", "cursor.x"]
+expect = "match"
 cols = 10
 rows = 3
 after = "Z"
 bytes = "\u001B[?47habc\u001B[?47l\u001B[?47h"
-note = "switchScreenMode never erases for 47, and 47 and 1047 copy the cursor in both directions (Terminal.zig:4349-4360). This core resets the alternate buffer on every entry and never copies the cursor back out."
+note = "switchScreenMode never erases for 47, and 47 and 1047 copy the cursor in both directions (Terminal.zig:4349-4360). Promoted by the S2 wave: the mode split is explicit now and 47 neither clears nor loses the cursor."
 
 [[case]]
 name = "alt-screen-1049h-twice-clears-again"
-expect = "diff"
-diff_paths = ["cell[0,0].text", "cell[0,1].text", "cell[0,2].text"]
+expect = "match"
 cols = 10
 rows = 3
 after = "Z"
 bytes = "\u001B[?1049habc\u001B[?1049h"
-note = "1049 saves the cursor unconditionally on enable and its eraseDisplay sits outside the screen-changed guard (Terminal.zig:4372-4395), so a second 1049h re-clears. switch_screen here returns early when already on the target."
+note = "1049 saves the cursor unconditionally on enable and its eraseDisplay sits outside the screen-changed guard (Terminal.zig:4372-4395), so a second 1049h re-clears. Promoted by the S2 wave: both now sit outside the changed guard here too."
 
 [[case]]
 name = "alt-screen-1049l-on-the-primary-still-restores"
-expect = "diff"
-diff_paths = ["cell[0,0].text", "cell[1,4].text", "cursor.x", "cursor.y"]
+expect = "match"
 cols = 10
 rows = 3
 after = "X"
 bytes = "\u001B[2;5H\u001B7\u001B[1;1H\u001B[?1049l"
-note = "The disable arm calls restoreCursor whether or not the screen changed (Terminal.zig:4395), so 1049l on the primary is a DECRC. Also the corpus's first 1049l."
+note = "The disable arm calls restoreCursor whether or not the screen changed (Terminal.zig:4395), so 1049l on the primary is a DECRC. Also the corpus's first 1049l. Promoted by the S2 wave: the restore is unconditional here too."
 
 [[case]]
 name = "scroll-region-is-shared-with-the-alternate-screen"

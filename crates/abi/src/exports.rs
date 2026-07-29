@@ -40,7 +40,10 @@ impl Terminal {
     fn view_filled(&self) -> MutexGuard<'_, Option<Snapshot>> {
         let mut guard = self.view.lock().unwrap_or_else(|e| e.into_inner());
         if guard.is_none() {
-            *guard = Some(self.core.snapshot());
+            let mut view = self.core.snapshot();
+            // The damage rides along so `ROW_DATA_DIRTY` can answer (finding 28).
+            view.damage = self.core.damage();
+            *guard = Some(view);
         }
         guard
     }
@@ -297,12 +300,21 @@ pub unsafe extern "C" fn ghostty_grid_ref_row(
         return GHOSTTY_INVALID_VALUE;
     };
     let guard = terminal.view_current();
-    let Some(row) = guard.as_ref().and_then(|view| row_at(view, grid_ref.y)) else {
+    let Some(view) = guard.as_ref() else {
         return GHOSTTY_INVALID_VALUE;
     };
+    let Some(row) = row_at(view, grid_ref.y) else {
+        return GHOSTTY_INVALID_VALUE;
+    };
+    // Damage is tracked for the active area; a history row is settled and never dirty.
+    let dirty = usize::from(grid_ref.y)
+        .checked_sub(view.history.len())
+        .and_then(|y| view.damage.as_ref().and_then(|damage| damage.rows.get(y)))
+        .copied()
+        .unwrap_or(false);
     // NULL out validates the ref without reading it, matching the oracle (finding 23).
     if !out.is_null() {
-        unsafe { *out = pack_row(row) };
+        unsafe { *out = pack_row(row, dirty) };
     }
     GHOSTTY_SUCCESS
 }
@@ -429,6 +441,10 @@ pub unsafe extern "C" fn ghostty_row_get(
                     ((row >> 4) & 0b11) as GhosttyRowSemanticPrompt
             }
             GHOSTTY_ROW_DATA_HYPERLINK => *out.cast::<bool>() = false,
+            // What a renderer owes since damage was last cleared -- upstream reads the
+            // row's own dirty bit (row.zig:122); here it rides bit 6 of the packed row
+            // (finding 28).
+            GHOSTTY_ROW_DATA_DIRTY => *out.cast::<bool>() = (row >> 6) & 1 != 0,
             _ => return GHOSTTY_INVALID_VALUE,
         }
     }
@@ -496,7 +512,7 @@ fn style_id(style: &ruuah_vt_snapshot::Style) -> u16 {
     folded + 1
 }
 
-fn pack_row(row: &Row) -> GhosttyRow {
+fn pack_row(row: &Row, dirty: bool) -> GhosttyRow {
     let semantic = match row.semantic_prompt {
         ruuah_vt_snapshot::RowSemantic::None => 0u64,
         ruuah_vt_snapshot::RowSemantic::Prompt => 1,
@@ -509,6 +525,7 @@ fn pack_row(row: &Row) -> GhosttyRow {
         | (u64::from(grapheme) << 2)
         | (u64::from(styled) << 3)
         | (semantic << 4)
+        | (u64::from(dirty) << 6)
 }
 
 /// A pure out-param's `.size` is written from the type, never read from the caller -- the

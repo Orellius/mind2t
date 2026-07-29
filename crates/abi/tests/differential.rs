@@ -756,3 +756,43 @@ fn a_null_out_param_validates_here_too() {
         ghostty_terminal_free(handle);
     }
 }
+
+/// `ROW_DATA_DIRTY` is part of the published surface (`row.zig`, `dirty = 8`, read straight
+/// off the row) and the core tracks per-row dirty internally -- but the ABI refused the
+/// query with INVALID_VALUE, so a renderer built on it could never know what to repaint
+/// (finding 28). Both directions: a written row reports dirty, an untouched one does not.
+#[test]
+fn row_data_dirty_reports_the_rows_a_renderer_owes() {
+    unsafe {
+        let mut handle: GhosttyTerminal = std::ptr::null_mut();
+        assert_eq!(
+            ghostty_terminal_new(
+                std::ptr::null(),
+                &mut handle,
+                GhosttyTerminalOptions {
+                    cols: 8,
+                    rows: 3,
+                    max_scrollback: 0,
+                },
+            ),
+            GHOSTTY_SUCCESS
+        );
+        let bytes = b"hi";
+        ghostty_terminal_vt_write(handle, bytes.as_ptr(), bytes.len());
+
+        let dirty_of = |y: u32| -> bool {
+            let row_ref = grid_ref(handle, GHOSTTY_POINT_TAG_ACTIVE, 0, y);
+            let mut raw: GhosttyRow = 0;
+            assert_eq!(ghostty_grid_ref_row(&row_ref, &mut raw), GHOSTTY_SUCCESS);
+            row_get::<bool>(raw, GHOSTTY_ROW_DATA_DIRTY)
+        };
+
+        assert!(dirty_of(0), "the row that was written must report dirty");
+        assert!(
+            !dirty_of(2),
+            "a row nothing touched must not report dirty, or every frame repaints everything"
+        );
+
+        ghostty_terminal_free(handle);
+    }
+}

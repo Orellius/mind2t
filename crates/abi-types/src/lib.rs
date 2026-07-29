@@ -76,6 +76,7 @@ pub const GHOSTTY_ROW_DATA_GRAPHEME: GhosttyRowData = 3;
 pub const GHOSTTY_ROW_DATA_STYLED: GhosttyRowData = 4;
 pub const GHOSTTY_ROW_DATA_HYPERLINK: GhosttyRowData = 5;
 pub const GHOSTTY_ROW_DATA_SEMANTIC_PROMPT: GhosttyRowData = 6;
+pub const GHOSTTY_ROW_DATA_DIRTY: GhosttyRowData = 8;
 
 pub type GhosttyCellContentTag = i32;
 pub const GHOSTTY_CELL_CONTENT_CODEPOINT: GhosttyCellContentTag = 0;

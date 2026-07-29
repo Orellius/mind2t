@@ -330,27 +330,39 @@ impl Screen {
     pub fn scroll_down(&mut self, count: u16, blank: Cell) {
         self.grid
             .scroll_down(self.scroll_top, self.scroll_bottom, count, blank);
-        let (top, bottom) = (self.scroll_top, self.scroll_bottom);
-        for placement in &mut self.placements {
-            if placement.row >= top && placement.row <= bottom {
-                placement.row = placement.row.saturating_add(count).min(bottom);
-            }
-        }
-    }
-
-    /// Rows moved up by `count` inside the region; a placement whose anchor left the
-    /// region top is gone -- the content it decorated is gone too.
-    fn scroll_placements_up(&mut self, count: u16) {
-        let (top, bottom) = (self.scroll_top, self.scroll_bottom);
+        let (top, bottom) = (self.scroll_top as i16, self.scroll_bottom as i16);
+        // Content pushed past the region bottom is DESTROYED (not scrolled away), so a
+        // placement following it goes with it.
         self.placements.retain_mut(|placement| {
             if placement.row < top || placement.row > bottom {
                 return true;
             }
-            if placement.row < top.saturating_add(count) {
-                return false;
+            placement.row += count as i16;
+            placement.row <= bottom
+        });
+    }
+
+    /// Rows moved up by `count` inside the region. With the region at the screen top
+    /// the content flows toward scrollback, so an anchor may go NEGATIVE and keep
+    /// drawing its visible remainder (the renderer clips); far enough gone, it drops.
+    /// A region starting lower destroys what leaves it, and placements with it.
+    fn scroll_placements_up(&mut self, count: u16) {
+        let (top, bottom) = (self.scroll_top as i16, self.scroll_bottom as i16);
+        const GONE: i16 = -256;
+        self.placements.retain_mut(|placement| {
+            if top == 0 && placement.row < 0 {
+                placement.row -= count as i16;
+                return placement.row > GONE;
             }
-            placement.row -= count;
-            true
+            if placement.row < top || placement.row > bottom {
+                return true;
+            }
+            placement.row -= count as i16;
+            if top == 0 {
+                placement.row > GONE
+            } else {
+                placement.row >= top
+            }
         });
     }
 

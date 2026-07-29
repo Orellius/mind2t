@@ -42,6 +42,24 @@ pub fn apply(screen: &mut Screen, cols: u16, rows: u16, mode: Mode) {
         input.push(screen.grid.extract_row(y));
     }
 
+    // Placement anchors ride the same transform as the cursors, one Anchor per
+    // placement. A negative row (image partially scrolled off the top) indexes into
+    // the history rows just drained -- the same coordinate space, naturally. Anchors
+    // pointing before the drained sequence are unmappable and their placements drop.
+    let placements = std::mem::take(&mut screen.placements);
+    let mut extra_anchors: Vec<Anchor> = Vec::new();
+    let mut extra_sources: Vec<crate::graphics::Placement> = Vec::new();
+    for placement in placements {
+        let absolute = history_len as isize + isize::from(placement.row);
+        if absolute >= 0 && (absolute as usize) < input.len() {
+            extra_anchors.push(Anchor {
+                row: absolute as usize,
+                x: placement.col,
+            });
+            extra_sources.push(placement);
+        }
+    }
+
     let reflowed = resize_rows(
         &input,
         old_cols,
@@ -54,6 +72,7 @@ pub fn apply(screen: &mut Screen, cols: u16, rows: u16, mode: Mode) {
             row: history_len + usize::from(saved.y),
             x: saved.x,
         }),
+        &extra_anchors,
         mode,
     );
 
@@ -88,6 +107,23 @@ pub fn apply(screen: &mut Screen, cols: u16, rows: u16, mode: Mode) {
             pending_wrap: false,
         },
     });
+
+    // Mapped placements come back in the reflowed row space; the active area starts
+    // at `overflow`, so anything above it lands at a negative row and keeps drawing
+    // its clipped remainder, exactly as a scroll would have left it.
+    for (source, mapped) in extra_sources.into_iter().zip(reflowed.extras) {
+        let Some(anchor) = mapped else { continue };
+        let row = anchor.row as isize - overflow as isize;
+        if row > -256 && row < rows as isize {
+            screen.placements.push(crate::graphics::Placement {
+                image: source.image,
+                col: anchor.x,
+                row: row as i16,
+                cols: source.cols,
+                rows: source.rows,
+            });
+        }
+    }
 
     screen.reset_scroll_region();
 }

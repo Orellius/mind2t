@@ -83,7 +83,17 @@ var command: String?
 if let index = arguments.firstIndex(of: "--command"), index + 1 < arguments.count {
     command = arguments[index + 1]
 }
-let autoDirection = arguments.contains("--auto-direction")
+
+// When the binary runs from an assembled .app (scripts/build-app.sh), the bundle carries
+// the RUUAH splash and the app is Hebrew-first: auto base direction unless --ltr. The
+// bare CLI binary has no such resource and keeps the flag-driven defaults unchanged.
+let bundledBanner = Bundle.main.path(forResource: "banner", ofType: "sh")
+if command == nil, let bundledBanner {
+    command = "sh '\(bundledBanner)'"
+}
+let autoDirection =
+    arguments.contains("--auto-direction")
+    || (bundledBanner != nil && !arguments.contains("--ltr"))
 
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)

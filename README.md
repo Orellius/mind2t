@@ -19,8 +19,10 @@ if you can prove you match it, so the project is built the other way round from 
 Every slice since is measured against the real library rather than against an opinion of what
 terminals do.
 
-The consumer is **RUUAH**, a Ghostty fork whose Swift app links `libghostty-vt` today. If
-ruuah-vt wins, RUUAH swaps one link flag.
+The consumer is the repo's own **minimal Swift host** (`swift/`, slice 8) -- not RUUAH as it
+stands: measured 2026-07-28, RUUAH's Swift app calls 99 `ghostty_*` symbols and none of them
+is a VT-core symbol, so "swap one link flag" was never true of it. What is true, and now
+tested, is that something built against the published ABI consumes this library from Swift.
 
 ## The one architectural rule
 
@@ -48,10 +50,20 @@ possible at all. Ghostty enforces the same split physically between `src/termina
 | 7 | GPU backend (wgpu compute), byte-identical to the CPU reference | `v0.7.0` |
 | - | S1 audit wave: 7 defects, each control seen to fail first | `v0.7.1` |
 | - | S2-S4 audit wave: findings 8-31, Miri added as the UB oracle | `v0.7.2` |
+| 8 | The embedder surface (`ruuah_host_*`) and a minimal Swift host: vim in a real window | `v0.8.0` |
 
-**271 tests green.** Corpus: 125 cases, 114 match / 11 diff, 125/125 met expectation.
+**276 tests green.** Corpus: 125 cases, 114 match / 11 diff, 125/125 met expectation.
 Every remaining diff case pins its exact difference paths, so it can go red by being
 differently wrong.
+
+Slice 8 put eyes on all of it: a SwiftPM executable links `libruuah-vt-host.a` -- five
+`ruuah_host_*` calls wrapping the pty -> core -> frame -> GPU pipeline, in one archive with
+the 13 `ghostty_*` exports -- and blits polled frames into an AppKit window at backing
+resolution. Its first vim frame also found a real slice 7 defect: one compute pass per
+operation deadlocks Metal's 64-command-buffer pool on any frame bigger than the pool, which
+no earlier test was large enough to reach.
+
+![vim in the minimal Swift host](docs/images/slice-8-vim-window.png)
 
 Hebrew is now correct end to end: reordered by the Unicode algorithm and pointed by the font.
 
@@ -80,12 +92,17 @@ proof that the harness can still tell things apart - a corpus where nothing ever
 cannot demonstrate that it detects disagreement. When a behaviour gets implemented, its case
 *fails*, and gets promoted to `match`. A harness that cannot be wrong is not evidence.
 
-**2. Extend the harness before the slice. Seven for seven.** Every single slice has had a blind
+**2. Extend the harness before the slice. Eight for eight.** Every single slice has had a blind
 spot that would have reported success for a wrong implementation, and each was found by asking
 "can the harness even see this?" *before* writing code. Twice in slice 5 the blind spot was
 total: nothing could observe a concurrency bug, and later, nothing could observe a pixel. The
 bidi suite kept the streak going - it caught a real bug on its first run, a fast path that
-skipped the algorithm for plain text without accounting for the base direction.
+skipped the algorithm for plain text without accounting for the base direction. Slice 8's
+blind spot was the C boundary itself: every pixel test stopped at a Rust API, so a
+`ruuah_host_*` surface returning a black buffer would have failed nothing. Its harness
+byte-compares pixels polled through C against a reference built with the same `Publisher`
+the pump uses -- and promptly caught the Metal pool deadlock the moment a frame was
+window-sized.
 
 **3. Prove the harness can fail.** Both slice 5 harnesses ship a deliberately broken control
 alongside the real one. `read_into_unsynchronized_for_testing` reads frames with the seqlock

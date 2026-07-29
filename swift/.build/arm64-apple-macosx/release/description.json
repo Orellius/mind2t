@@ -1,0 +1,254 @@
+{
+  "builtTestProducts" : [
+
+  ],
+  "copyCommands" : {
+
+  },
+  "explicitTargetDependencyImportCheckingMode" : {
+    "none" : {
+
+    }
+  },
+  "generatedSourceTargetSet" : [
+
+  ],
+  "pluginDescriptions" : [
+
+  ],
+  "swiftCommands" : {
+    "C.ruuah-host-arm64-apple-macosx-release.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/sources",
+      "importPath" : "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/ruuah-host/Window.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/ruuah-host/main.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/sources"
+        }
+      ],
+      "isLibrary" : false,
+      "moduleName" : "ruuah_host",
+      "moduleOutputPath" : "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/Modules/ruuah_host.swiftmodule",
+      "objects" : [
+        "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/Window.swift.o",
+        "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/main.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx13.0",
+        "-whole-module-optimization",
+        "-num-threads",
+        "16",
+        "-serialize-diagnostics",
+        "-O",
+        "-j16",
+        "-DSWIFT_PACKAGE",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-Xcc",
+        "-fmodule-map-file=/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/CRuuahHost/module.modulemap",
+        "-module-cache-path",
+        "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ModuleCache",
+        "-parseable-output",
+        "-Xfrontend",
+        "-entry-point-function-name",
+        "-Xfrontend",
+        "ruuah_host_main",
+        "-swift-version",
+        "5",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "swift"
+      ],
+      "outputFileMapPath" : "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/Window.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/main.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/Modules/ruuah_host.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/ruuah-host/Window.swift",
+        "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/ruuah-host/main.swift"
+      ],
+      "tempsPath" : "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build",
+      "wholeModuleOptimization" : true
+    }
+  },
+  "swiftFrontendCommands" : {
+
+  },
+  "swiftTargetScanArgs" : {
+    "ruuah_host" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "ruuah_host",
+      "-package-name",
+      "swift",
+      "-c",
+      "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/ruuah-host/Window.swift",
+      "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/ruuah-host/main.swift",
+      "-I",
+      "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/Modules",
+      "-target",
+      "arm64-apple-macosx13.0",
+      "-whole-module-optimization",
+      "-num-threads",
+      "16",
+      "-serialize-diagnostics",
+      "-O",
+      "-j16",
+      "-DSWIFT_PACKAGE",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-Xcc",
+      "-fmodule-map-file=/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/CRuuahHost/module.modulemap",
+      "-module-cache-path",
+      "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ModuleCache",
+      "-parseable-output",
+      "-Xfrontend",
+      "-entry-point-function-name",
+      "-Xfrontend",
+      "ruuah_host_main",
+      "-swift-version",
+      "5",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "swift",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ]
+  },
+  "targetDependencyMap" : {
+    "ruuah_host" : [
+      "CRuuahHost"
+    ]
+  },
+  "testDiscoveryCommands" : {
+
+  },
+  "testEntryPointCommands" : {
+
+  },
+  "traitConfiguration" : {
+    "default" : {
+
+    }
+  },
+  "writeCommands" : {
+    "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah-host.product/Objects.LinkFileList" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<link-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/Window.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/main.swift.o"
+        }
+      ],
+      "outputFilePath" : "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah-host.product/Objects.LinkFileList"
+    },
+    "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/ruuah-host/Window.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/ruuah-host/main.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/sources"
+    },
+    "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt" : {
+      "alwaysOutOfDate" : true,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<swift-get-version>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+        }
+      ],
+      "outputFilePath" : "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt"
+    }
+  }
+}

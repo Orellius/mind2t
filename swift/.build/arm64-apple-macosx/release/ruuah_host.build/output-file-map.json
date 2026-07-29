@@ -1,0 +1,19 @@
+{
+  "": {
+    "dependencies": "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/ruuah_host.d",
+    "object": "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/ruuah_host.o",
+    "swift-dependencies": "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/primary.swiftdeps"
+  },
+  "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/ruuah-host/Window.swift": {
+    "object": "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/Window.swift.o",
+    "swiftmodule": "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/Window~partial.swiftmodule",
+    "swift-dependencies": "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/Window.swiftdeps",
+    "diagnostics": "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/Window.dia"
+  },
+  "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/Sources/ruuah-host/main.swift": {
+    "object": "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/main.swift.o",
+    "swiftmodule": "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/main~partial.swiftmodule",
+    "swift-dependencies": "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/main.swiftdeps",
+    "diagnostics": "/Users/orelohayon/Desktop/Studio/tools/ruuah-vt/swift/.build/arm64-apple-macosx/release/ruuah_host.build/main.dia"
+  }
+}

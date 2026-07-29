@@ -1,0 +1,279 @@
+//! Slice 8's harness: can anything see a pixel cross the C boundary?
+//!
+//! The tenth blind spot in a row. Every earlier harness stops at a Rust API: vim.rs proves
+//! the pty -> frame -> renderer chain, backend.rs proves CPU == GPU, differential.rs proves
+//! the `ghostty_*` readout -- and a `ruuah_host_*` surface that returned a black buffer, or
+//! never polled, or drew with the wrong font size, would fail none of them.
+//!
+//! The oracle: spawn a child through the C surface whose output is a known byte sequence,
+//! and byte-compare the polled RGBA against a reference renderer fed the identical bytes
+//! through the Rust API. The reference publishes with the same `Publisher` the pump uses
+//! (equality by construction, not by reimplementation) and draws on the CPU backend, so the
+//! comparison also re-asserts CPU == GPU through the C boundary.
+//!
+//! Sensitivity control (Phase 2, when poll can draw at all): a host whose draw skips a row
+//! must fail the same comparison.
+
+use std::ffi::CString;
+use std::ptr;
+use std::time::{Duration, Instant};
+
+use ruuah_vt_core::Terminal;
+use ruuah_vt_frame::{Frame, Publisher, channel};
+use ruuah_vt_host::{
+    DEFAULT_FONT_SIZE, RuuahHost, RuuahHostFrame, RuuahHostOptions, RuuahHostResult,
+    ruuah_host_free, ruuah_host_poll, ruuah_host_poll_skipping_row_for_testing, ruuah_host_send,
+    ruuah_host_spawn,
+};
+use ruuah_vt_render::{FontStack, Renderer};
+
+const COLS: u16 = 80;
+const ROWS: u16 = 24;
+const PATIENCE: Duration = Duration::from_secs(10);
+
+/// What the child's printf produces on the wire: the pty's ONLCR turns `\n` into `\r\n`.
+const WIRE: &[u8] = b"RUUAH-VT-HOST\r\n";
+
+/// The pixels a correct host must produce for WIRE, rendered through the Rust API.
+fn reference_pixels() -> (Vec<u8>, u32, u32) {
+    let mut terminal = Terminal::new(COLS, ROWS);
+    terminal.write(WIRE);
+
+    let (writer, reader) = channel(COLS, ROWS);
+    let mut publisher = Publisher::new(writer);
+    publisher.publish(&mut terminal).expect("publish reference");
+
+    let mut frame = Frame::new();
+    reader.read_into(&mut frame);
+    assert!(frame.is_valid(), "single-threaded read cannot tear");
+
+    let fonts = FontStack::system(DEFAULT_FONT_SIZE).expect("system fonts");
+    let mut renderer = Renderer::new(fonts, COLS, ROWS);
+    renderer.draw_all(&frame);
+    let width = renderer.canvas().width();
+    let height = renderer.canvas().height();
+    (renderer.pixels(), width, height)
+}
+
+/// First index at which the buffers differ, for a failure message that locates the pixel.
+fn first_difference(a: &[u8], b: &[u8]) -> Option<usize> {
+    a.iter().zip(b).position(|(x, y)| x != y)
+}
+
+#[test]
+fn host_pixels_match_a_reference_renderer_fed_the_same_bytes() {
+    let (want, want_width, want_height) = reference_pixels();
+
+    let command = CString::new("printf 'RUUAH-VT-HOST\\n'").expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    let result = unsafe { ruuah_host_spawn(&options, &mut host) };
+    assert_eq!(
+        result,
+        RuuahHostResult::Success,
+        "spawn through the C surface failed: {result:?}"
+    );
+
+    let mut last: Option<RuuahHostFrame> = None;
+    let deadline = Instant::now() + PATIENCE;
+    while Instant::now() < deadline {
+        let mut polled = RuuahHostFrame {
+            pixels: ptr::null(),
+            width: 0,
+            height: 0,
+            generation: 0,
+            drew: false,
+            child_exited: false,
+        };
+        let result = unsafe { ruuah_host_poll(host, &mut polled) };
+        assert_eq!(result, RuuahHostResult::Success, "poll failed: {result:?}");
+
+        if !polled.pixels.is_null() {
+            assert_eq!((polled.width, polled.height), (want_width, want_height));
+            let len = polled.width as usize * polled.height as usize * 4;
+            let got = unsafe { std::slice::from_raw_parts(polled.pixels, len) };
+            if got == want.as_slice() {
+                unsafe { ruuah_host_free(host) };
+                return;
+            }
+            last = Some(polled);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let verdict = match last {
+        Some(frame) => {
+            let len = frame.width as usize * frame.height as usize * 4;
+            let got = unsafe { std::slice::from_raw_parts(frame.pixels, len) };
+            match first_difference(got, &want) {
+                Some(index) => {
+                    let pixel = index / 4;
+                    format!(
+                        "last frame (generation {}) differs from the reference at byte {index} \
+                         (pixel x={} y={})",
+                        frame.generation,
+                        pixel % frame.width as usize,
+                        pixel / frame.width as usize,
+                    )
+                }
+                None => "buffers differ only in length".to_string(),
+            }
+        }
+        None => "no poll ever returned pixels".to_string(),
+    };
+    unsafe { ruuah_host_free(host) };
+    panic!("no polled frame matched the reference within {PATIENCE:?}: {verdict}");
+}
+
+/// The failure contract from the first stub onward: a refused spawn NULLs the out-param
+/// (the same rule finding 5 pinned on `ghostty_terminal_new`).
+#[test]
+fn a_refused_spawn_nulls_the_out_param() {
+    let options = RuuahHostOptions {
+        cols: 0,
+        rows: ROWS,
+        font_size: 0.0,
+        command: ptr::null(),
+    };
+    let mut host: *mut RuuahHost = ptr::dangling_mut();
+    let result = unsafe { ruuah_host_spawn(&options, &mut host) };
+    assert_eq!(result, RuuahHostResult::InvalidValue);
+    assert!(
+        host.is_null(),
+        "a failed spawn must not leave *out dangling"
+    );
+}
+
+/// The sensitivity control: a host whose draw skips the text row must fail the comparison
+/// the passing test relies on -- and fail it inside the skipped row, not by accident.
+#[test]
+fn a_host_that_skips_a_row_is_caught() {
+    let (want, _, _) = reference_pixels();
+
+    let command = CString::new("printf 'RUUAH-VT-HOST\\n'").expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    let result = unsafe { ruuah_host_spawn(&options, &mut host) };
+    assert_eq!(result, RuuahHostResult::Success);
+
+    // Drain until the child is gone and its final frame has been drawn, exactly as the
+    // passing test would -- except every draw declines row 0, where the text lives.
+    let deadline = Instant::now() + PATIENCE;
+    let mut frame = None;
+    while Instant::now() < deadline {
+        let mut polled = RuuahHostFrame {
+            pixels: ptr::null(),
+            width: 0,
+            height: 0,
+            generation: 0,
+            drew: false,
+            child_exited: false,
+        };
+        let result = unsafe { ruuah_host_poll_skipping_row_for_testing(host, 0, &mut polled) };
+        assert_eq!(result, RuuahHostResult::Success);
+        if polled.child_exited && !polled.pixels.is_null() && !polled.drew {
+            frame = Some(polled);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let frame = frame.expect("the broken host never settled on a frame");
+
+    let len = frame.width as usize * frame.height as usize * 4;
+    let got = unsafe { std::slice::from_raw_parts(frame.pixels, len) };
+    let index = first_difference(got, &want)
+        .expect("a renderer that skipped the text row still matched the reference");
+    let row_band = frame.width as usize
+        * FontStack::system(DEFAULT_FONT_SIZE)
+            .expect("system fonts")
+            .metrics()
+            .height as usize
+        * 4;
+    assert!(
+        index < row_band,
+        "the difference must lie in the skipped row's band, not at byte {index}"
+    );
+    unsafe { ruuah_host_free(host) };
+}
+
+/// The send seam, end to end: bytes written through the C surface reach the child's input,
+/// and what the pty and the child do with them comes back as pixels. `cat` makes the round
+/// trip observable -- the line discipline echoes the typed line, then cat repeats it.
+#[test]
+fn send_reaches_the_child_and_comes_back_as_pixels() {
+    // The tty echoes "ping\r" as "ping\r\n"; cat then writes "ping\n", which ONLCR turns
+    // into "ping\r\n" again. Two identical rows.
+    let reference = {
+        let mut terminal = Terminal::new(COLS, ROWS);
+        terminal.write(b"ping\r\nping\r\n");
+        let (writer, reader) = channel(COLS, ROWS);
+        let mut publisher = Publisher::new(writer);
+        publisher.publish(&mut terminal).expect("publish reference");
+        let mut frame = Frame::new();
+        reader.read_into(&mut frame);
+        let fonts = FontStack::system(DEFAULT_FONT_SIZE).expect("system fonts");
+        let mut renderer = Renderer::new(fonts, COLS, ROWS);
+        renderer.draw_all(&frame);
+        renderer.pixels()
+    };
+
+    let command = CString::new("cat").expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+
+    let line = b"ping\r";
+    assert_eq!(
+        unsafe { ruuah_host_send(host, line.as_ptr(), line.len()) },
+        RuuahHostResult::Success
+    );
+
+    let deadline = Instant::now() + PATIENCE;
+    let mut matched = false;
+    while Instant::now() < deadline {
+        let mut polled = RuuahHostFrame {
+            pixels: ptr::null(),
+            width: 0,
+            height: 0,
+            generation: 0,
+            drew: false,
+            child_exited: false,
+        };
+        assert_eq!(
+            unsafe { ruuah_host_poll(host, &mut polled) },
+            RuuahHostResult::Success
+        );
+        if !polled.pixels.is_null() {
+            let len = polled.width as usize * polled.height as usize * 4;
+            let got = unsafe { std::slice::from_raw_parts(polled.pixels, len) };
+            if got == reference.as_slice() {
+                matched = true;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    unsafe { ruuah_host_free(host) };
+    assert!(
+        matched,
+        "the sent line never came back as the expected pixels"
+    );
+}

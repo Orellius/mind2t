@@ -683,3 +683,76 @@ fn a_pure_out_params_size_is_overwritten_here_too() {
         ghostty_terminal_free(handle);
     }
 }
+
+/// A NULL out-param on the four grid-ref readers is the validate-only idiom, not an error.
+/// The headers say "(may be NULL)" and the oracle skips the write and returns success --
+/// measured in `ruuah-vt-ghostty`'s `a_null_out_param_validates_instead_of_failing`. This
+/// port refused all four with INVALID_VALUE, making every valid position look invalid to a
+/// consumer probing with NULL (finding 23). A ref that does NOT resolve must still fail, so
+/// NULL-out is not simply always-success.
+#[test]
+fn a_null_out_param_validates_here_too() {
+    unsafe {
+        let mut handle: GhosttyTerminal = std::ptr::null_mut();
+        assert_eq!(
+            ghostty_terminal_new(
+                std::ptr::null(),
+                &mut handle,
+                GhosttyTerminalOptions {
+                    cols: 8,
+                    rows: 2,
+                    max_scrollback: 0,
+                },
+            ),
+            GHOSTTY_SUCCESS
+        );
+        let bytes = b"hi";
+        ghostty_terminal_vt_write(handle, bytes.as_ptr(), bytes.len());
+
+        let point = |x: u16, y: u32| GhosttyPoint {
+            tag: GHOSTTY_POINT_TAG_ACTIVE,
+            value: GhosttyPointValue {
+                coordinate: GhosttyPointCoordinate { x, y },
+            },
+        };
+
+        assert_eq!(
+            ghostty_terminal_grid_ref(handle, point(0, 0), std::ptr::null_mut()),
+            GHOSTTY_SUCCESS,
+            "grid_ref with NULL out must validate the point, not refuse it"
+        );
+        assert_eq!(
+            ghostty_terminal_grid_ref(handle, point(99, 99), std::ptr::null_mut()),
+            GHOSTTY_INVALID_VALUE,
+            "NULL out must not turn an out-of-bounds point into success"
+        );
+
+        let cell_ref = grid_ref(handle, GHOSTTY_POINT_TAG_ACTIVE, 0, 0);
+        assert_eq!(
+            ghostty_grid_ref_cell(&cell_ref, std::ptr::null_mut()),
+            GHOSTTY_SUCCESS
+        );
+        assert_eq!(
+            ghostty_grid_ref_row(&cell_ref, std::ptr::null_mut()),
+            GHOSTTY_SUCCESS
+        );
+        assert_eq!(
+            ghostty_grid_ref_style(&cell_ref, std::ptr::null_mut()),
+            GHOSTTY_SUCCESS
+        );
+
+        let dead = GhosttyGridRef {
+            size: size_of::<GhosttyGridRef>(),
+            node: std::ptr::null_mut(),
+            x: 0,
+            y: 0,
+        };
+        assert_eq!(
+            ghostty_grid_ref_cell(&dead, std::ptr::null_mut()),
+            GHOSTTY_INVALID_VALUE,
+            "a dead ref stays an error even with NULL out"
+        );
+
+        ghostty_terminal_free(handle);
+    }
+}

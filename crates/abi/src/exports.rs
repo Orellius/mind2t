@@ -227,9 +227,6 @@ pub unsafe extern "C" fn ghostty_terminal_grid_ref(
     let Some(terminal) = (unsafe { terminal_shared(handle) }) else {
         return GHOSTTY_INVALID_VALUE;
     };
-    if out.is_null() {
-        return GHOSTTY_INVALID_VALUE;
-    }
     let guard = terminal.view_filled();
     let Some(view) = guard.as_ref() else {
         return GHOSTTY_INVALID_VALUE;
@@ -251,15 +248,19 @@ pub unsafe extern "C" fn ghostty_terminal_grid_ref(
         return GHOSTTY_INVALID_VALUE;
     }
 
-    unsafe {
-        *out = GhosttyGridRef {
-            size: size_of::<GhosttyGridRef>(),
-            // The raw handle, not a reference-derived pointer: the ref must keep the
-            // handle's full provenance so it survives later shared reads (finding 22).
-            node: handle,
-            x: coordinate.x,
-            y: absolute as u16,
-        };
+    // NULL out is the validate-only idiom, honoured after every check above -- the header
+    // says "(may be NULL)" and the oracle skips the write, never the validation (finding 23).
+    if !out.is_null() {
+        unsafe {
+            *out = GhosttyGridRef {
+                size: size_of::<GhosttyGridRef>(),
+                // The raw handle, not a reference-derived pointer: the ref must keep the
+                // handle's full provenance so it survives later shared reads (finding 22).
+                node: handle,
+                x: coordinate.x,
+                y: absolute as u16,
+            };
+        }
     }
     GHOSTTY_SUCCESS
 }
@@ -272,9 +273,6 @@ pub unsafe extern "C" fn ghostty_grid_ref_cell(
     let Some((terminal, grid_ref)) = (unsafe { resolve(grid_ref) }) else {
         return GHOSTTY_INVALID_VALUE;
     };
-    if out.is_null() {
-        return GHOSTTY_INVALID_VALUE;
-    }
     let guard = terminal.view_current();
     let Some(cell) = guard
         .as_ref()
@@ -283,7 +281,10 @@ pub unsafe extern "C" fn ghostty_grid_ref_cell(
     else {
         return GHOSTTY_INVALID_VALUE;
     };
-    unsafe { *out = pack_cell(cell) };
+    // NULL out validates the ref without reading it, matching the oracle (finding 23).
+    if !out.is_null() {
+        unsafe { *out = pack_cell(cell) };
+    }
     GHOSTTY_SUCCESS
 }
 
@@ -295,14 +296,14 @@ pub unsafe extern "C" fn ghostty_grid_ref_row(
     let Some((terminal, grid_ref)) = (unsafe { resolve(grid_ref) }) else {
         return GHOSTTY_INVALID_VALUE;
     };
-    if out.is_null() {
-        return GHOSTTY_INVALID_VALUE;
-    }
     let guard = terminal.view_current();
     let Some(row) = guard.as_ref().and_then(|view| row_at(view, grid_ref.y)) else {
         return GHOSTTY_INVALID_VALUE;
     };
-    unsafe { *out = pack_row(row) };
+    // NULL out validates the ref without reading it, matching the oracle (finding 23).
+    if !out.is_null() {
+        unsafe { *out = pack_row(row) };
+    }
     GHOSTTY_SUCCESS
 }
 
@@ -348,9 +349,6 @@ pub unsafe extern "C" fn ghostty_grid_ref_style(
     let Some((terminal, grid_ref)) = (unsafe { resolve(grid_ref) }) else {
         return GHOSTTY_INVALID_VALUE;
     };
-    if out.is_null() {
-        return GHOSTTY_INVALID_VALUE;
-    }
     let guard = terminal.view_current();
     let Some(cell) = guard
         .as_ref()
@@ -359,7 +357,10 @@ pub unsafe extern "C" fn ghostty_grid_ref_style(
     else {
         return GHOSTTY_INVALID_VALUE;
     };
-    unsafe { *out = pack_style(&cell.style) };
+    // NULL out validates the ref without reading it, matching the oracle (finding 23).
+    if !out.is_null() {
+        unsafe { *out = pack_style(&cell.style) };
+    }
     GHOSTTY_SUCCESS
 }
 

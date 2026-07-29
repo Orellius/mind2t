@@ -632,6 +632,7 @@ impl Perform for State {
 
     fn osc_dispatch(&mut self, params: &[&[u8]], _bell_terminated: bool) {
         match params.first().copied() {
+            Some(b"0") | Some(b"2") => self.osc_title(params),
             Some(b"8") => self.osc_hyperlink(params),
             Some(b"52") => self.osc_clipboard(params),
             Some(b"9") => self.osc_notify_9(params),

@@ -8,7 +8,20 @@ import AppKit
 import CRuuahHost
 
 final class Session {
-    let title: String
+    /// The spawn label; shown until the program sets a real title (OSC 0/2).
+    let spawnTitle: String
+    /// The live title, program-set. The tab strip reads this.
+    private(set) var liveTitle: String?
+    var title: String { liveTitle ?? spawnTitle }
+
+    /// Deterministic work state -- explicit signals ONLY (the operator's rule: no
+    /// idle guessing). OSC 9;4 progress is authoritative when a program emits it;
+    /// otherwise the per-CLI title classifier reads the markers the CLI itself
+    /// prints. `.done` means "was working, signal cleared, tab not yet looked at".
+    enum WorkState { case idle, working, error, done }
+    private(set) var workState: WorkState = .idle
+    /// Which classifier table applies -- the first word of the spawned command.
+    private let cli: String
     private(set) var host: OpaquePointer?
     private(set) var cols: UInt16
     private(set) var rows: UInt16
@@ -40,7 +53,45 @@ final class Session {
         self.host = host
         self.cols = cols
         self.rows = rows
-        self.title = title
+        self.spawnTitle = title
+        self.cli = (command ?? "").split(separator: " ").first.map(String.init) ?? "shell"
+    }
+
+    /// Explicit-signal classification, per CLI. Claude Code marks a busy tab title
+    /// with a leading spinner glyph; the table is small and honest -- a CLI with no
+    /// known marker simply never classifies, and OSC 9;4 still works for it.
+    private static let busyMarkers: [String: [String]] = [
+        "claude": ["✳", "✶", "✻", "✽"],
+    ]
+
+    private func classify(title: String) {
+        guard let markers = Session.busyMarkers[cli] else { return }
+        let busy = markers.contains { title.contains($0) }
+        switch (busy, workState) {
+        case (true, _): workState = .working
+        case (false, .working): workState = .done
+        default: break
+        }
+    }
+
+    func apply(progress state: UInt8) {
+        switch state {
+        case 0: workState = workState == .working ? .done : .idle
+        case 2: workState = .error
+        default: workState = .working
+        }
+    }
+
+    func applyTitle(_ text: String) {
+        liveTitle = text.isEmpty ? nil : text
+        classify(title: text)
+    }
+
+    /// The operator looked at the tab; a done/error badge is delivered.
+    func markSeen() {
+        if workState == .done || workState == .error {
+            workState = .idle
+        }
     }
 
     /// Polls once. Returns a fresh image when the host drew; `exited` flips when the
@@ -96,6 +147,8 @@ final class Session {
         case clipboard(String)
         case notify(title: String, body: String)
         case bell
+        case title(String)
+        case progress(state: UInt8)
     }
 
     /// Drains every pending host-facing event, oldest first. The C contract consumes an
@@ -129,6 +182,8 @@ final class Session {
                         title: parts.first.map(String.init) ?? "",
                         body: parts.count > 1 ? String(parts[1]) : ""))
             case 3: drained.append(.bell)
+            case 4: drained.append(.title(text))
+            case 5: drained.append(.progress(state: payload.first ?? 0))
             default: break
             }
         }

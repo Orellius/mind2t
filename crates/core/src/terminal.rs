@@ -246,13 +246,22 @@ impl State {
             if !self.autowrap {
                 return;
             }
+            // Through the ordinary cell path, not the erase blank: upstream's spacer head
+            // takes cursor.style_id and the cursor's semantic_content (Terminal.zig:1411
+            // into the write at 1565), so it is bold-and-red under a bold red pen and part
+            // of the input under OSC 133 (finding 27).
+            let pen = self.pen;
+            let semantic = self.screen().semantic_content;
+            let style_id = self.screen_mut().grid.intern_style(pen);
             let (x, y) = (self.screen().x, self.screen().y);
             let index = self.screen().grid.index(x, y);
             self.screen_mut().grid.write(
                 index,
                 Cell {
+                    codepoint: 0,
+                    style_id,
                     wide: Wide::SpacerHead,
-                    ..blank
+                    flags: CellFlags::with_semantic(semantic),
                 },
             );
             self.wrap(blank);

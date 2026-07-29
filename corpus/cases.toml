@@ -929,21 +929,19 @@ note = "semantic_content lives on Screen.cursor upstream. 1049-enter copies the 
 
 [[case]]
 name = "osc133-spacer-head-carries-the-cursor-semantic"
-expect = "diff"
-diff_paths = ["cell[0,3].semantic"]
+expect = "match"
 cols = 4
 rows = 3
 bytes = "\u001B]133;A\u0007$ \u001B]133;B\u0007a\u4E16"
-note = "A wide cell that cannot fit leaves a spacer head, and upstream writes it through the ordinary cell path (Terminal.zig:1411 into the write at 1565), so it takes the cursor's semantic_content. This core writes the erase blank, which is Semantic::Output."
+note = "A wide cell that cannot fit leaves a spacer head, and upstream writes it through the ordinary cell path (Terminal.zig:1411 into the write at 1565), so it takes the cursor's semantic_content. Promoted by the S2 wave: the head goes through the ordinary cell path now."
 
 [[case]]
 name = "spacer-head-carries-the-pen-not-the-erase-blank"
-expect = "diff"
-diff_paths = ["cell[0,3].style"]
+expect = "match"
 cols = 4
 rows = 2
 bytes = "\u001B[1;31mabc\u4E16"
-note = "The same write seen through style instead of semantics. Upstream's spacer head takes cursor.style_id, so bold and red; ours carries only the pen's background, because it reuses the erase blank. Upstream carries a TODO saying spacers should be background-only, which is the proof they are not today."
+note = "The same write seen through style instead of semantics. Upstream's spacer head takes cursor.style_id, so bold and red; ours carries only the pen's background, because it reuses the erase blank. Upstream carries a TODO saying spacers should be background-only, which is the proof they are not today. Promoted by the S2 wave alongside its semantic twin."
 
 [[case]]
 name = "ed2-at-a-prompt-scrolls-instead-of-clearing"

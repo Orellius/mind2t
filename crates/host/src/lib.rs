@@ -258,6 +258,17 @@ fn build_command(options: &RuuahHostOptions) -> Option<Command> {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
         let mut command = Command::new(shell);
         command.arg("-il");
+        // A Finder-launched app inherits `/` as its cwd, and the login shell then opens
+        // on the sealed read-only root -- which starship dresses in a padlock and the
+        // operator read as a permission block (seen live 2026-07-30). A terminal
+        // window means "a shell at home", so the default spawn says so; explicit
+        // commands (the branch below) keep the caller's cwd, which is what the test
+        // harness relies on.
+        if let Ok(home) = std::env::var("HOME") {
+            if std::path::Path::new(&home).is_dir() {
+                command.current_dir(home);
+            }
+        }
         command
     } else {
         let text = unsafe { CStr::from_ptr(options.command) }.to_str().ok()?;

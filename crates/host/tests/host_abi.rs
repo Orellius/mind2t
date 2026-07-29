@@ -893,3 +893,94 @@ fn a_hyperlink_is_readable_at_its_cell_through_the_c_surface() {
     );
     unsafe { ruuah_host_free(host) };
 }
+
+/// The event seam through the C boundary: OSC 52 lands as a clipboard event with its
+/// payload decoded, OSC 777 as a notification, BEL as a bell -- in order, exactly once,
+/// and a sizing call (cap too small) must NOT consume. The control is the empty queue
+/// answering kind 0 both before and after.
+#[test]
+fn host_events_cross_in_order_and_exactly_once() {
+    use ruuah_vt_host::ruuah_host_next_event;
+
+    let command = CString::new(
+        "printf '\\033]52;c;aGVsbG8=\\007\\033]777;notify;T;B\\007\\007'; sleep 8",
+    )
+    .expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+        config: ptr::null(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+
+    let next = |host| -> (u32, Vec<u8>) {
+        let (mut kind, mut len) = (0u32, 0usize);
+        assert_eq!(
+            unsafe { ruuah_host_next_event(host, &mut kind, ptr::null_mut(), 0, &mut len) },
+            RuuahHostResult::Success
+        );
+        if kind == 0 {
+            return (0, Vec::new());
+        }
+        if len == 0 {
+            // An empty payload fits cap 0, so the first call already consumed it.
+            return (kind, Vec::new());
+        }
+        let mut buffer = vec![0u8; len];
+        let mut fetched = 0u32;
+        assert_eq!(
+            unsafe {
+                ruuah_host_next_event(host, &mut fetched, buffer.as_mut_ptr(), len, &mut len)
+            },
+            RuuahHostResult::Success
+        );
+        assert_eq!(fetched, kind, "the sizing call must not have consumed it");
+        (kind, buffer)
+    };
+
+    let deadline = Instant::now() + PATIENCE;
+    let mut first = (0u32, Vec::new());
+    while Instant::now() < deadline {
+        first = next(host);
+        if first.0 != 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(first.0, 1, "clipboard first");
+    assert_eq!(first.1, b"hello", "base64 decoded before crossing");
+
+    let deadline = Instant::now() + PATIENCE;
+    let mut second = (0u32, Vec::new());
+    while Instant::now() < deadline {
+        second = next(host);
+        if second.0 != 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(second.0, 2, "notification second");
+    assert_eq!(second.1, b"T\nB");
+
+    let deadline = Instant::now() + PATIENCE;
+    let mut third = (0u32, Vec::new());
+    while Instant::now() < deadline {
+        third = next(host);
+        if third.0 != 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(third.0, 3, "bell third");
+
+    let (kind, _) = next(host);
+    assert_eq!(kind, 0, "drained: exactly once means nothing repeats");
+    unsafe { ruuah_host_free(host) };
+}

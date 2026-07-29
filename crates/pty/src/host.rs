@@ -17,6 +17,8 @@ use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 
@@ -26,6 +28,7 @@ use rustix::io::{Errno, FdFlags, fcntl_setfd};
 use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
 use rustix::termios::{Winsize, tcsetwinsize};
 use ruuah_vt_core::Terminal;
+use ruuah_vt_core::events::Event;
 use ruuah_vt_frame::{FrameReader, Publisher, channel};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,6 +120,10 @@ pub struct Host {
     pending: Arc<AtomicU64>,
     /// The frame channel's fixed geometry ceiling; `resize` refuses anything past it.
     capacity: Geometry,
+    /// Host-facing events the pump drained from the core (OSC 52, notifications, BEL).
+    /// A mutex, not the seqlock: events must arrive exactly once and in order, which a
+    /// lossy frame protocol cannot promise. The pump holds it for a push, microseconds.
+    events: Arc<Mutex<VecDeque<Event>>>,
 }
 
 /// Sets a pty's window size, which is what raises SIGWINCH in the child.
@@ -193,13 +200,15 @@ impl Host {
         let stop = Arc::new(AtomicBool::new(false));
         let pending = Arc::new(AtomicU64::new(0));
 
+        let events: Arc<Mutex<VecDeque<Event>>> = Arc::new(Mutex::new(VecDeque::new()));
         let pump = thread::Builder::new()
             .name("ruuah-vt-pty".to_string())
             .spawn({
                 let master = Arc::clone(&master);
                 let stop = Arc::clone(&stop);
                 let pending = Arc::clone(&pending);
-                move || pump(master, Publisher::new(writer), options, stop, pending)
+                let events = Arc::clone(&events);
+                move || pump(master, Publisher::new(writer), options, stop, pending, events)
             })
             .map_err(SpawnError::Child)?;
 
@@ -212,12 +221,20 @@ impl Host {
                 stop,
                 pending,
                 capacity: options.capacity,
+                events,
             },
             reader,
         ))
     }
 
     /// Sends input to the child, as a keyboard would.
+    /// Drains the events the pump has collected (OSC 52, notifications, BEL), oldest
+    /// first. Exactly-once: what this returns is gone from the queue.
+    pub fn take_events(&self) -> Vec<Event> {
+        let mut queue = self.events.lock().expect("event queue");
+        queue.drain(..).collect()
+    }
+
     pub fn send(&self, bytes: &[u8]) -> Result<(), Errno> {
         let mut written = 0;
         while written < bytes.len() {
@@ -293,6 +310,7 @@ fn pump(
     options: Options,
     stop: Arc<AtomicBool>,
     pending: Arc<AtomicU64>,
+    events: Arc<Mutex<VecDeque<Event>>>,
 ) {
     let mut terminal =
         Terminal::with_scrollback(options.size.cols, options.size.rows, options.scrollback);
@@ -328,6 +346,17 @@ fn pump(
             Ok(0) | Err(Errno::IO) => break,
             Ok(read) => {
                 terminal.write(&buffer[..read]);
+                let drained = terminal.take_events();
+                if !drained.is_empty() {
+                    // Bounded by the core's own cap; a reader that never drains cannot
+                    // grow this past one core-queue worth per lock.
+                    let mut queue = events.lock().expect("event queue");
+                    queue.extend(drained);
+                    let excess = queue.len().saturating_sub(256);
+                    if excess > 0 {
+                        queue.drain(..excess);
+                    }
+                }
                 publisher.publish(&mut terminal).expect(GATED);
             }
             Err(Errno::INTR) | Err(Errno::AGAIN) => continue,

@@ -166,7 +166,7 @@ impl Atlas {
 /// aspect. Bilinear in 16.16 fixed point: deterministic across machines and backends,
 /// which is what lets the CPU/GPU differential test stay byte-exact -- both receive the
 /// SAME pre-scaled bytes.
-fn fit_to_height(
+pub(crate) fn fit_to_height(
     width: u32,
     height: u32,
     rgba: &[u8],
@@ -199,7 +199,7 @@ fn fit_to_height(
 }
 
 /// A 16.16 coordinate into (integer part clamped to the source, 8-bit fraction).
-fn split(coordinate: u64, limit: u32) -> (u32, u32) {
+pub(crate) fn split(coordinate: u64, limit: u32) -> (u32, u32) {
     let integer = ((coordinate >> 16) as u32).min(limit - 1);
     let fraction = ((coordinate >> 8) & 0xff) as u32;
     (integer, fraction)
@@ -207,7 +207,7 @@ fn split(coordinate: u64, limit: u32) -> (u32, u32) {
 
 /// One channel of a 2x2 bilinear tap, integer arithmetic only.
 #[allow(clippy::too_many_arguments)]
-fn bilinear(rgba: &[u8], width: u32, height: u32, x0: u32, y0: u32, fx: u32, fy: u32, channel: usize) -> u8 {
+pub(crate) fn bilinear(rgba: &[u8], width: u32, height: u32, x0: u32, y0: u32, fx: u32, fy: u32, channel: usize) -> u8 {
     let x1 = (x0 + 1).min(width - 1);
     let y1 = (y0 + 1).min(height - 1);
     let at = |x: u32, y: u32| u32::from(rgba[((y * width + x) * 4) as usize + channel]);

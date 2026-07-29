@@ -29,6 +29,8 @@ use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
 use rustix::termios::{Winsize, tcsetwinsize};
 use ruuah_vt_core::Terminal;
 use ruuah_vt_core::events::Event;
+use ruuah_vt_core::graphics::ImageOp;
+use std::collections::HashMap;
 use ruuah_vt_frame::{FrameReader, Publisher, channel};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +126,10 @@ pub struct Host {
     /// A mutex, not the seqlock: events must arrive exactly once and in order, which a
     /// lossy frame protocol cannot promise. The pump holds it for a push, microseconds.
     events: Arc<Mutex<VecDeque<Event>>>,
+    /// The kitty image store the renderer reads: (width, height, pixels), keyed by
+    /// image id. Pixels land here ONCE and are Arc'd so a 60Hz poll clones pointers,
+    /// never megabytes.
+    images: Arc<Mutex<HashMap<u32, (u32, u32, Arc<Vec<u8>>)>>>,
 }
 
 /// Sets a pty's window size, which is what raises SIGWINCH in the child.
@@ -201,6 +207,8 @@ impl Host {
         let pending = Arc::new(AtomicU64::new(0));
 
         let events: Arc<Mutex<VecDeque<Event>>> = Arc::new(Mutex::new(VecDeque::new()));
+        let images: Arc<Mutex<HashMap<u32, (u32, u32, Arc<Vec<u8>>)>>> =
+            Arc::new(Mutex::new(HashMap::new()));
         let pump = thread::Builder::new()
             .name("ruuah-vt-pty".to_string())
             .spawn({
@@ -208,7 +216,10 @@ impl Host {
                 let stop = Arc::clone(&stop);
                 let pending = Arc::clone(&pending);
                 let events = Arc::clone(&events);
-                move || pump(master, Publisher::new(writer), options, stop, pending, events)
+                let images = Arc::clone(&images);
+                move || {
+                    pump(master, Publisher::new(writer), options, stop, pending, events, images)
+                }
             })
             .map_err(SpawnError::Child)?;
 
@@ -222,12 +233,19 @@ impl Host {
                 pending,
                 capacity: options.capacity,
                 events,
+                images,
             },
             reader,
         ))
     }
 
     /// Sends input to the child, as a keyboard would.
+    /// The kitty image store the pump maintains; the renderer resolves placements
+    /// against it. Cloned Arc -- cheap, shared, read-locked briefly per draw.
+    pub fn image_store(&self) -> Arc<Mutex<HashMap<u32, (u32, u32, Arc<Vec<u8>>)>>> {
+        Arc::clone(&self.images)
+    }
+
     /// Drains the events the pump has collected (OSC 52, notifications, BEL), oldest
     /// first. Exactly-once: what this returns is gone from the queue.
     pub fn take_events(&self) -> Vec<Event> {
@@ -311,6 +329,7 @@ fn pump(
     stop: Arc<AtomicBool>,
     pending: Arc<AtomicU64>,
     events: Arc<Mutex<VecDeque<Event>>>,
+    images: Arc<Mutex<HashMap<u32, (u32, u32, Arc<Vec<u8>>)>>>,
 ) {
     let mut terminal =
         Terminal::with_scrollback(options.size.cols, options.size.rows, options.scrollback);
@@ -357,6 +376,24 @@ fn pump(
                             Ok(wrote) => rest = &rest[wrote..],
                             Err(Errno::INTR) | Err(Errno::AGAIN) => continue,
                             Err(_) => break,
+                        }
+                    }
+                }
+                let image_ops = terminal.take_image_ops();
+                if !image_ops.is_empty() {
+                    let mut store = images.lock().expect("image store");
+                    for op in image_ops {
+                        match op {
+                            ImageOp::Add(id, image) => {
+                                store.insert(
+                                    id,
+                                    (image.width, image.height, Arc::new(image.rgba)),
+                                );
+                            }
+                            ImageOp::Remove(id) => {
+                                store.remove(&id);
+                            }
+                            ImageOp::Clear => store.clear(),
                         }
                     }
                 }

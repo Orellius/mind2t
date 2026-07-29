@@ -116,6 +116,15 @@ impl Publisher {
                     .collect::<Vec<_>>()
                     .into_iter(),
             );
+
+            frame.placements(
+                screen
+                    .placements
+                    .iter()
+                    .map(|p| (p.image, p.col, p.row, p.cols, p.rows))
+                    .collect::<Vec<_>>()
+                    .into_iter(),
+            );
         })?;
 
         terminal.clear_damage();

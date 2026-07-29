@@ -1047,3 +1047,68 @@ fn a_dsr_reply_travels_back_down_the_pty() {
     );
     unsafe { ruuah_host_free(host) };
 }
+
+/// Kitty graphics through the whole pipeline: an APC G transmit-and-display from the
+/// child must land as pixels in the polled frame -- a solid red 4x4 RGBA image placed
+/// at the cursor with an explicit 1x1-cell box paints the first cell red. The control
+/// is a far cell that must stay background, and the query round trip (a=q) answering
+/// OK through the reply seam, echoed back by the line discipline.
+#[test]
+fn a_kitty_image_lands_as_pixels_through_the_c_surface() {
+    // 4x4 solid red RGBA, base64.
+    const RED_4X4: &str = "/wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA//8AAP//AAD//wAA/w==";
+    let command = CString::new(format!(
+        "printf '\\033_Ga=T,f=32,s=4,v=4,i=1,c=1,r=1,q=2;{RED_4X4}\\033\\\\'; sleep 8"
+    ))
+    .expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+        config: ptr::null(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+
+    let deadline = Instant::now() + PATIENCE;
+    let mut cell_red = false;
+    let mut far_cell = [0u8; 4];
+    while Instant::now() < deadline {
+        let mut polled = empty_frame();
+        assert_eq!(
+            unsafe { ruuah_host_poll(host, &mut polled) },
+            RuuahHostResult::Success
+        );
+        if polled.drew && polled.width > 0 && !polled.pixels.is_null() {
+            let width = polled.width as usize;
+            let cell_w = width / COLS as usize;
+            let cell_h = polled.height as usize / ROWS as usize;
+            let pixels = unsafe {
+                std::slice::from_raw_parts(polled.pixels, width * polled.height as usize * 4)
+            };
+            let at = |x: usize, y: usize| -> [u8; 4] {
+                let base = (y * width + x) * 4;
+                [pixels[base], pixels[base + 1], pixels[base + 2], pixels[base + 3]]
+            };
+            let center = at(cell_w / 2, cell_h / 2);
+            far_cell = at(cell_w * 10 + cell_w / 2, cell_h * 5 + cell_h / 2);
+            if center == [255, 0, 0, 255] {
+                cell_red = true;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(cell_red, "the placed image never painted the first cell red");
+    assert_ne!(
+        far_cell,
+        [255, 0, 0, 255],
+        "a cell outside the placement stays background"
+    );
+    unsafe { ruuah_host_free(host) };
+}

@@ -49,6 +49,13 @@ pub trait Surface {
         color: Rgba,
     );
 
+    /// Blends a straight-RGBA image over the surface, its own alpha as coverage, clipped.
+    ///
+    /// The color-glyph path (emoji). Same per-channel expression as `blend_mask` with the
+    /// source color coming from the image instead of a uniform -- one blend spec, so the
+    /// backend differential covers both.
+    fn blend_image(&mut self, x: i32, y: i32, width: u32, height: u32, rgba: &[u8]);
+
     /// The finished pixels: straight RGBA, row-major, top-down.
     ///
     /// Returns owned bytes rather than a borrow because a GPU backend has to read them back,
@@ -88,6 +95,10 @@ impl Surface for Canvas {
         color: Rgba,
     ) {
         Canvas::blend_mask(self, x, y, mask_width, mask_height, coverage, color)
+    }
+
+    fn blend_image(&mut self, x: i32, y: i32, width: u32, height: u32, rgba: &[u8]) {
+        Canvas::blend_image(self, x, y, width, height, rgba)
     }
 
     fn read_pixels(&mut self) -> Vec<u8> {
@@ -173,6 +184,36 @@ impl Surface for TruncatingSurface {
                     let over = u32::from(source) * a + u32::from(*target) * (255 - a);
                     // The bug: no rounding term.
                     *target = (over / 255) as u8;
+                }
+                self.pixels[base + 3] = 255;
+            }
+        }
+    }
+
+    fn blend_image(&mut self, x: i32, y: i32, width: u32, height: u32, rgba: &[u8]) {
+        // The same deliberate truncation as blend_mask, applied to the image path, so the
+        // backend differential can be shown to fail for images too.
+        for row in 0..height {
+            for column in 0..width {
+                let source_base = ((row * width + column) * 4) as usize;
+                let alpha = u32::from(rgba[source_base + 3]);
+                if alpha == 0 {
+                    continue;
+                }
+                let Some(base) = self.offset(x + column as i32, y + row as i32) else {
+                    continue;
+                };
+                if alpha == 255 {
+                    self.pixels[base..base + 3].copy_from_slice(&rgba[source_base..source_base + 3]);
+                    self.pixels[base + 3] = 255;
+                    continue;
+                }
+                for channel in 0..3 {
+                    let source = u32::from(rgba[source_base + channel]);
+                    let destination = u32::from(self.pixels[base + channel]);
+                    let over = source * alpha + destination * (255 - alpha);
+                    // The bug: no rounding term.
+                    self.pixels[base + channel] = (over / 255) as u8;
                 }
                 self.pixels[base + 3] = 255;
             }

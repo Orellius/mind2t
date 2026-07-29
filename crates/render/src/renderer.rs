@@ -192,7 +192,7 @@ impl<S: Surface> Renderer<S> {
                 );
                 if drawn.ink {
                     let mirrored = run.direction == ruuah_vt_frame::Direction::RightToLeft;
-                    self.draw_cell(*glyph_cell, left, top, drawn.foreground, mirrored);
+                    self.draw_cell(*glyph_cell, left, top, width, drawn.foreground, mirrored);
                 }
                 self.draw_decorations(&drawn, left, top, width);
             }
@@ -201,7 +201,15 @@ impl<S: Surface> Renderer<S> {
         self.draw_cursor(frame, y);
     }
 
-    fn draw_cell(&mut self, cell: PackedCell, left: i32, top: i32, color: Rgba, mirrored: bool) {
+    fn draw_cell(
+        &mut self,
+        cell: PackedCell,
+        left: i32,
+        top: i32,
+        span: u16,
+        color: Rgba,
+        mirrored: bool,
+    ) {
         if !cell.has_text() {
             return;
         }
@@ -256,13 +264,27 @@ impl<S: Surface> Renderer<S> {
                 continue;
             };
 
-            // `y` is positive upwards in both the shaper's offsets and the glyph's `top`,
-            // and the canvas grows downwards, so both subtract.
-            let x = left + placed.x.round() as i32 + glyph.left;
-            let y = baseline - placed.y.round() as i32 - glyph.top;
-            let (width, height) = (glyph.width, glyph.height);
-            self.canvas
-                .blend_mask(x, y, width, height, &glyph.coverage, color);
+            match &glyph.data {
+                crate::atlas::GlyphData::Mask(coverage) => {
+                    // `y` is positive upwards in both the shaper's offsets and the glyph's
+                    // `top`, and the canvas grows downwards, so both subtract.
+                    let x = left + placed.x.round() as i32 + glyph.left;
+                    let y = baseline - placed.y.round() as i32 - glyph.top;
+                    let (width, height) = (glyph.width, glyph.height);
+                    self.canvas.blend_mask(x, y, width, height, coverage, color);
+                }
+                crate::atlas::GlyphData::Color(rgba) => {
+                    // Emoji carry their own colors and were pre-scaled to the cell height
+                    // in the atlas; centered over the cell span (a wide cell is two cells
+                    // of pixels). The foreground tint is deliberately NOT applied -- that
+                    // is the gray-silhouette bug.
+                    let span_px = (metrics.width * u32::from(span.max(1))) as i32;
+                    let x = left + (span_px - glyph.width as i32) / 2;
+                    let y = top + (metrics.height as i32 - glyph.height as i32) / 2;
+                    self.canvas
+                        .blend_image(x, y, glyph.width, glyph.height, rgba);
+                }
+            }
         }
     }
 
@@ -314,6 +336,7 @@ impl<S: Surface> Renderer<S> {
                 && (run.logical_start..run.logical_start + run.cells.len() as u16)
                     .contains(&frame.cursor.x)
         });
-        self.draw_cell(frame.cell(frame.cursor.x, y), left, top, drawn.background, mirrored);
+        let cell = frame.cell(frame.cursor.x, y);
+        self.draw_cell(cell, left, top, cell_width(cell), drawn.background, mirrored);
     }
 }

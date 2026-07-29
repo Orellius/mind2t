@@ -35,7 +35,7 @@ pub mod renderer;
 pub mod shape;
 pub mod surface;
 
-pub use atlas::{Atlas, Glyph, GlyphKey};
+pub use atlas::{Atlas, Glyph, GlyphData, GlyphKey};
 pub use canvas::Canvas;
 pub use color::{Drawn, Palette, Rgba};
 pub use font::{CellMetrics, FontError, FontStack, Resolved};

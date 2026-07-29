@@ -16,7 +16,9 @@ protocol SessionListDelegate: AnyObject {
 final class SessionListController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
     static let width: CGFloat = 220
     static let background = NSColor(srgbRed: 0.051, green: 0.051, blue: 0.071, alpha: 1)
-    static let accent = NSColor(srgbRed: 0.925, green: 0.282, blue: 0.6, alpha: 1)  // #EC4899
+    /// Discord's blurple (#5865F2) -- the one color in an otherwise black-and-gray app
+    /// (Orel's call, 2026-07-29).
+    static let accent = NSColor(srgbRed: 0.345, green: 0.396, blue: 0.949, alpha: 1)
 
     weak var delegate: SessionListDelegate?
 

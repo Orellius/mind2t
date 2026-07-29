@@ -9,13 +9,16 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
 
 ## P0 — hit within minutes of real use
 
-1. **Paste (cmd+V) + bracketed paste (DEC mode 2004).** The window's `keyDown`
-   forwards printables and arrows; there is no paste path at all, and the core
-   does not track mode 2004 (`grep 2004 crates/core/src` is empty). Shape:
-   core tracks the mode → `Frame` publishes one mode-bits word → new
-   `ruuah_host_paste` wraps in `ESC[200~ / ESC[201~` only when the child enabled
-   it → Swift reads NSPasteboard on cmd+V. Verify end-to-end with a child that
-   sets 2004 and `od -c`'s its stdin, so the markers are visible on the grid.
+1. **DONE 2026-07-29 (branch `paste-2004`): paste (cmd+V) + bracketed paste (mode 2004).**
+   Landed exactly on the planned shape -- core mode → `Frame.modes` word →
+   `ruuah_host_paste` → NSPasteboard on cmd+V -- with two upgrades found on the way:
+   the oracle exports `ghostty_terminal_mode_get` and `ghostty_paste_encode`, so the
+   mode is corpus-pinned (4 cases) and the encoder is differentially tested
+   byte-for-byte instead of inferred. The end-to-end proof dropped `od` entirely:
+   the pty's default ECHOCTL echoes a pasted ESC as printable `^[`, so the
+   fenceposts are visible grid text with plain `cat` -- two runs differing only in
+   the child's `2004h` are the discriminating pair (`host_abi.rs`). The cmd+V tap
+   itself in the installed app is the one thing still owed eyes.
 2. **Emoji / color glyphs.** `[🧠 BRAIN]` renders as a gap in Claude Code
    (screenshot 2026-07-29). Apple Color Emoji is a color font (sbix strikes);
    the renderer only draws alpha masks, so this is a renderer feature (RGBA

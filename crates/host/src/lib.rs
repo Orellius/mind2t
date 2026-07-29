@@ -171,6 +171,12 @@ pub unsafe extern "C" fn ruuah_host_spawn(
     // The host owns the pty, so the host declares what it emulates -- a child launched
     // from Finder inherits no TERM at all, and one from a terminal inherits the wrong one.
     command.env("TERM", "xterm-256color");
+    // A terminal window is a session boundary. When the app itself was launched from
+    // inside a Claude Code session, the inherited child-session markers make a `claude`
+    // run in this window believe it is nested and silently disable transcript saving
+    // (seen live 2026-07-29). The shell in this window is a fresh session; scrub them.
+    command.env_remove("CLAUDECODE");
+    command.env_remove("CLAUDE_CODE_CHILD_SESSION");
 
     let font_size = if options.font_size > 0.0 {
         options.font_size

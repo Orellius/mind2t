@@ -30,6 +30,7 @@ pub mod canvas;
 pub mod color;
 pub mod font;
 pub mod gpu;
+pub mod mosaic;
 pub mod renderer;
 pub mod shape;
 pub mod surface;

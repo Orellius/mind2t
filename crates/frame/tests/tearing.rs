@@ -327,3 +327,45 @@ fn a_publish_landing_mid_copy_leaves_no_frame_claiming_to_be_valid() {
         "sanity: a valid frame carries a non-zero generation"
     );
 }
+
+/// A panic inside the fill closure strands the counter odd -- readers skip and keep the last
+/// good frame, which is the honest state for a half-written buffer. What must NOT happen is
+/// the audit's finding 17: a writer that recovers and publishes again bumping the counter
+/// blindly (`start + 1`), which lands it EVEN during the recovery fill and ODD at completion.
+/// From that point every torn mid-fill read wears a valid generation and every completed
+/// frame reads as in-flight -- the protocol permanently inverted, silently.
+#[test]
+fn a_publish_after_a_panicked_publish_restores_the_protocol() {
+    let (mut writer, reader) = channel(4, 2);
+    let mut frame = Frame::new();
+
+    let first = writer
+        .publish(4, 2, |f| {
+            f.cell(0, 0, PackedCell::new("a", 0, Wide::Narrow, Semantic::Output))
+        })
+        .expect("fits");
+    assert_eq!(reader.read_into(&mut frame), ReadOutcome::Fresh(first));
+
+    let died = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = writer.publish(4, 2, |_f| panic!("fill died mid-publish"));
+    }));
+    assert!(died.is_err(), "the panicking fill must actually panic");
+
+    // Unrecovered, the channel refuses to serve the half-written frame.
+    assert_eq!(reader.read_into(&mut frame), ReadOutcome::Skipped);
+
+    // The recovery publish must come back as a readable frame, not an inverted counter.
+    let recovered = writer
+        .publish(4, 2, |f| {
+            f.cell(0, 0, PackedCell::new("b", 0, Wide::Narrow, Semantic::Output))
+        })
+        .expect("fits");
+    assert_eq!(
+        reader.read_into(&mut frame),
+        ReadOutcome::Fresh(recovered),
+        "the publish after a panicked one must be readable -- an odd completed \
+         generation means the parity inverted"
+    );
+    let mut scratch = [0u8; ruuah_vt_frame::CLUSTER_BYTES];
+    assert_eq!(frame.cell(0, 0).cluster(&mut scratch), "b");
+}

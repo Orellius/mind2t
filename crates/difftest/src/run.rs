@@ -56,12 +56,31 @@ pub struct Outcome {
 
 impl Outcome {
     /// True when the case behaved as the corpus declared it would.
+    ///
+    /// A diff case carrying `diff_paths` is met only when the observed set of difference
+    /// paths equals the declared set exactly -- "some difference exists" pins nothing, and
+    /// a divergence that moved or grew is a change demanding an explanation, exactly like a
+    /// verdict flip (finding 18).
     pub fn met_expectation(&self, case: &Case) -> bool {
-        matches!(
-            (self.verdict, case.expect),
-            (Verdict::Match, crate::case::Expectation::Match)
-                | (Verdict::Diff, crate::case::Expectation::Diff)
-        )
+        match (self.verdict, case.expect) {
+            (Verdict::Match, crate::case::Expectation::Match) => true,
+            (Verdict::Diff, crate::case::Expectation::Diff) => match &case.diff_paths {
+                Some(declared) => {
+                    let mut observed: Vec<&str> =
+                        self.differences.iter().map(|d| d.path.as_str()).collect();
+                    observed.sort_unstable();
+                    observed.dedup();
+                    let mut pinned: Vec<&str> = declared.iter().map(String::as_str).collect();
+                    pinned.sort_unstable();
+                    pinned.dedup();
+                    observed == pinned
+                }
+                // The loader refuses an unpinned diff case; a hand-built one keeps the old
+                // any-difference semantics for probing.
+                None => true,
+            },
+            _ => false,
+        }
     }
 }
 
@@ -140,4 +159,74 @@ pub fn run(case: &Case) -> Result<Outcome, RunError> {
         oracle,
         candidate,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::case::{Case, Expectation};
+
+    fn outcome_with_paths(paths: &[&str]) -> Outcome {
+        let snapshot = ruuah_vt_core::Terminal::with_scrollback(2, 1, 0).snapshot();
+        Outcome {
+            verdict: if paths.is_empty() {
+                Verdict::Match
+            } else {
+                Verdict::Diff
+            },
+            differences: paths
+                .iter()
+                .map(|path| Difference {
+                    path: (*path).to_string(),
+                    oracle: "o".to_string(),
+                    candidate: "c".to_string(),
+                })
+                .collect(),
+            oracle: snapshot.clone(),
+            candidate: snapshot,
+        }
+    }
+
+    fn diff_case(pinned: &[&str]) -> Case {
+        Case {
+            name: "pinned".to_string(),
+            expect: Expectation::Diff,
+            cols: 2,
+            rows: 1,
+            scrollback: 0,
+            bytes: String::new(),
+            resize: None,
+            after: String::new(),
+            damage: false,
+            note: String::new(),
+            diff_paths: Some(pinned.iter().map(|p| (*p).to_string()).collect()),
+        }
+    }
+
+    /// The pin does its job: a divergence that moved to a different path is a failed
+    /// expectation, not "still the known diff". This is the control for finding 18 -- run
+    /// against the unpinned `met_expectation` it passes vacuously, and was seen to.
+    #[test]
+    fn a_diff_case_whose_divergence_moved_fails_its_expectation() {
+        let case = diff_case(&["cursor.x"]);
+        let moved = outcome_with_paths(&["cursor.y"]);
+        assert!(
+            !moved.met_expectation(&case),
+            "a divergence at cursor.y satisfied a case pinned to cursor.x"
+        );
+
+        let extra = outcome_with_paths(&["cursor.x", "cursor.y"]);
+        assert!(
+            !extra.met_expectation(&case),
+            "an extra divergence beyond the pinned set must fail the expectation"
+        );
+    }
+
+    #[test]
+    fn a_diff_case_matching_its_pinned_paths_meets_its_expectation() {
+        let case = diff_case(&["cursor.x", "cursor.y"]);
+        // Declaration order must not matter, and repeated paths collapse.
+        let observed = outcome_with_paths(&["cursor.y", "cursor.x", "cursor.x"]);
+        assert!(observed.met_expectation(&case));
+    }
 }

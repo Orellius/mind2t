@@ -9,7 +9,10 @@
 //!   through the core's Rust API and requires the two snapshots to be identical, with a
 //!   control that proves the comparison can fail.
 
+use std::collections::hash_map::DefaultHasher;
 use std::ffi::c_void;
+use std::hash::{Hash, Hasher};
+use std::sync::{Mutex, MutexGuard};
 
 use ruuah_vt_snapshot::{Color, Row, Screen, Snapshot, Underline, Wide};
 
@@ -17,48 +20,75 @@ use ruuah_vt_abi_types::*;
 
 /// The boxed terminal a `GhosttyTerminal` handle points at.
 ///
-/// The cached view is what keeps the ref-based readers cheap AND sound: `grid_ref` is the only
-/// entry point that takes the terminal by pointer and can refresh it, so every reader reached
-/// through a `GhosttyGridRef` needs nothing but shared access.
+/// The read entry points must be reads in the Rust-model sense, because they are reads in the
+/// oracle: `ghostty_terminal_get` mutates nothing there (`terminal.zig`, `getTyped`), so a C
+/// consumer may read from two threads at once and may hold a grid ref across an interleaved
+/// read -- refs die on the next *update*, not the next read (`grid_ref.h`). The audit's
+/// findings 14 and 22 were this port conjuring `&mut Terminal` on those paths to fill the
+/// cached view lazily. The cache is therefore interior-mutable: readers share the terminal
+/// and take the lock only for the duration of one call, and only the mutating entry points
+/// (`vt_write`, `resize`) take the terminal exclusively. `tests/soundness.rs` holds both
+/// Miri controls, each seen to fail against the `&mut` version.
 pub struct Terminal {
     core: ruuah_vt_core::Terminal,
-    view: Option<Snapshot>,
+    view: Mutex<Option<Snapshot>>,
 }
 
 impl Terminal {
-    fn refresh(&mut self) {
-        if self.view.is_none() {
-            self.view = Some(self.core.snapshot());
+    /// Locks the cache, filling it if a write emptied it. The two ref-minting entry points
+    /// (`terminal_get`, `grid_ref`) use this.
+    fn view_filled(&self) -> MutexGuard<'_, Option<Snapshot>> {
+        let mut guard = self.view.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.is_none() {
+            let mut view = self.core.snapshot();
+            // The damage rides along so `ROW_DATA_DIRTY` can answer (finding 28).
+            view.damage = self.core.damage();
+            *guard = Some(view);
         }
+        guard
     }
 
+    /// Locks the cache without filling it. A reader reached through a grid ref sees the view
+    /// that existed when its ref was minted -- or nothing, if a write killed the ref, which
+    /// is exactly when the contract says the ref is dead.
+    fn view_current(&self) -> MutexGuard<'_, Option<Snapshot>> {
+        self.view.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Writers hold the terminal exclusively, so this bypasses the lock.
     fn invalidate(&mut self) {
-        self.view = None;
+        *self.view.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
     }
+}
 
-    fn view(&self) -> Option<&Snapshot> {
-        self.view.as_ref()
-    }
-
-    /// The row at an absolute SCREEN-space index: history first, then the active area.
-    fn row_at(&self, y: u16) -> Option<&Row> {
-        let view = self.view()?;
-        let y = usize::from(y);
-        if y < view.history.len() {
-            view.history.get(y)
-        } else {
-            view.grid.get(y - view.history.len())
-        }
+/// The row at an absolute SCREEN-space index: history first, then the active area.
+fn row_at(view: &Snapshot, y: u16) -> Option<&Row> {
+    let y = usize::from(y);
+    if y < view.history.len() {
+        view.history.get(y)
+    } else {
+        view.grid.get(y - view.history.len())
     }
 }
 
 /// # Safety
-/// `handle` must be a pointer returned by `ghostty_terminal_new` and not yet freed.
+/// `handle` must be a pointer returned by `ghostty_terminal_new` and not yet freed, with no
+/// concurrent call in flight -- this is the exclusive access the mutating entry points need.
 unsafe fn terminal<'a>(handle: GhosttyTerminal) -> Option<&'a mut Terminal> {
     if handle.is_null() {
         return None;
     }
     Some(unsafe { &mut *handle.cast::<Terminal>() })
+}
+
+/// # Safety
+/// `handle` must be a pointer returned by `ghostty_terminal_new` and not yet freed. Shared:
+/// the read entry points use this, so concurrent readers and live grid refs stay legal.
+unsafe fn terminal_shared<'a>(handle: GhosttyTerminal) -> Option<&'a Terminal> {
+    if handle.is_null() {
+        return None;
+    }
+    Some(unsafe { &*handle.cast::<Terminal>() })
 }
 
 /// # Safety
@@ -71,6 +101,9 @@ unsafe fn terminal_ref<'a>(node: *mut c_void) -> Option<&'a Terminal> {
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `out`, if non-null, must be valid for writing one pointer. A returned handle is owned by
+/// the caller and must be released with `ghostty_terminal_free`, exactly once.
 pub unsafe extern "C" fn ghostty_terminal_new(
     _allocator: *const GhosttyAllocator,
     out: *mut GhosttyTerminal,
@@ -93,13 +126,17 @@ pub unsafe extern "C" fn ghostty_terminal_new(
             options.rows,
             options.max_scrollback,
         ),
-        view: None,
+        view: Mutex::new(None),
     });
     unsafe { *out = Box::into_raw(terminal).cast::<c_void>() };
     GHOSTTY_SUCCESS
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `handle` must be null or a pointer returned by `ghostty_terminal_new` that has not been
+/// freed. No other call on this terminal may be in flight, and no grid ref minted from it
+/// may be used afterwards.
 pub unsafe extern "C" fn ghostty_terminal_free(handle: GhosttyTerminal) {
     if handle.is_null() {
         return;
@@ -108,6 +145,11 @@ pub unsafe extern "C" fn ghostty_terminal_free(handle: GhosttyTerminal) {
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `handle` must be null or a live handle from `ghostty_terminal_new`. This is a WRITE: the
+/// caller must serialize it against every other call on the same terminal, and every grid
+/// ref minted before it is dead afterwards. `bytes`, if non-null, must be valid for `len`
+/// reads.
 pub unsafe extern "C" fn ghostty_terminal_vt_write(
     handle: GhosttyTerminal,
     bytes: *const u8,
@@ -126,6 +168,10 @@ pub unsafe extern "C" fn ghostty_terminal_vt_write(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `handle` must be null or a live handle from `ghostty_terminal_new`. This is a WRITE: the
+/// caller must serialize it against every other call on the same terminal, and every grid
+/// ref minted before it is dead afterwards.
 pub unsafe extern "C" fn ghostty_terminal_resize(
     handle: GhosttyTerminal,
     cols: u16,
@@ -145,19 +191,23 @@ pub unsafe extern "C" fn ghostty_terminal_resize(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `handle` must be null or a live handle from `ghostty_terminal_new`. This is a READ: it
+/// may run concurrently with other reads, but the caller must serialize it against writes.
+/// `out` must be valid for writing the type the requested `data` documents.
 pub unsafe extern "C" fn ghostty_terminal_get(
     handle: GhosttyTerminal,
     data: GhosttyTerminalData,
     out: *mut c_void,
 ) -> GhosttyResult {
-    let Some(terminal) = (unsafe { terminal(handle) }) else {
+    let Some(terminal) = (unsafe { terminal_shared(handle) }) else {
         return GHOSTTY_INVALID_VALUE;
     };
     if out.is_null() {
         return GHOSTTY_INVALID_VALUE;
     }
-    terminal.refresh();
-    let Some(view) = terminal.view() else {
+    let guard = terminal.view_filled();
+    let Some(view) = guard.as_ref() else {
         return GHOSTTY_INVALID_VALUE;
     };
 
@@ -179,8 +229,7 @@ pub unsafe extern "C" fn ghostty_terminal_get(
             }
             GHOSTTY_TERMINAL_DATA_CURSOR_STYLE => {
                 let style = out.cast::<GhosttyStyle>();
-                let size = (*style).size;
-                *style = pack_style(&view.cursor.style, size);
+                *style = pack_style(&view.cursor.style);
             }
             GHOSTTY_TERMINAL_DATA_TOTAL_ROWS => {
                 *out.cast::<usize>() = view.history.len() + usize::from(view.rows)
@@ -193,19 +242,20 @@ pub unsafe extern "C" fn ghostty_terminal_get(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `handle` must be null or a live handle from `ghostty_terminal_new`. This is a READ and
+/// may run concurrently with other reads. `out`, if non-null, must be valid for writing a
+/// `GhosttyGridRef`. The ref written is valid until the next write to the terminal.
 pub unsafe extern "C" fn ghostty_terminal_grid_ref(
     handle: GhosttyTerminal,
     point: GhosttyPoint,
     out: *mut GhosttyGridRef,
 ) -> GhosttyResult {
-    let Some(terminal) = (unsafe { terminal(handle) }) else {
+    let Some(terminal) = (unsafe { terminal_shared(handle) }) else {
         return GHOSTTY_INVALID_VALUE;
     };
-    if out.is_null() {
-        return GHOSTTY_INVALID_VALUE;
-    }
-    terminal.refresh();
-    let Some(view) = terminal.view() else {
+    let guard = terminal.view_filled();
+    let Some(view) = guard.as_ref() else {
         return GHOSTTY_INVALID_VALUE;
     };
 
@@ -225,19 +275,28 @@ pub unsafe extern "C" fn ghostty_terminal_grid_ref(
         return GHOSTTY_INVALID_VALUE;
     }
 
-    unsafe {
-        let size = (*out).size;
-        *out = GhosttyGridRef {
-            size,
-            node: (terminal as *mut Terminal).cast::<c_void>(),
-            x: coordinate.x,
-            y: absolute as u16,
-        };
+    // NULL out is the validate-only idiom, honoured after every check above -- the header
+    // says "(may be NULL)" and the oracle skips the write, never the validation (finding 23).
+    if !out.is_null() {
+        unsafe {
+            *out = GhosttyGridRef {
+                size: size_of::<GhosttyGridRef>(),
+                // The raw handle, not a reference-derived pointer: the ref must keep the
+                // handle's full provenance so it survives later shared reads (finding 22).
+                node: handle,
+                x: coordinate.x,
+                y: absolute as u16,
+            };
+        }
     }
     GHOSTTY_SUCCESS
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `grid_ref` must be null or point at a ref produced by `ghostty_terminal_grid_ref` whose
+/// terminal is still alive. This is a READ and may run concurrently with other reads.
+/// `out`, if non-null, must be valid for writing a `GhosttyCell`.
 pub unsafe extern "C" fn ghostty_grid_ref_cell(
     grid_ref: *const GhosttyGridRef,
     out: *mut GhosttyCell,
@@ -245,20 +304,26 @@ pub unsafe extern "C" fn ghostty_grid_ref_cell(
     let Some((terminal, grid_ref)) = (unsafe { resolve(grid_ref) }) else {
         return GHOSTTY_INVALID_VALUE;
     };
-    if out.is_null() {
-        return GHOSTTY_INVALID_VALUE;
-    }
-    let Some(cell) = terminal
-        .row_at(grid_ref.y)
+    let guard = terminal.view_current();
+    let Some(cell) = guard
+        .as_ref()
+        .and_then(|view| row_at(view, grid_ref.y))
         .and_then(|row| row.cells.get(usize::from(grid_ref.x)))
     else {
         return GHOSTTY_INVALID_VALUE;
     };
-    unsafe { *out = pack_cell(cell) };
+    // NULL out validates the ref without reading it, matching the oracle (finding 23).
+    if !out.is_null() {
+        unsafe { *out = pack_cell(cell) };
+    }
     GHOSTTY_SUCCESS
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `grid_ref` must be null or point at a ref produced by `ghostty_terminal_grid_ref` whose
+/// terminal is still alive. This is a READ and may run concurrently with other reads.
+/// `out`, if non-null, must be valid for writing a `GhosttyRow`.
 pub unsafe extern "C" fn ghostty_grid_ref_row(
     grid_ref: *const GhosttyGridRef,
     out: *mut GhosttyRow,
@@ -266,17 +331,32 @@ pub unsafe extern "C" fn ghostty_grid_ref_row(
     let Some((terminal, grid_ref)) = (unsafe { resolve(grid_ref) }) else {
         return GHOSTTY_INVALID_VALUE;
     };
-    if out.is_null() {
-        return GHOSTTY_INVALID_VALUE;
-    }
-    let Some(row) = terminal.row_at(grid_ref.y) else {
+    let guard = terminal.view_current();
+    let Some(view) = guard.as_ref() else {
         return GHOSTTY_INVALID_VALUE;
     };
-    unsafe { *out = pack_row(row) };
+    let Some(row) = row_at(view, grid_ref.y) else {
+        return GHOSTTY_INVALID_VALUE;
+    };
+    // Damage is tracked for the active area; a history row is settled and never dirty.
+    let dirty = usize::from(grid_ref.y)
+        .checked_sub(view.history.len())
+        .and_then(|y| view.damage.as_ref().and_then(|damage| damage.rows.get(y)))
+        .copied()
+        .unwrap_or(false);
+    // NULL out validates the ref without reading it, matching the oracle (finding 23).
+    if !out.is_null() {
+        unsafe { *out = pack_row(row, dirty) };
+    }
     GHOSTTY_SUCCESS
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `grid_ref` must be null or point at a ref produced by `ghostty_terminal_grid_ref` whose
+/// terminal is still alive. This is a READ and may run concurrently with other reads.
+/// `buf`, if non-null, must be valid for `buf_len` writes of `u32`; `out_len` must be valid
+/// for writing one `usize`.
 pub unsafe extern "C" fn ghostty_grid_ref_graphemes(
     grid_ref: *const GhosttyGridRef,
     buf: *mut u32,
@@ -289,8 +369,10 @@ pub unsafe extern "C" fn ghostty_grid_ref_graphemes(
     if out_len.is_null() {
         return GHOSTTY_INVALID_VALUE;
     }
-    let Some(cell) = terminal
-        .row_at(grid_ref.y)
+    let guard = terminal.view_current();
+    let Some(cell) = guard
+        .as_ref()
+        .and_then(|view| row_at(view, grid_ref.y))
         .and_then(|row| row.cells.get(usize::from(grid_ref.x)))
     else {
         return GHOSTTY_INVALID_VALUE;
@@ -309,6 +391,10 @@ pub unsafe extern "C" fn ghostty_grid_ref_graphemes(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `grid_ref` must be null or point at a ref produced by `ghostty_terminal_grid_ref` whose
+/// terminal is still alive. This is a READ and may run concurrently with other reads.
+/// `out`, if non-null, must be valid for writing a `GhosttyStyle`.
 pub unsafe extern "C" fn ghostty_grid_ref_style(
     grid_ref: *const GhosttyGridRef,
     out: *mut GhosttyStyle,
@@ -316,23 +402,25 @@ pub unsafe extern "C" fn ghostty_grid_ref_style(
     let Some((terminal, grid_ref)) = (unsafe { resolve(grid_ref) }) else {
         return GHOSTTY_INVALID_VALUE;
     };
-    if out.is_null() {
-        return GHOSTTY_INVALID_VALUE;
-    }
-    let Some(cell) = terminal
-        .row_at(grid_ref.y)
+    let guard = terminal.view_current();
+    let Some(cell) = guard
+        .as_ref()
+        .and_then(|view| row_at(view, grid_ref.y))
         .and_then(|row| row.cells.get(usize::from(grid_ref.x)))
     else {
         return GHOSTTY_INVALID_VALUE;
     };
-    unsafe {
-        let size = (*out).size;
-        *out = pack_style(&cell.style, size);
+    // NULL out validates the ref without reading it, matching the oracle (finding 23).
+    if !out.is_null() {
+        unsafe { *out = pack_style(&cell.style) };
     }
     GHOSTTY_SUCCESS
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `cell` is a plain value; the only obligation is `out`, which must be valid for writing
+/// the type the requested `data` documents.
 pub unsafe extern "C" fn ghostty_cell_get(
     cell: GhosttyCell,
     data: GhosttyCellData,
@@ -345,11 +433,17 @@ pub unsafe extern "C" fn ghostty_cell_get(
         match data {
             GHOSTTY_CELL_DATA_CODEPOINT => *out.cast::<u32>() = (cell & 0x1F_FFFF) as u32,
             GHOSTTY_CELL_DATA_CONTENT_TAG => {
-                // Every cell this core stores is a codepoint cell. Ghostty additionally keeps
-                // a background-colour-only cell out of its style table and tags it; here the
+                // A multi-codepoint cluster wears the grapheme tag, matching upstream's rule
+                // (`appendGrapheme` flips the tag the moment a continuation codepoint lands).
+                // The bg-color tags are the one deliberate omission: Ghostty keeps a
+                // background-colour-only cell out of its style table and tags it; here the
                 // background always lives in the style, so a consumer reading the style gets
                 // the same answer without the second representation.
-                *out.cast::<GhosttyCellContentTag>() = GHOSTTY_CELL_CONTENT_CODEPOINT
+                *out.cast::<GhosttyCellContentTag>() = if (cell >> 42) & 1 != 0 {
+                    GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME
+                } else {
+                    GHOSTTY_CELL_CONTENT_CODEPOINT
+                }
             }
             GHOSTTY_CELL_DATA_WIDE => {
                 *out.cast::<GhosttyCellWide>() = ((cell >> 21) & 0b11) as GhosttyCellWide
@@ -372,6 +466,9 @@ pub unsafe extern "C" fn ghostty_cell_get(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `row` is a plain value; the only obligation is `out`, which must be valid for writing
+/// the type the requested `data` documents.
 pub unsafe extern "C" fn ghostty_row_get(
     row: GhosttyRow,
     data: GhosttyRowData,
@@ -391,6 +488,10 @@ pub unsafe extern "C" fn ghostty_row_get(
                     ((row >> 4) & 0b11) as GhosttyRowSemanticPrompt
             }
             GHOSTTY_ROW_DATA_HYPERLINK => *out.cast::<bool>() = false,
+            // What a renderer owes since damage was last cleared -- upstream reads the
+            // row's own dirty bit (row.zig:122); here it rides bit 6 of the packed row
+            // (finding 28).
+            GHOSTTY_ROW_DATA_DIRTY => *out.cast::<bool>() = (row >> 6) & 1 != 0,
             _ => return GHOSTTY_INVALID_VALUE,
         }
     }
@@ -398,14 +499,13 @@ pub unsafe extern "C" fn ghostty_row_get(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `out`, if non-null, must be valid for writing a `GhosttyStyle`.
 pub unsafe extern "C" fn ghostty_style_default(out: *mut GhosttyStyle) {
     if out.is_null() {
         return;
     }
-    unsafe {
-        let size = (*out).size;
-        *out = pack_style(&ruuah_vt_snapshot::Style::DEFAULT, size);
-    }
+    unsafe { *out = pack_style(&ruuah_vt_snapshot::Style::DEFAULT) };
 }
 
 /// # Safety
@@ -433,10 +533,35 @@ fn pack_cell(cell: &ruuah_vt_snapshot::Cell) -> GhosttyCell {
         ruuah_vt_snapshot::Semantic::Prompt => 2,
     };
     let styled = u64::from(!cell.style.is_default());
-    codepoint | (wide << 21) | (semantic << 23) | (styled << 41)
+    let style_id = u64::from(style_id(&cell.style));
+    let grapheme = u64::from(cell.text.chars().count() > 1);
+    codepoint
+        | (wide << 21)
+        | (semantic << 23)
+        | (style_id << 25)
+        | (styled << 41)
+        | (grapheme << 42)
 }
 
-fn pack_row(row: &Row) -> GhosttyRow {
+/// The id a consumer reads back through `GHOSTTY_CELL_DATA_STYLE_ID`.
+///
+/// Upstream's id indexes its style table. This ABI has no table to index -- `ghostty_grid_ref_style`
+/// resolves a style from the grid position, not from an id -- so the id here is derived from the
+/// style itself. That keeps the two properties a consumer can actually rely on: the default style
+/// is 0, matching upstream, and equal styles get equal ids. It does NOT promise upstream's exact
+/// numbering, which is an allocation order no other implementation could reproduce anyway.
+fn style_id(style: &ruuah_vt_snapshot::Style) -> u16 {
+    if style.is_default() {
+        return 0;
+    }
+    let mut hasher = DefaultHasher::new();
+    style.hash(&mut hasher);
+    // Fold into 1..=u16::MAX: zero is reserved for the default style above.
+    let folded = (hasher.finish() % u64::from(u16::MAX)) as u16;
+    folded + 1
+}
+
+fn pack_row(row: &Row, dirty: bool) -> GhosttyRow {
     let semantic = match row.semantic_prompt {
         ruuah_vt_snapshot::RowSemantic::None => 0u64,
         ruuah_vt_snapshot::RowSemantic::Prompt => 1,
@@ -449,11 +574,15 @@ fn pack_row(row: &Row) -> GhosttyRow {
         | (u64::from(grapheme) << 2)
         | (u64::from(styled) << 3)
         | (semantic << 4)
+        | (u64::from(dirty) << 6)
 }
 
-fn pack_style(style: &ruuah_vt_snapshot::Style, size: usize) -> GhosttyStyle {
+/// A pure out-param's `.size` is written from the type, never read from the caller -- the
+/// oracle whole-struct-assigns at every equivalent site and its own tests pass `undefined`
+/// out-params, so the incoming field may be uninitialised memory (finding 15).
+fn pack_style(style: &ruuah_vt_snapshot::Style) -> GhosttyStyle {
     GhosttyStyle {
-        size,
+        size: size_of::<GhosttyStyle>(),
         fg_color: pack_color(style.fg),
         bg_color: pack_color(style.bg),
         underline_color: pack_color(style.underline_color),

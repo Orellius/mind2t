@@ -495,3 +495,304 @@ fn a_failed_creation_nulls_the_out_param_here_too() {
         "left {handle:?} in the out-param; a stale non-null handle reads as success"
     );
 }
+
+/// The style id is the one cell field with no consumer inside this harness: `read_cell` gets
+/// the style by grid ref, so a `STYLE_ID` that is always zero passes every test above. The
+/// audit's mutation M7 proved exactly that -- returning `0xDEAD` from the branch changed
+/// nothing. This asserts the property a consumer actually gates on: a default cell is 0 and a
+/// styled cell is not, and two cells wearing the same style report the same id.
+#[test]
+fn a_styled_cell_reports_a_non_zero_style_id() {
+    unsafe {
+        let mut handle: GhosttyTerminal = std::ptr::null_mut();
+        assert_eq!(
+            ghostty_terminal_new(
+                std::ptr::null(),
+                &mut handle,
+                GhosttyTerminalOptions {
+                    cols: 8,
+                    rows: 2,
+                    max_scrollback: 0,
+                },
+            ),
+            GHOSTTY_SUCCESS
+        );
+
+        // "a" plain, then "bc" bold: one unstyled cell and two sharing one style.
+        let bytes = b"a\x1b[1mbc";
+        ghostty_terminal_vt_write(handle, bytes.as_ptr(), bytes.len());
+
+        let id_of = |x: u16| -> u16 {
+            let cell_ref = grid_ref(handle, GHOSTTY_POINT_TAG_ACTIVE, x, 0);
+            let mut raw: GhosttyCell = 0;
+            assert_eq!(
+                ghostty_grid_ref_cell(&cell_ref, &mut raw),
+                GHOSTTY_SUCCESS
+            );
+            cell_get::<u16>(raw, GHOSTTY_CELL_DATA_STYLE_ID)
+        };
+
+        let plain = id_of(0);
+        let bold_b = id_of(1);
+        let bold_c = id_of(2);
+
+        assert_eq!(plain, 0, "an unstyled cell must report the default style id");
+        assert_ne!(
+            bold_b, 0,
+            "a bold cell reported style id 0, which is the default style -- a consumer \
+             gating on the id sees every cell as unstyled"
+        );
+        assert_eq!(
+            bold_b, bold_c,
+            "two cells wearing the same style must report the same id"
+        );
+
+        ghostty_terminal_free(handle);
+    }
+}
+
+/// The content tag is the other cell field with no consumer inside this harness: `read_cell`
+/// gets the cluster through `read_graphemes`, so a `CONTENT_TAG` frozen at `CODEPOINT` passes
+/// the whole corpus -- which is exactly what the audit's finding 13 found shipping. The
+/// oracle's rule is measured in `ruuah-vt-ghostty`'s
+/// `a_cell_holding_a_multi_codepoint_cluster_wears_the_grapheme_content_tag`: more than one
+/// codepoint in the cell means `CODEPOINT_GRAPHEME`. A consumer gating its graphemes call on
+/// the tag drops every niqqud otherwise.
+#[test]
+fn a_grapheme_cell_reports_the_grapheme_content_tag() {
+    unsafe {
+        let mut handle: GhosttyTerminal = std::ptr::null_mut();
+        assert_eq!(
+            ghostty_terminal_new(
+                std::ptr::null(),
+                &mut handle,
+                GhosttyTerminalOptions {
+                    cols: 8,
+                    rows: 2,
+                    max_scrollback: 0,
+                },
+            ),
+            GHOSTTY_SUCCESS
+        );
+
+        // 'A' at column 0; bet + dagesh (U+05D1 U+05BC) as one two-codepoint cell at column 1.
+        let bytes = "A\u{05D1}\u{05BC}".as_bytes();
+        ghostty_terminal_vt_write(handle, bytes.as_ptr(), bytes.len());
+
+        let tag_of = |x: u16| -> GhosttyCellContentTag {
+            let cell_ref = grid_ref(handle, GHOSTTY_POINT_TAG_ACTIVE, x, 0);
+            let mut raw: GhosttyCell = 0;
+            assert_eq!(ghostty_grid_ref_cell(&cell_ref, &mut raw), GHOSTTY_SUCCESS);
+            cell_get::<GhosttyCellContentTag>(raw, GHOSTTY_CELL_DATA_CONTENT_TAG)
+        };
+
+        assert_eq!(
+            tag_of(1),
+            GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME,
+            "a base-plus-combining-mark cell must wear the grapheme tag, as the oracle does"
+        );
+        assert_eq!(
+            tag_of(0),
+            GHOSTTY_CELL_CONTENT_CODEPOINT,
+            "a single-codepoint cell must stay a plain codepoint cell"
+        );
+
+        ghostty_terminal_free(handle);
+    }
+}
+
+/// A pure out-param's `.size` must be written, never read. The oracle whole-struct-assigns at
+/// all four of these sites (measured in `ruuah-vt-ghostty`'s
+/// `a_pure_out_params_size_is_overwritten_not_echoed`), and its own tests pass `undefined`
+/// out-params -- so a consumer following upstream's pattern hands us uninitialised memory in
+/// that field. Echoing it back is the audit's finding 15: the harness above never saw it
+/// because `read_snapshot` always stamps the correct size before every call.
+#[test]
+fn a_pure_out_params_size_is_overwritten_here_too() {
+    const GARBAGE: usize = 0xDEAD;
+    unsafe {
+        let mut handle: GhosttyTerminal = std::ptr::null_mut();
+        assert_eq!(
+            ghostty_terminal_new(
+                std::ptr::null(),
+                &mut handle,
+                GhosttyTerminalOptions {
+                    cols: 8,
+                    rows: 2,
+                    max_scrollback: 0,
+                },
+            ),
+            GHOSTTY_SUCCESS
+        );
+        let bytes = b"\x1b[1mB";
+        ghostty_terminal_vt_write(handle, bytes.as_ptr(), bytes.len());
+
+        // ghostty_style_default
+        let mut style = GhosttyStyle {
+            size: GARBAGE,
+            ..std::mem::zeroed()
+        };
+        ghostty_style_default(&mut style);
+        assert_eq!(style.size, size_of::<GhosttyStyle>());
+
+        // ghostty_terminal_get(CURSOR_STYLE)
+        let mut cursor_style = GhosttyStyle {
+            size: GARBAGE,
+            ..std::mem::zeroed()
+        };
+        assert_eq!(
+            ghostty_terminal_get(
+                handle,
+                GHOSTTY_TERMINAL_DATA_CURSOR_STYLE,
+                (&raw mut cursor_style).cast::<c_void>(),
+            ),
+            GHOSTTY_SUCCESS
+        );
+        assert_eq!(cursor_style.size, size_of::<GhosttyStyle>());
+
+        // ghostty_terminal_grid_ref
+        let point = GhosttyPoint {
+            tag: GHOSTTY_POINT_TAG_ACTIVE,
+            value: GhosttyPointValue {
+                coordinate: GhosttyPointCoordinate { x: 0, y: 0 },
+            },
+        };
+        let mut cell_ref = GhosttyGridRef {
+            size: GARBAGE,
+            node: std::ptr::null_mut(),
+            x: 0,
+            y: 0,
+        };
+        assert_eq!(
+            ghostty_terminal_grid_ref(handle, point, &mut cell_ref),
+            GHOSTTY_SUCCESS
+        );
+        assert_eq!(cell_ref.size, size_of::<GhosttyGridRef>());
+
+        // ghostty_grid_ref_style
+        let mut cell_style = GhosttyStyle {
+            size: GARBAGE,
+            ..std::mem::zeroed()
+        };
+        assert_eq!(
+            ghostty_grid_ref_style(&cell_ref, &mut cell_style),
+            GHOSTTY_SUCCESS
+        );
+        assert_eq!(cell_style.size, size_of::<GhosttyStyle>());
+
+        ghostty_terminal_free(handle);
+    }
+}
+
+/// A NULL out-param on the four grid-ref readers is the validate-only idiom, not an error.
+/// The headers say "(may be NULL)" and the oracle skips the write and returns success --
+/// measured in `ruuah-vt-ghostty`'s `a_null_out_param_validates_instead_of_failing`. This
+/// port refused all four with INVALID_VALUE, making every valid position look invalid to a
+/// consumer probing with NULL (finding 23). A ref that does NOT resolve must still fail, so
+/// NULL-out is not simply always-success.
+#[test]
+fn a_null_out_param_validates_here_too() {
+    unsafe {
+        let mut handle: GhosttyTerminal = std::ptr::null_mut();
+        assert_eq!(
+            ghostty_terminal_new(
+                std::ptr::null(),
+                &mut handle,
+                GhosttyTerminalOptions {
+                    cols: 8,
+                    rows: 2,
+                    max_scrollback: 0,
+                },
+            ),
+            GHOSTTY_SUCCESS
+        );
+        let bytes = b"hi";
+        ghostty_terminal_vt_write(handle, bytes.as_ptr(), bytes.len());
+
+        let point = |x: u16, y: u32| GhosttyPoint {
+            tag: GHOSTTY_POINT_TAG_ACTIVE,
+            value: GhosttyPointValue {
+                coordinate: GhosttyPointCoordinate { x, y },
+            },
+        };
+
+        assert_eq!(
+            ghostty_terminal_grid_ref(handle, point(0, 0), std::ptr::null_mut()),
+            GHOSTTY_SUCCESS,
+            "grid_ref with NULL out must validate the point, not refuse it"
+        );
+        assert_eq!(
+            ghostty_terminal_grid_ref(handle, point(99, 99), std::ptr::null_mut()),
+            GHOSTTY_INVALID_VALUE,
+            "NULL out must not turn an out-of-bounds point into success"
+        );
+
+        let cell_ref = grid_ref(handle, GHOSTTY_POINT_TAG_ACTIVE, 0, 0);
+        assert_eq!(
+            ghostty_grid_ref_cell(&cell_ref, std::ptr::null_mut()),
+            GHOSTTY_SUCCESS
+        );
+        assert_eq!(
+            ghostty_grid_ref_row(&cell_ref, std::ptr::null_mut()),
+            GHOSTTY_SUCCESS
+        );
+        assert_eq!(
+            ghostty_grid_ref_style(&cell_ref, std::ptr::null_mut()),
+            GHOSTTY_SUCCESS
+        );
+
+        let dead = GhosttyGridRef {
+            size: size_of::<GhosttyGridRef>(),
+            node: std::ptr::null_mut(),
+            x: 0,
+            y: 0,
+        };
+        assert_eq!(
+            ghostty_grid_ref_cell(&dead, std::ptr::null_mut()),
+            GHOSTTY_INVALID_VALUE,
+            "a dead ref stays an error even with NULL out"
+        );
+
+        ghostty_terminal_free(handle);
+    }
+}
+
+/// `ROW_DATA_DIRTY` is part of the published surface (`row.zig`, `dirty = 8`, read straight
+/// off the row) and the core tracks per-row dirty internally -- but the ABI refused the
+/// query with INVALID_VALUE, so a renderer built on it could never know what to repaint
+/// (finding 28). Both directions: a written row reports dirty, an untouched one does not.
+#[test]
+fn row_data_dirty_reports_the_rows_a_renderer_owes() {
+    unsafe {
+        let mut handle: GhosttyTerminal = std::ptr::null_mut();
+        assert_eq!(
+            ghostty_terminal_new(
+                std::ptr::null(),
+                &mut handle,
+                GhosttyTerminalOptions {
+                    cols: 8,
+                    rows: 3,
+                    max_scrollback: 0,
+                },
+            ),
+            GHOSTTY_SUCCESS
+        );
+        let bytes = b"hi";
+        ghostty_terminal_vt_write(handle, bytes.as_ptr(), bytes.len());
+
+        let dirty_of = |y: u32| -> bool {
+            let row_ref = grid_ref(handle, GHOSTTY_POINT_TAG_ACTIVE, 0, y);
+            let mut raw: GhosttyRow = 0;
+            assert_eq!(ghostty_grid_ref_row(&row_ref, &mut raw), GHOSTTY_SUCCESS);
+            row_get::<bool>(raw, GHOSTTY_ROW_DATA_DIRTY)
+        };
+
+        assert!(dirty_of(0), "the row that was written must report dirty");
+        assert!(
+            !dirty_of(2),
+            "a row nothing touched must not report dirty, or every frame repaints everything"
+        );
+
+        ghostty_terminal_free(handle);
+    }
+}

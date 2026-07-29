@@ -43,8 +43,15 @@ possible at all. Ghostty enforces the same split physically between `src/termina
 | 5 | Damage tracking, frame channel, pty host, and a renderer that draws vim | `v0.5.0` |
 | 5.5a | Display bidi: Hebrew reorders, measured against the Unicode conformance suite | - |
 | 5.5b | Shaping: niqqud placed by the font's GPOS table, not by default bearings | - |
+| 5.6 | OSC 133 semantic regions and the visual caret | - |
+| 6 | The C ABI: `libruuah-vt.a`, 13 exports, layouts pinned against `ghostty_type_json()` | `v0.6.0` |
+| 7 | GPU backend (wgpu compute), byte-identical to the CPU reference | `v0.7.0` |
+| - | S1 audit wave: 7 defects, each control seen to fail first | `v0.7.1` |
+| - | S2-S4 audit wave: findings 8-31, Miri added as the UB oracle | `v0.7.2` |
 
-**195 tests green.** Corpus: 78 cases, 71 match / 7 diff, 78/78 met expectation.
+**271 tests green.** Corpus: 125 cases, 114 match / 11 diff, 125/125 met expectation.
+Every remaining diff case pins its exact difference paths, so it can go red by being
+differently wrong.
 
 Hebrew is now correct end to end: reordered by the Unicode algorithm and pointed by the font.
 

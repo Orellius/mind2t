@@ -310,6 +310,44 @@ mod tests {
         }
     }
 
+    // The three controls below exist because the audit's mutations M2, M4 and M5 proved
+    // their comparisons could be deleted with every gate still green -- the S1 lesson
+    // applied to the fields it missed (finding 25). Each pair differs in exactly one field,
+    // so the assertion is on the full difference list, not a needle in it.
+
+    #[test]
+    fn a_screen_disagreement_is_reported() {
+        let a = snapshot(4, 2);
+        let mut b = a.clone();
+        b.screen = Screen::Alternate;
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "screen");
+    }
+
+    #[test]
+    fn a_cursor_visibility_disagreement_is_reported() {
+        let a = snapshot(4, 2);
+        let mut b = a.clone();
+        b.cursor.visible = false;
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "cursor.visible");
+    }
+
+    #[test]
+    fn a_cursor_style_disagreement_is_reported() {
+        let a = snapshot(4, 2);
+        let mut b = a.clone();
+        b.cursor.style.bold = true;
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "cursor.style");
+    }
+
     #[test]
     fn history_length_short_circuits_instead_of_shifting_every_row() {
         // A history that is one row longer shifts every row against its partner. Reporting

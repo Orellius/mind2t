@@ -142,11 +142,17 @@ impl FrameWriter {
 
         let shared = &*self.shared;
         let start = shared.generation.load(Ordering::Relaxed);
-        let generation = start + 2;
+        // `| 1` rather than `+ 1`: if the previous publish panicked out of its fill closure,
+        // the counter is still odd, and a blind bump would land it EVEN during this fill --
+        // torn reads wearing valid generations -- and ODD at completion, inverting the
+        // protocol permanently (finding 17). This way a normal publish is unchanged and a
+        // recovery publish re-synchronizes the parity instead.
+        let inflight = start | 1;
+        let generation = inflight + 1;
 
         // Odd: a reader arriving now sees a publish in flight and leaves. The release fence
         // keeps the payload stores below from being observed before this marker.
-        shared.generation.store(start + 1, Ordering::Relaxed);
+        shared.generation.store(inflight, Ordering::Relaxed);
         fence(Ordering::Release);
 
         shared

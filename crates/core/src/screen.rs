@@ -9,6 +9,8 @@
 //! Test strategy: measured against libghostty-vt by the corpus; unit tests below cover the
 //!   region arithmetic, where off-by-ones are cheapest to catch in isolation.
 
+use ruuah_vt_snapshot::Semantic;
+
 use crate::cell::Cell;
 use crate::grid::Grid;
 use crate::history::History;
@@ -35,6 +37,14 @@ pub struct Screen {
     pub scroll_top: u16,
     pub scroll_bottom: u16,
     pub saved: Option<SavedCursor>,
+    /// What OSC 133 says this screen's cursor is currently writing. Per-screen because it is
+    /// per-cursor upstream (`Screen.zig:173`): every switch copies it across with the cursor
+    /// EXCEPT a 1049 exit, whose `restoreCursor` restores everything but this -- so a `C`
+    /// issued on the alternate screen must not leak back (finding 20).
+    pub semantic_content: Semantic,
+    /// The input state was declared to end at end-of-line, so the next row entry returns the
+    /// cursor to output instead of marking a continuation.
+    pub semantic_clear_at_eol: bool,
     /// Rows that have scrolled off the top of this screen. The alternate screen is created
     /// with a zero budget, which is how it ends up with no scrollback.
     pub history: History,
@@ -51,6 +61,8 @@ impl Screen {
             scroll_top: 0,
             scroll_bottom: rows.saturating_sub(1),
             saved: None,
+            semantic_content: Semantic::Output,
+            semantic_clear_at_eol: false,
         }
     }
 
@@ -267,6 +279,48 @@ impl Screen {
             .scroll_up(self.scroll_top, self.scroll_bottom, count, blank);
     }
 
+    /// Scrolls everything written into scrollback, so a clear at a prompt keeps history.
+    ///
+    /// Mirrors `PageList.scrollClear` (`PageList.zig:3099`): it walks the active area from
+    /// the bottom for the first row holding text and scrolls by the count that reaches it,
+    /// so trailing blank rows are not pushed. It ignores the scroll region -- upstream grows
+    /// the page list itself rather than scrolling a region -- which is why this does not
+    /// route through `scroll_region_up`.
+    pub fn scroll_clear(&mut self, blank: Cell) {
+        let rows = self.rows();
+        let mut count = 0;
+        for y in (0..rows).rev() {
+            let row_has_text = (0..self.grid.cols())
+                .any(|x| self.grid.cell(self.grid.index(x, y)).has_text());
+            if row_has_text {
+                count = y + 1;
+                break;
+            }
+        }
+        if count == 0 {
+            return;
+        }
+        if self.history.enabled() {
+            for y in 0..count {
+                let row = self.grid.extract_row(y);
+                self.history.push(row);
+            }
+        }
+        let last = self.last_row();
+        self.grid.scroll_up(0, last, count, blank);
+
+        // `Screen.scrollClear` then calls `cursorReload` (`Screen.zig:844`), which derives the
+        // cursor from its tracked pin: the pin follows its row up, and only when that row has
+        // left the active area entirely does it reset to the top-left.
+        if self.y >= count {
+            let y = self.y - count;
+            self.set_y(y);
+        } else {
+            self.x = 0;
+            self.set_y(0);
+        }
+    }
+
     pub fn scroll_down(&mut self, count: u16, blank: Cell) {
         self.grid
             .scroll_down(self.scroll_top, self.scroll_bottom, count, blank);
@@ -284,13 +338,18 @@ impl Screen {
         });
     }
 
+    /// With nothing saved, upstream restores a synthetic default cursor
+    /// (Terminal.zig:1872): home, no pending wrap. The pen half lives in `Terminal`.
     pub fn restore_cursor(&mut self) {
-        if let Some(saved) = self.saved {
-            self.x = saved.x.min(self.last_col());
-            let y = saved.y.min(self.last_row());
-            self.set_y(y);
-            self.pending_wrap = saved.pending_wrap;
-        }
+        let saved = self.saved.unwrap_or(SavedCursor {
+            x: 0,
+            y: 0,
+            pending_wrap: false,
+        });
+        self.x = saved.x.min(self.last_col());
+        let y = saved.y.min(self.last_row());
+        self.set_y(y);
+        self.pending_wrap = saved.pending_wrap;
     }
 
     /// Clears the whole buffer, its history and the cursor, as entering the alternate

@@ -122,12 +122,19 @@ fn every_published_struct_matches_the_library() {
             "{name}: libghostty-vt says {their_size} bytes, ruuah-vt publishes {size}"
         );
 
-        if let Some(their_align) = described.get("alignment").and_then(Value::as_u64) {
-            assert_eq!(
-                their_align as usize, align,
-                "{name}: alignment differs, so a consumer's struct would be laid out differently"
-            );
-        }
+        // The key is "align" (types.zig:143), and the lookup is required rather than
+        // if-let: this assertion spent its first weeks dead because it read "alignment",
+        // which the report never contains, and an assertion that silently skips is
+        // indistinguishable from one that passes (finding 24). Proven by mutation: with
+        // the old key, an align expectation of +999 passed.
+        let their_align = described
+            .get("align")
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| panic!("{name} has no align in the report"));
+        assert_eq!(
+            their_align as usize, align,
+            "{name}: alignment differs, so a consumer's struct would be laid out differently"
+        );
 
         for (field, offset) in fields {
             let their_offset = described["fields"][field]["offset"]

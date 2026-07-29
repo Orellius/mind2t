@@ -67,7 +67,80 @@ Three things worth keeping from it, because each cost a wrong first attempt:
   with the floor in place still exited 0. The fix is a count re-derived from the raw file text
   in `tests/corpus.rs`, which shares no code with the loader.
 
-Findings 8 through 31 (S2/S3/S4) remain open in the audit's order.
+**The 2026-07-28 audit is fully closed: all 31 findings fixed**, on branch `audit-fixes-s2`
+(2026-07-29), tagged `v0.7.2` after merge. Each fix carries a control run against the broken
+version and seen to fail; gates green after every one (271 tests, corpus 125 cases
+114 match / 11 diff 125/125, 13/13 exports). **Miri is now in the toolbox** (nightly + miri
+installed 2026-07-29): `cargo +nightly miri test -p ruuah-vt-abi --test soundness` is the
+oracle for UB-class defects, where a native run passing proves nothing -- run it whenever
+the ABI handle model changes. **Next: slice 8, the minimal Swift host.**
+
+- 8 `ed5c115` DECRC with nothing saved restores the synthetic default cursor, not nothing.
+- 9 `58378d1` HT no longer clears `pending_wrap`; upstream's horizontalTab never touches it.
+- 10 `6feed8d` reflow gated on DECAWM (`reflow = modes.get(.wraparound)`).
+- 11 `5239f3c` ED 2 at a prompt scrolls into scrollback first. Two halves: the row count comes
+  from the last row holding text (`PageList.zig:3099`), and the cursor follows its tracked pin,
+  homing ONLY when that row left the active area (`Screen.zig:844` `cursorReload`). The first
+  attempt got the grid right and the cursor wrong, and **difftest exited 0 while still wrong** --
+  a case declared `diff` stays green whether or not the fix worked, so the flip to MATCH is the
+  only real signal. Read the dump, not the exit code.
+- 12 `5080cb2` `STYLE_ID` had dead bits 25-40. The id is **derived from the style**, not a table
+  index: upstream's number is its own allocation order and this ABI resolves styles by grid
+  position, so there is no table to index. Guarantees provided: 0 means default, equal styles
+  mean equal ids. Deliberate, documented divergence -- revisit if a consumer ever needs the id
+  as a lookup key.
+- 13 `744d504` `CONTENT_TAG` reports `CODEPOINT_GRAPHEME` when the cluster has more than one
+  codepoint (bit 42 of the packed cell). Upstream rule pinned by measurement through its own
+  ABI: `appendGrapheme` flips the tag, `hasGrapheme` IS the tag.
+- 14+22 `2812f8c` reads are reads: the view cache is `Mutex<Option<Snapshot>>`, read entry
+  points take `&Terminal`, and a grid ref's `node` is the raw handle rather than a
+  `&mut`-derived pointer. Both controls live in `abi/tests/soundness.rs` and only fail under
+  **Miri** -- natively, UB looks like passing. Run it whenever the handle model changes.
+- 15 `413fdfe` a pure out-param's `.size` is written from the type, never read. The oracle
+  whole-struct-assigns at all four equivalent sites and its own tests pass `undefined`
+  out-params. `GHOSTTY_INIT_SIZED` governs structs passed IN, not out-params.
+- 16 `0ddbb5e` a resize past the frame channel's capacity is refused at `Host::resize` (and
+  `spawn`) with a structured error, BEFORE the pty sees it. The pump's three `let _ =`
+  publishes became expects -- with both entries gated, a failed publish is a bug in the gate.
+- 17 `c5c5762` the seqlock writer marks in-flight with `start | 1`, not `start + 1`: after a
+  panic escaped a fill closure, the blind bump inverted the counter's parity and every torn
+  read thereafter wore a valid generation. One-line fix, deterministic single-threaded control.
+- 18 `961a522` every `expect = "diff"` case now pins `diff_paths`, the exact measured set of
+  difference paths, and `met_expectation` demands set equality; the loader refuses an
+  unpinned diff case. The `print_measured_diff_paths` authoring test (ignored) regenerates
+  pins when the oracle moves. This closes the trap finding 11 walked into.
+- 19 `de9f1e3` the scroll region is carried across the screen switch in both directions --
+  upstream keeps ONE `Terminal.scrolling_region` and `switchScreenMode` never touches it.
+  Both direction cases measured DIFF first, flipped, promoted.
+- 20 `4b97769` OSC 133 state is per-Screen and travels with the cursor: every switch carries
+  it EXCEPT a 1049 exit (`restoreCursor` restores everything but `semantic_content`), so a
+  `C` issued on the alt screen no longer leaks back.
+
+- 21 `1d54493` a rows-only resize keeps custom HTS stops; the rebuild is guarded on the
+  column count, exactly as upstream guards it (`Terminal.zig:3766`).
+- 23 `6fdc023` a NULL out-param on the four grid-ref readers validates instead of failing --
+  the headers say "(may be NULL)" and the oracle skips only the write. An out-of-bounds
+  point and a dead ref stay errors, so it is not always-success.
+- 24 `aa2f6fb` the alignment parity assertion read `"alignment"` where the report says
+  `"align"` and silently skipped every struct; now required, not if-let. Deadness proven by
+  mutation both ways.
+- 25 `17b55db` `screen`, `cursor.visible` and `cursor.style` comparisons have unit controls;
+  the audit's mutations M2/M4/M5 now each kill exactly their control.
+- 26 `91cd1f9` the 47/1047/1049 mode split is explicit: 47/1047 never erase and copy the
+  cursor in BOTH directions; a second `1049h` still saves and re-clears; `1049l` on the
+  primary is still a DECRC. Three probes flipped and promoted.
+- 27 `3dbb50f` the spacer head is written through the ordinary cell path -- pen style and
+  cursor semantic -- not the erase blank.
+- 28 `4d6181a` `ROW_DATA_DIRTY` answers from the view's damage (bit 6 of the packed row)
+  instead of returning INVALID_VALUE.
+- 29 `a0420c4` the OSC 133 parser matches upstream's strictness: action letter alone, `L`
+  takes no options, `k=` value exactly one byte.
+- 30 `dbbabe8` all 13 exports document their real caller contract; clippy's
+  missing_safety_doc count went 13 to 0.
+- 31 the docs sweep: README carried 195 tests and stopped at slice 5.5b; both docs now
+  state the wave and the current gate numbers.
+
+The audit backlog is empty. Next: **slice 8, the minimal Swift host**.
 
 Slice 5.6, `[tested]`: **OSC 133 and the visual caret.** The core tracks prompt / input /
 output regions (`crates/core/src/semantic.rs`), and the renderer draws the caret at

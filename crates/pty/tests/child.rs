@@ -204,3 +204,37 @@ fn the_renderer_only_owes_the_rows_the_child_actually_touched() {
         "rows nothing touched should not be repainted: {stale:?}"
     );
 }
+
+#[test]
+fn a_resize_past_capacity_is_refused_and_the_display_keeps_updating() {
+    // `Options` promises a resize past the channel's capacity is "reported rather than drawn
+    // wrong". The audit's finding 16 measured the opposite: the resize succeeded, the pump's
+    // publishes started failing into `let _ =`, and the display froze permanently while the
+    // child kept drawing. Both halves are asserted: the report, and the display staying live.
+    let (host, reader) = Host::spawn(
+        sh("read _ignored; printf 'still alive'"),
+        Options::new(40, 6),
+    )
+    .expect("spawn");
+
+    wait_for(&reader, |frame| frame.rows == 6);
+
+    // Default capacity is 400x160; this exceeds both axes.
+    let result = host.resize(Geometry {
+        cols: 500,
+        rows: 200,
+    });
+    assert!(
+        result.is_err(),
+        "a resize past the channel's capacity must be reported, not swallowed"
+    );
+
+    // The refused resize must leave the pipeline running: later output still becomes frames.
+    host.send(b"\n").expect("send");
+    let frame = wait_for(&reader, |frame| text(frame).contains("still alive"));
+    assert_eq!(
+        (frame.cols, frame.rows),
+        (40, 6),
+        "the refused resize must not have reached the terminal"
+    );
+}

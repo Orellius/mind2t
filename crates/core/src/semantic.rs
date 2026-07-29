@@ -21,9 +21,20 @@ impl State {
         if params.first().copied() != Some(b"133".as_slice()) {
             return;
         }
-        let Some(action) = params.get(1).and_then(|field| field.first().copied()) else {
+        let Some(field) = params.get(1) else {
             return;
         };
+        // The action field is the letter ALONE. Upstream demands the byte after the letter
+        // be a semicolon or the end (semantic_prompt.zig:352) and drops the whole command
+        // otherwise; vte has already split on semicolons, so any longer field here is that
+        // trailing garbage (finding 29).
+        let &[action] = *field else {
+            return;
+        };
+        // L is the one action that rejects options outright (semantic_prompt.zig:367).
+        if action == b'L' && params.len() > 2 {
+            return;
+        }
 
         match action {
             // A is fresh-line-then-new-prompt. N may terminate a previous command first, but
@@ -59,14 +70,14 @@ impl State {
     /// upstream's `printWrap` restores what it saved. That is the whole of why `B` and `I`
     /// behave identically everywhere except across a wrap.
     pub(crate) fn wrap(&mut self, blank: Cell) {
-        let content = self.semantic_content;
-        let clear_at_eol = self.semantic_clear_at_eol;
+        let content = self.screen().semantic_content;
+        let clear_at_eol = self.screen().semantic_clear_at_eol;
 
         self.screen_mut().wrap_line(blank);
         self.enter_row();
 
-        self.semantic_content = content;
-        self.semantic_clear_at_eol = clear_at_eol;
+        self.screen_mut().semantic_content = content;
+        self.screen_mut().semantic_clear_at_eol = clear_at_eol;
         if content == Semantic::Prompt {
             self.set_row_semantic(RowSemantic::PromptContinuation);
         }
@@ -92,31 +103,31 @@ impl State {
     /// a false positive, which upstream then undoes in `end_input` when output starts at
     /// column zero.
     fn enter_row(&mut self) {
-        if self.semantic_content == Semantic::Output {
+        if self.screen().semantic_content == Semantic::Output {
             return;
         }
-        if self.semantic_clear_at_eol {
-            self.semantic_content = Semantic::Output;
-            self.semantic_clear_at_eol = false;
+        if self.screen().semantic_clear_at_eol {
+            self.screen_mut().semantic_content = Semantic::Output;
+            self.screen_mut().semantic_clear_at_eol = false;
         } else {
             self.set_row_semantic(RowSemantic::PromptContinuation);
         }
     }
 
     fn start_prompt(&mut self, mark: RowSemantic) {
-        self.semantic_content = Semantic::Prompt;
-        self.semantic_clear_at_eol = false;
+        self.screen_mut().semantic_content = Semantic::Prompt;
+        self.screen_mut().semantic_clear_at_eol = false;
         self.set_row_semantic(mark);
     }
 
     fn start_input(&mut self, clear_at_eol: bool) {
-        self.semantic_content = Semantic::Input;
-        self.semantic_clear_at_eol = clear_at_eol;
+        self.screen_mut().semantic_content = Semantic::Input;
+        self.screen_mut().semantic_clear_at_eol = clear_at_eol;
     }
 
     fn start_output(&mut self) {
-        self.semantic_content = Semantic::Output;
-        self.semantic_clear_at_eol = false;
+        self.screen_mut().semantic_content = Semantic::Output;
+        self.screen_mut().semantic_clear_at_eol = false;
     }
 
     /// C: end of input, start of output.
@@ -150,8 +161,10 @@ impl State {
 fn prompt_mark(params: &[&[u8]]) -> RowSemantic {
     for option in params.iter().skip(2) {
         if let Some(value) = option.strip_prefix(b"k=") {
-            return match value.first() {
-                Some(b'c') | Some(b's') => RowSemantic::PromptContinuation,
+            // The value is taken only when it is exactly one byte (semantic_prompt.zig:203);
+            // anything longer falls back to the initial kind, a plain prompt (finding 29).
+            return match value {
+                b"c" | b"s" => RowSemantic::PromptContinuation,
                 _ => RowSemantic::Prompt,
             };
         }

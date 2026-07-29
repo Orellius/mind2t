@@ -11,7 +11,7 @@
 //!   restating expected cell contents here.
 
 use ruuah_vt_snapshot::{
-    Cursor, Damage, Dirty, Screen as SnapshotScreen, Semantic, Snapshot, Style,
+    Cursor, Damage, Dirty, RowSemantic, Screen as SnapshotScreen, Snapshot, Style,
 };
 use unicode_width::UnicodeWidthChar;
 use vte::{Params, Perform};
@@ -114,13 +114,6 @@ pub(crate) struct State {
     /// cluster it belongs to. Cleared by anything that moves the cursor.
     pub(crate) last_print: Option<usize>,
     pub(crate) max_scrollback: usize,
-    /// What OSC 133 says the cursor is currently writing: prompt, user input, or output.
-    /// Shared across both screens rather than kept per screen, because it is measured to
-    /// survive a switch in either direction.
-    pub(crate) semantic_content: Semantic,
-    /// The input state was declared to end at end-of-line, so the next row entry returns the
-    /// cursor to output instead of marking a continuation.
-    pub(crate) semantic_clear_at_eol: bool,
     /// Something changed that no per-row flag can express, so the whole frame is stale.
     ///
     /// Four triggers, each confirmed in upstream's `Terminal.zig` as the places that set its
@@ -144,8 +137,6 @@ impl State {
             cursor_visible: true,
             last_print: None,
             max_scrollback,
-            semantic_content: Semantic::Output,
-            semantic_clear_at_eol: false,
             full_damage: false,
         }
     }
@@ -255,20 +246,29 @@ impl State {
             if !self.autowrap {
                 return;
             }
+            // Through the ordinary cell path, not the erase blank: upstream's spacer head
+            // takes cursor.style_id and the cursor's semantic_content (Terminal.zig:1411
+            // into the write at 1565), so it is bold-and-red under a bold red pen and part
+            // of the input under OSC 133 (finding 27).
+            let pen = self.pen;
+            let semantic = self.screen().semantic_content;
+            let style_id = self.screen_mut().grid.intern_style(pen);
             let (x, y) = (self.screen().x, self.screen().y);
             let index = self.screen().grid.index(x, y);
             self.screen_mut().grid.write(
                 index,
                 Cell {
+                    codepoint: 0,
+                    style_id,
                     wide: Wide::SpacerHead,
-                    ..blank
+                    flags: CellFlags::with_semantic(semantic),
                 },
             );
             self.wrap(blank);
         }
 
         let pen = self.pen;
-        let semantic = self.semantic_content;
+        let semantic = self.screen().semantic_content;
         let style_id = self.screen_mut().grid.intern_style(pen);
         let (x, y) = (self.screen().x, self.screen().y);
         let index = self.screen().grid.index(x, y);
@@ -361,6 +361,27 @@ impl State {
         self.goto(x, y + count.min(limit));
     }
 
+    /// ED 2 at a prompt scrolls the screen into scrollback before clearing, so `^L` keeps
+    /// history (`Terminal.zig:3303-3337`, the `at_prompt` block).
+    ///
+    /// Upstream walks the active area upwards from the bottom, but `SemanticPrompt` has only
+    /// the three values matched there -- a prompt row breaks the loop and a `none` row aborts
+    /// it -- so the decision is settled by the bottom row alone. The alternate screen is
+    /// excluded: it has no scrollback to keep.
+    pub(crate) fn scroll_clear_at_prompt(&mut self, blank: Cell) {
+        if self.active != Active::Primary {
+            return;
+        }
+        let last = self.screen().rows().saturating_sub(1);
+        let at_prompt = matches!(
+            self.screen().grid.row_meta(last).semantic_prompt,
+            RowSemantic::Prompt | RowSemantic::PromptContinuation
+        );
+        if at_prompt {
+            self.screen_mut().scroll_clear(blank);
+        }
+    }
+
     pub(crate) fn save_cursor(&mut self) {
         self.screen_mut().save_cursor();
         self.saved_pen = Some(self.pen);
@@ -368,18 +389,17 @@ impl State {
 
     pub(crate) fn restore_cursor(&mut self) {
         self.screen_mut().restore_cursor();
-        if let Some(pen) = self.saved_pen {
-            self.pen = pen;
-        }
+        self.pen = self.saved_pen.unwrap_or(Style::DEFAULT);
         self.last_print = None;
     }
 
+    /// Upstream's horizontalTab is a bare cursorRight loop that never touches
+    /// `pending_wrap` (Terminal.zig:2111) -- at the last column it does nothing at all.
     pub(crate) fn tab_forward(&mut self, count: u16) {
         for _ in 0..count.max(1) {
             let next = self.tabs.next(self.screen().x);
             self.screen_mut().x = next;
         }
-        self.screen_mut().pending_wrap = false;
         self.last_print = None;
     }
 
@@ -400,12 +420,23 @@ impl State {
         if cols == 0 || rows == 0 {
             return;
         }
-        // The primary rejoins soft-wrapped lines; the alternate is documented by the ABI as
-        // not reflowing, so its rows only gain or lose columns.
-        crate::resize::apply(&mut self.primary, cols, rows, Mode::Rejoin);
+        // The primary rejoins soft-wrapped lines only while DECAWM is on -- upstream passes
+        // reflow = modes.get(.wraparound) (Terminal.zig:3783). The alternate is documented
+        // by the ABI as not reflowing, so its rows only gain or lose columns.
+        let primary_mode = if self.autowrap {
+            Mode::Rejoin
+        } else {
+            Mode::Truncate
+        };
+        let cols_changed = cols != self.screen().cols();
+        crate::resize::apply(&mut self.primary, cols, rows, primary_mode);
         crate::resize::apply(&mut self.alternate, cols, rows, Mode::Truncate);
 
-        self.tabs = TabStops::new(cols);
+        // Only when the column count changed -- upstream guards its rebuild on exactly that
+        // (`Terminal.zig:3766`), so a rows-only resize keeps custom HTS stops (finding 21).
+        if cols_changed {
+            self.tabs = TabStops::new(cols);
+        }
         self.last_print = None;
         // After the grids are rebuilt, so the whole NEW geometry is marked rather than the
         // old row count. Upstream sets the same clear bit from its own resize.

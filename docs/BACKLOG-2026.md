@@ -1,5 +1,21 @@
 # What a terminal needs in 2026 — the open backlog
 
+> **2026-07-30 append-all wave (one session, Orel's order):** CLOSED from this file --
+> P0.2 VS16 boundary (emoji presentation renders in its single cell; width stays
+> oracle-narrow, corpus pin `vs16-cluster-stays-narrow`), DSR/DA replies (the slice 9
+> SEAM: core answerback queue drained by the pump; esctest2 harness wiring itself is
+> still open below), styled underlines (5 kinds + SGR 58/59 color, pixel-proven), OSC 8
+> hyperlinks (cmd+click opens), OSC 52 write + notifications + bell (event seam,
+> exactly-once), **kitty graphics v1** (vendored vte APC fork, direct transmit
+> f=24/32/PNG, placements, a=q answers -- icat's probe works), **sixel v1** (same image
+> pipeline, no oracle -- said loudly), ligatures + font-family + font-ligatures config,
+> live cmd+=/-/0 zoom, and true color CONFIRMED already-built since slice 1 (sgr.rs
+> parses both 38;2; and 38:2: shapes, corpus-pinned -- it was never missing). STILL
+> OPEN here: synchronized output (2026), SGR mouse, scrollback viewport, kitty
+> keyboard, esctest2 wiring, DA1 sixel-advertisement decision, kitty unicode
+> placeholders/z-index/animation/file-transmission.
+
+
 Written 2026-07-29 (IDT), after the first day RUUAH VT ran real work (Claude Code,
 vim, zsh) as an installed app. Everything below is verified-missing against this
 repo on that date, not guessed: `grep` for the mode numbers, the live defect, or

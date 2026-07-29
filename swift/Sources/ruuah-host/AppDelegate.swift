@@ -32,6 +32,8 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     private var spawnCount = 0
     private var windowSized = false
     private var tick: UInt64 = 0
+    /// Zoom multiplier over the configured base size (cmd+= / cmd+- / cmd+0).
+    private var fontScale: Float = 1.0
     /// Background sessions are polled once per this many active ticks (~2 Hz at 60).
     private static let backgroundEvery: UInt64 = 30
 
@@ -108,6 +110,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         view.onBlockClick = { [weak self] block, event in
             self?.showBlockMenu(block, with: event)
         }
+        view.onZoomIn = { [weak self] in self?.zoom(by: 1.1) }
+        view.onZoomOut = { [weak self] in self?.zoom(by: 1 / 1.1) }
+        view.onZoomReset = { [weak self] in self?.zoom(to: 1.0) }
 
         newSession()
         guard !sessions.isEmpty else {
@@ -150,7 +155,8 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         let scale = Float(window.backingScaleFactor)
         guard
             let session = Session(
-                command: command, cols: cols, rows: rows, fontSize: baseFontSize * scale,
+                command: command, cols: cols, rows: rows,
+                fontSize: baseFontSize * scale * fontScale,
                 autoDirection: autoDirection, config: config, title: title)
         else { return }
         sessions.append(session)
@@ -274,6 +280,34 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             width: CGFloat(session.cellWidth) / scale,
             height: CGFloat(session.cellHeight) / scale)
         split.setPosition(SessionListController.width, ofDividerAt: 0)
+    }
+
+    // MARK: zoom
+
+    private func zoom(by factor: Float) { zoom(to: fontScale * factor) }
+
+    /// The window keeps its pixel size; the grid that fits it moves with the metrics.
+    /// Every session zooms together, so switching never changes the glyph size. Metrics
+    /// for the NEW size come from the C query -- no session knows them until its next
+    /// frame, which is too late to compute the grid.
+    private func zoom(to scale: Float) {
+        let clamped = min(max(scale, 0.5), 4.0)
+        let device = window.backingScaleFactor
+        let size = baseFontSize * Float(device) * clamped
+        var cellW: UInt32 = 0
+        var cellH: UInt32 = 0
+        guard ruuah_host_cell_metrics(size, &cellW, &cellH) == RUUAH_HOST_SUCCESS,
+            cellW > 0, cellH > 0
+        else { return }
+        fontScale = clamped
+        let inner = view.bounds.insetBy(dx: TerminalView.padding, dy: TerminalView.padding)
+        let cols = UInt16(max(2, Int(inner.width * device) / Int(cellW)))
+        let rows = UInt16(max(2, Int(inner.height * device) / Int(cellH)))
+        for session in sessions {
+            session.setFontSize(size, cols: cols, rows: rows)
+        }
+        window.contentResizeIncrements = NSSize(
+            width: CGFloat(cellW) / device, height: CGFloat(cellH) / device)
     }
 
     func windowDidEndLiveResize(_ notification: Notification) {

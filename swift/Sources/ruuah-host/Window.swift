@@ -20,6 +20,9 @@ final class TerminalView: NSView {
     var onPaste: (([UInt8]) -> Void)?
     var onNewSession: (() -> Void)?
     var onCloseSession: (() -> Void)?
+    var onZoomIn: (() -> Void)?
+    var onZoomOut: (() -> Void)?
+    var onZoomReset: (() -> Void)?
     /// A click on a block's gutter bar. The receiver owns the menu and the actions.
     var onBlockClick: ((Block, NSEvent) -> Void)?
 
@@ -113,10 +116,22 @@ final class TerminalView: NSView {
     /// disables every chord for exactly the user this terminal is built for (found live,
     /// 2026-07-29). ANSI key codes are layout-independent.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        let commandOnly: NSEvent.ModifierFlags = [.command]
-        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == commandOnly
+        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        // The zoom pair also answers with shift held: cmd+shift+= is how most fingers
+        // type "cmd plus", and nothing else owns those chords.
+        let zoomKey = event.keyCode == 24 || event.keyCode == 27
+        guard mods == [.command] || (mods == [.command, .shift] && zoomKey)
         else { return super.performKeyEquivalent(with: event) }
         switch event.keyCode {
+        case 24:  // kVK_ANSI_Equal -- cmd+= / cmd++
+            onZoomIn?()
+            return true
+        case 27:  // kVK_ANSI_Minus -- cmd+-
+            onZoomOut?()
+            return true
+        case 29:  // kVK_ANSI_0 -- cmd+0, back to the configured size
+            onZoomReset?()
+            return true
         case 9:  // kVK_ANSI_V
             if let text = NSPasteboard.general.string(forType: .string) {
                 onPaste?(Array(text.utf8))

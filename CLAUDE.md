@@ -33,9 +33,41 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
-**Slices 0 through 7 are done**, tagged `v0.7.0`, and the **S1 audit wave** on top of them is
-tagged `v0.7.1`. 252 tests green; corpus 124 cases, 98 match / 26 diff, 124/124 met
-expectation; `libruuah-vt.a` at 13/13 exports.
+**Slices 0 through 8 are done**; the audit waves on 0-7 are tagged `v0.7.1`/`v0.7.2` and
+slice 8 is tagged `v0.8.0`. 276 tests green; corpus 125 cases, 114 match / 11 diff, 125/125
+met expectation; `libruuah-vt.a` at 13/13 exports, `libruuah-vt-host.a` at 18/18.
+**Next: slice 9 (esctest2)** -- its blocker is gone: the DSR/DA reply path's seam,
+`Host::send`, is now exercised end to end through the C surface.
+
+**Slice 8, `[tested]` (2026-07-29): the embedder surface and the minimal Swift host.**
+`crates/host` exports `ruuah_host_spawn/poll/send/resize/free` -- the pty -> core -> frame ->
+`Renderer<GpuSurface>` pipeline behind one C handle, declared in
+`crates/host/include/ruuah_host.h`. The archive question is structural: **two Rust staticlibs
+cannot share one link** (each carries the Rust runtime), so the host crate depends on the abi
+crate as an rlib and `libruuah-vt-host.a` carries both surfaces (18 exports), while the pure
+drop-in `libruuah-vt.a` stays slim and untouched. `swift/` is the SwiftPM host: a
+systemLibrary target imports the crate's own header (no copied declarations), `--smoke` is
+the headless CI-assertable proof, and the window blits polled RGBA at backing resolution
+(font_size scaled by `backingScaleFactor`, one buffer pixel per device pixel), forwards keys
+as bytes, and derives resize geometry from the first frame. vim runs in it:
+`docs/images/slice-8-vim-window.png`.
+
+The slice's blind spot (tenth in a row) was the C boundary itself -- every pixel test stopped
+at a Rust API. The harness spawns a child through the C surface and **byte-compares polled
+RGBA against a reference built with the same `Publisher` the pump uses** and drawn on the CPU
+backend, so it also re-asserts CPU == GPU through the boundary; its control (a poll whose
+draw declines row 0) fails inside the skipped row's band. A second test proves `send` by
+round trip: bytes to `cat`, echoed by the line discipline, repeated by the child, matched as
+pixels against the doubled line.
+
+**The window's first vim frame found a real slice 7 defect.** One compute pass per operation
+makes wgpu's Metal backend open a command buffer per pass; none can complete before the one
+submit, and **Metal's 64-command-buffer pool blocks the 65th request forever, mid-encoding**
+-- every prior GPU test stayed under the pool by accident, and the hang reproduced headless
+under a 30s watchdog before the fix. `execute()` now records one pass for all operations
+(each dispatch is its own usage scope, so the blend's write->read hazard is still
+synchronized), which is also structurally cheaper. The watchdog test stays in `backend.rs`
+with the op-count floor asserted, and the fix is byte-equal to the CPU reference.
 
 **The S1 wave, `[tested]`.** A full audit on 2026-07-28 found 31 defects, 7 at S1, and the
 pattern behind nearly all of them was that **the harness rule had been applied to the core and
@@ -73,7 +105,7 @@ version and seen to fail; gates green after every one (271 tests, corpus 125 cas
 114 match / 11 diff 125/125, 13/13 exports). **Miri is now in the toolbox** (nightly + miri
 installed 2026-07-29): `cargo +nightly miri test -p ruuah-vt-abi --test soundness` is the
 oracle for UB-class defects, where a native run passing proves nothing -- run it whenever
-the ABI handle model changes. **Next: slice 8, the minimal Swift host.**
+the ABI handle model changes. Slice 8 landed on top of this wave.
 
 - 8 `ed5c115` DECRC with nothing saved restores the synthetic default cursor, not nothing.
 - 9 `58378d1` HT no longer clears `pending_wrap`; upstream's horizontalTab never touches it.
@@ -140,7 +172,8 @@ the ABI handle model changes. **Next: slice 8, the minimal Swift host.**
 - 31 the docs sweep: README carried 195 tests and stopped at slice 5.5b; both docs now
   state the wave and the current gate numbers.
 
-The audit backlog is empty. Next: **slice 8, the minimal Swift host**.
+The audit backlog is empty. Slice 8 (the minimal Swift host) followed it -- see the status
+block above.
 
 Slice 5.6, `[tested]`: **OSC 133 and the visual caret.** The core tracks prompt / input /
 output regions (`crates/core/src/semantic.rs`), and the renderer draws the caret at
@@ -263,11 +296,12 @@ neither dirty layer, so any damage implementation would have reported MATCH.
 Slice 6 (the C ABI) and slice 7 (the GPU backend) both landed after this, and the shipped
 artifact is now built and export-checked by `scripts/build-lib.sh`.
 
-Next after the audit backlog: **slice 8, a minimal Swift host.** Not RUUAH -- measured
-2026-07-28, its Swift app calls 99 `ghostty_*` symbols and not one is a VT-core symbol. The
-host is what makes slice 7's GPU backend mean anything (it renders into a buffer nobody
-displays today), and its key-encoder path is the same `Host::send` seam esctest2 needs for
-DSR/DA replies, so slice 9 gets its blocker removed as a by-product.
+Slice 8 delivered the host this paragraph used to promise -- and it is deliberately not
+RUUAH (measured 2026-07-28, its Swift app calls 99 `ghostty_*` symbols and not one is a
+VT-core symbol). The host made slice 7's GPU backend mean something (its buffer is now
+displayed, and its first window-sized frame exposed the Metal pool deadlock), and the
+key-encoder path proved the `Host::send` seam esctest2 needs for DSR/DA replies, so slice 9's
+blocker is gone.
 
 Slice 4, `[tested]`: reflow. Resize rejoins soft-wrapped rows into logical lines, re-splits at
 the new width, and maps the cursor through the transform. Scrollback takes part -- a logical
@@ -374,9 +408,13 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   bindings can be trusted rather than hoped about. `tests/abi_layout.rs` compares every
   offset this crate touches against it, which also catches the vendored headers drifting
   from the linked archive — something bindgen alone cannot see.
-- **Extend the harness BEFORE building the slice. Nine for nine.** Every slice has had a blind
+- **Extend the harness BEFORE building the slice. Ten for ten.** Every slice has had a blind
   spot that would have reported MATCH for a wrong implementation, and each was found by asking
-  "can the harness even see this?" before writing code. Three of the nine were total:
+  "can the harness even see this?" before writing code. Slice 8's was the C boundary itself:
+  every pixel test stopped at a Rust API, so `tests/host_abi.rs` byte-compares pixels polled
+  through the C surface against a reference built with the pump's own `Publisher` -- and that
+  harness caught the Metal command-buffer-pool deadlock on its first window-sized frame.
+  Three of the earlier nine were total:
   concurrency, pixels, and -- in slice 5.6 -- OSC 133, where `Snapshot` had no semantic surface
   at all, so a core with zero OSC handling scored a perfect match on every prompt and input
   region. A fourth, the caret's landing column, was invisible to the pixel harness itself:
@@ -562,6 +600,8 @@ rustfmt-clean; format only the files a change actually touches, or the diff drow
 
 ```sh
 ./scripts/build-lib.sh         # build the shipped libruuah-vt.a and verify its 13 exports
+./scripts/build-host.sh        # build libruuah-vt-host.a (both surfaces) and verify its 18 exports
+./scripts/build-swift.sh       # archive -> swift build -> headless smoke, one command
 ./scripts/build-oracle.sh      # build libghostty-vt into vendor/ (the core's oracle)
 ./scripts/fetch-ucd.sh         # vendor the Unicode bidi suite (the reordering oracle) (../ruuah stays clean)
 cargo test --workspace         # 32 tests
@@ -612,6 +652,11 @@ and `lib/`, bypassing the build script).
 - `crates/abi-types/src/lib.rs` — the C types this library publishes. Depends on nothing so
   it can be linked beside the oracle without a symbol clash.
 - `crates/abi/src/exports.rs` — the C entry points, thin on purpose.
+- `crates/host/src/lib.rs` — the embedder C surface: the whole pipeline behind one handle.
+- `crates/host/include/ruuah_host.h` — the contract the Swift host imports directly.
+- `crates/host/tests/host_abi.rs` — pixels byte-compared through the C boundary, the
+  skip-a-row control, and the `send` round trip via `cat`.
+- `swift/Sources/ruuah-host/` — the minimal host: `--smoke` headless proof and the window.
 - `crates/abi/tests/differential.rs` — the whole corpus driven through the C ABI and compared
   against the Rust API, plus the wrong-row control.
 - `crates/ghostty/tests/abi_parity.rs` — our published layouts against libghostty-vt's own

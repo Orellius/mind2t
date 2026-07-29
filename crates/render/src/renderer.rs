@@ -289,12 +289,56 @@ impl<S: Surface> Renderer<S> {
     }
 
     fn draw_decorations(&mut self, drawn: &crate::color::Drawn, left: i32, top: i32, width: u16) {
+        use ruuah_vt_snapshot::Underline;
+
         let metrics = self.fonts.metrics();
         let span = metrics.width * u32::from(width);
 
-        if drawn.underline {
-            let y = top + (metrics.baseline + 1).min(metrics.height as i32 - 1);
-            self.canvas.fill(left, y, span, 1, drawn.foreground);
+        if drawn.underline != Underline::None {
+            // Thickness scales with the cell so a 4k window does not get a hairline;
+            // every pattern is integer fills, so CPU and GPU stay byte-equal for free.
+            let t = (metrics.height / 16).max(1);
+            let y = (top + metrics.baseline as i32 + 1)
+                .min(top + metrics.height as i32 - (3 * t) as i32);
+            let color = drawn.underline_color;
+            match drawn.underline {
+                Underline::None => {}
+                Underline::Single => self.canvas.fill(left, y, span, t, color),
+                Underline::Double => {
+                    self.canvas.fill(left, y, span, t, color);
+                    self.canvas.fill(left, y + 2 * t as i32, span, t, color);
+                }
+                // A square undercurl: chunks of t alternate between two rows. Not a
+                // sine, deliberately -- integer fills keep both backends identical.
+                Underline::Curly => {
+                    let mut x = 0u32;
+                    let mut high = true;
+                    while x < span {
+                        let w = t.min(span - x);
+                        let dy = if high { 0 } else { t as i32 };
+                        self.canvas.fill(left + x as i32, y + dy, w, t, color);
+                        x += t;
+                        high = !high;
+                    }
+                }
+                Underline::Dotted => {
+                    let mut x = 0u32;
+                    while x < span {
+                        let w = t.min(span - x);
+                        self.canvas.fill(left + x as i32, y, w, t, color);
+                        x += 2 * t;
+                    }
+                }
+                Underline::Dashed => {
+                    let dash = 3 * t;
+                    let mut x = 0u32;
+                    while x < span {
+                        let w = dash.min(span - x);
+                        self.canvas.fill(left + x as i32, y, w, t, color);
+                        x += dash + 2 * t;
+                    }
+                }
+            }
         }
         if drawn.strikethrough {
             let y = top + metrics.baseline - (metrics.baseline / 3);

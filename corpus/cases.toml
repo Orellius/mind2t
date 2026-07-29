@@ -1004,14 +1004,13 @@ note = "Screen.zig:2094 resolves a saved cursor's deferred wrap after the reflow
 
 [[case]]
 name = "resize-rows-only-keeps-custom-tab-stops"
-expect = "diff"
-diff_paths = ["cell[0,3].text", "cell[0,8].text", "cursor.x"]
+expect = "match"
 cols = 20
 rows = 4
 resize = { cols = 20, rows = 2 }
 after = "\tX"
 bytes = "\u001B[4G\u001BH\u001B[1;1H"
-note = "Terminal.zig:3766 rebuilds the tabstop table only when the column count changes, so a rows-only resize preserves HTS stops. terminal.rs rebuilds unconditionally. Also the corpus's first HTS and HT of any kind."
+note = "Terminal.zig:3766 rebuilds the tabstop table only when the column count changes, so a rows-only resize preserves HTS stops. Promoted by the S2 wave: the rebuild is guarded on the column count now. Also the corpus's first HTS and HT of any kind."
 
 [[case]]
 name = "tab-at-the-last-column-keeps-the-pending-wrap"

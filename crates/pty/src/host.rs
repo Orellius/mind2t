@@ -346,6 +346,20 @@ fn pump(
             Ok(0) | Err(Errno::IO) => break,
             Ok(read) => {
                 terminal.write(&buffer[..read]);
+                // DSR/DA replies are owed to the CHILD, ordered against its own
+                // output; they go straight back down the pty before the frame ships.
+                let owed = terminal.take_replies();
+                if !owed.is_empty() {
+                    let mut rest = &owed[..];
+                    while !rest.is_empty() {
+                        match rustix::io::write(&*master, rest) {
+                            Ok(0) => break,
+                            Ok(wrote) => rest = &rest[wrote..],
+                            Err(Errno::INTR) | Err(Errno::AGAIN) => continue,
+                            Err(_) => break,
+                        }
+                    }
+                }
                 let drained = terminal.take_events();
                 if !drained.is_empty() {
                     // Bounded by the core's own cap; a reader that never drains cannot

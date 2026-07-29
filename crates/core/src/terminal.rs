@@ -74,6 +74,12 @@ impl Terminal {
         std::mem::take(&mut self.state.events)
     }
 
+    /// Drains the protocol replies (DSR/DA) owed to the child, in order. The pump
+    /// writes these to the pty; the core never does I/O.
+    pub fn take_replies(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.state.replies)
+    }
+
     /// The URI behind a grid cell's link stamp (`Grid::link_id`). The stamp is a table
     /// index; the table is terminal-global so one link keeps one identity everywhere.
     pub fn link_uri(&self, id: u16) -> Option<&str> {
@@ -144,6 +150,8 @@ pub(crate) struct State {
     /// Host-facing requests (OSC 52, notifications, BEL), drained by the pump. See
     /// `events.rs` for the bounds.
     pub(crate) events: Vec<crate::events::Event>,
+    /// Protocol replies (DSR/DA) owed to the child, drained by the pump to the pty.
+    pub(crate) replies: Vec<u8>,
     /// OSC 8: interned (explicit id, uri) pairs the grids' cell stamps point into.
     /// Terminal-global so a link spanning a screen switch keeps one identity.
     pub(crate) link_table: Vec<(String, String)>,
@@ -174,6 +182,7 @@ impl State {
             bracketed_paste: false,
             last_print: None,
             events: Vec::new(),
+            replies: Vec::new(),
             link_table: Vec::new(),
             cursor_link: None,
             max_scrollback,

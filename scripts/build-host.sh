@@ -65,6 +65,7 @@ EXPECTED=(
   ruuah_config_font_size
   ruuah_config_auto_direction
   ruuah_config_shell
+  ruuah_config_font_family
   ruuah_config_error
   ruuah_config_free
 )

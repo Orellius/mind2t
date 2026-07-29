@@ -220,3 +220,14 @@ final class Session {
         )
     }
 }
+
+extension Optional where Wrapped == String {
+    /// Runs `body` with a C string for the wrapped value, or NULL for nil -- the shape
+    /// every optional-string C parameter here wants.
+    func withCStringOrNil<R>(_ body: (UnsafePointer<CChar>?) -> R) -> R {
+        switch self {
+        case .some(let value): return value.withCString { body($0) }
+        case .none: return body(nil)
+        }
+    }
+}

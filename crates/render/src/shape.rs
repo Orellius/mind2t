@@ -10,11 +10,14 @@
 //! Test strategy: `tests/shaping.rs` measures where the mark's ink actually lands, and proves
 //!   the measurement can fail by running the same cell through the unshaped path.
 //!
-//! **One cell is shaped at a time, deliberately.** A terminal cell is addressable: the program
-//! owns which column its text sits in, so shaping across cells -- ligatures, Arabic joining --
-//! would let the renderer merge or re-space cells the program placed deliberately. The cost is
-//! that Arabic contextual forms do not join across cells, which is a limitation every terminal
-//! shares and is not a bug here.
+//! **One cell is shaped at a time, by default.** A terminal cell is addressable: the program
+//! owns which column its text sits in, so shaping across cells would let the renderer merge
+//! or re-space cells the program placed deliberately. REVISED 2026-07-30 for ligatures, on
+//! the operator's order, with the guard that keeps the original property: `shape_run` shapes
+//! a same-style ASCII segment with calt/liga, and the renderer takes the result ONLY when a
+//! ligature actually formed (fewer glyphs than characters). A font without ligatures -- Menlo
+//! -- therefore produces byte-identical output to the per-cell path, and Arabic joining
+//! remains out (segments are ASCII by construction).
 
 use swash::shape::ShapeContext;
 use swash::text::{Codepoint, Script};
@@ -93,6 +96,68 @@ impl Shaper {
         });
 
         &self.glyphs
+    }
+
+    /// Shapes a same-style ASCII segment as one string with ligature features on
+    /// (calt + liga -- programming fonts ship arrows under calt). Every glyph is
+    /// positioned from the segment's own pen, one fixed advance per source character,
+    /// so a formed ligature spans its cells exactly.
+    ///
+    /// Returns the glyphs and whether any SUBSTITUTION happened. Fewer glyphs than
+    /// characters catches classic ligatures; comparing glyph ids against the nominal
+    /// per-character mapping catches the Iosevka/Fira shape, where calt swaps pieces
+    /// in WITHOUT changing the count (measured live 2026-07-30: Iosevka's `->` kept
+    /// two glyphs and the count heuristic saw nothing). The caller falls back to the
+    /// per-cell path when nothing substituted, which is what keeps non-ligating fonts
+    /// byte-identical to the old renderer.
+    pub fn shape_run(
+        &mut self,
+        fonts: &mut FontStack,
+        text: &str,
+    ) -> (&[PositionedGlyph], bool) {
+        self.glyphs.clear();
+        let chars = text.chars().count();
+        let Some(first) = text.chars().next() else {
+            return (&self.glyphs, false);
+        };
+        let Some(resolved) = fonts.resolve(first) else {
+            return (&self.glyphs, false);
+        };
+        let Some(font) = fonts.face(resolved.font) else {
+            return (&self.glyphs, false);
+        };
+        let mut shaper = self
+            .context
+            .builder(font)
+            .script(Script::Latin)
+            .size(fonts.size())
+            .features(&[("calt", 1u16), ("liga", 1u16)])
+            .build();
+        shaper.add_str(text);
+        let charmap = font.charmap();
+        let nominal: Vec<u16> = text.chars().map(|c| charmap.map(c)).collect();
+        let mut pen = 0.0f32;
+        let glyphs = &mut self.glyphs;
+        let mut count = 0usize;
+        let mut substituted = false;
+        shaper.shape_with(|cluster| {
+            for glyph in cluster.glyphs {
+                if nominal.get(count) != Some(&glyph.id) {
+                    substituted = true;
+                }
+                glyphs.push(PositionedGlyph {
+                    key: GlyphKey {
+                        font: resolved.font,
+                        glyph: glyph.id,
+                    },
+                    x: pen + glyph.x,
+                    y: glyph.y,
+                });
+                pen += glyph.advance;
+                count += 1;
+            }
+        });
+        (&self.glyphs, substituted || count < chars)
     }
 
     /// One glyph per character, all at the pen origin.

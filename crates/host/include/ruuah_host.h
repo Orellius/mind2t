@@ -152,6 +152,13 @@ RuuahHostResult ruuah_host_row_text(
 RuuahHostResult ruuah_host_link_at(
     RuuahHost *host, uint16_t col, uint16_t row, uint8_t *out, size_t cap, size_t *len);
 
+/* Pops the next host-facing event, oldest first. *kind: 0 = none, 1 = set clipboard to
+ * payload, 2 = notification (payload = title, '\n', body), 3 = bell. An event is
+ * consumed only when cap held its whole payload; a smaller cap reports kind + *len and
+ * leaves it queued (size-then-fetch never loses an event). */
+RuuahHostResult ruuah_host_next_event(
+    RuuahHost *host, uint32_t *kind, uint8_t *out, size_t cap, size_t *len);
+
 /* Tears down the child, the pump thread and the renderer. NULL is a no-op. Any pixels
  * pointer previously returned for this handle is dead after this call. */
 void ruuah_host_free(RuuahHost *host);

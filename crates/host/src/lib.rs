@@ -111,6 +111,9 @@ pub struct RuuahHost {
     /// The theme, kept because resize rebuilds the renderer -- a rebuild that forgot it
     /// would silently revert to the built-in scheme (pinned by the host_abi resize test).
     palette: Palette,
+    /// Events not yet handed to the embedder; refilled from the pump's queue whenever
+    /// `ruuah_host_next_event` finds it empty. One event per call, oldest first.
+    pending_events: std::collections::VecDeque<ruuah_vt_core::events::Event>,
     /// Stable storage backing the borrowed `row_semantics` pointer, one byte per row.
     /// Rebuilt on every draw, same lifetime contract as `pixels`.
     row_semantics: Vec<u8>,
@@ -301,6 +304,7 @@ pub unsafe extern "C" fn ruuah_host_spawn(
         font_size,
         palette,
         row_semantics: Vec::new(),
+        pending_events: std::collections::VecDeque::new(),
         exited: false,
     });
     unsafe { out.write(Box::into_raw(handle)) };
@@ -525,6 +529,69 @@ pub unsafe extern "C" fn ruuah_host_set_font_size(
 /// This is the copy-command/copy-output seam for blocks (S2): the GUI groups rows with
 /// `row_semantics` and reads the text of the rows it selected.
 ///
+/// Pops the next host-facing event: 0 = none pending, 1 = set the system clipboard to
+/// the payload bytes, 2 = post a notification (payload is `title\ntitle-less body` --
+/// the first newline separates title from body), 3 = bell (no payload).
+///
+/// One event per call, oldest first, exactly-once -- but an event is CONSUMED only
+/// when `cap` held its whole payload. A smaller `cap` (zero included) reports kind and
+/// `*len` and leaves the event queued, so the two-call size-then-fetch pattern works
+/// without losing anything. The embedder decides policy -- the terminal only relays
+/// what the child asked for.
+///
+/// # Safety
+/// `host` must be a live handle; `kind` and `len` must be non-NULL; `out` must point to
+/// `cap` writable bytes or be NULL when `cap` is 0.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_host_next_event(
+    host: *mut RuuahHost,
+    kind: *mut u32,
+    out: *mut u8,
+    cap: usize,
+    len: *mut usize,
+) -> RuuahHostResult {
+    use ruuah_vt_core::events::Event;
+
+    if host.is_null() || kind.is_null() || len.is_null() || (out.is_null() && cap != 0) {
+        return RuuahHostResult::InvalidValue;
+    }
+    unsafe {
+        kind.write(0);
+        len.write(0);
+    }
+    let host = unsafe { &mut *host };
+    if host.pending_events.is_empty() {
+        host.pending_events.extend(host.host.take_events());
+    }
+    let Some(event) = host.pending_events.front() else {
+        return RuuahHostResult::Success;
+    };
+
+    let (code, payload): (u32, Vec<u8>) = match event {
+        Event::ClipboardSet(bytes) => (1, bytes.clone()),
+        Event::Notify { title, body } => {
+            let mut payload = title.clone().into_bytes();
+            payload.push(b'\n');
+            payload.extend_from_slice(body.as_bytes());
+            (2, payload)
+        }
+        Event::Bell => (3, Vec::new()),
+    };
+    unsafe {
+        kind.write(code);
+        len.write(payload.len());
+    }
+    if payload.len() > cap {
+        // Sizing call: the event stays queued for the fetch that fits it.
+        return RuuahHostResult::Success;
+    }
+    if !payload.is_empty() {
+        unsafe { std::ptr::copy_nonoverlapping(payload.as_ptr(), out, payload.len()) };
+    }
+    host.pending_events.pop_front();
+    RuuahHostResult::Success
+}
+
 /// Copies the OSC 8 URI under one cell into `out`, if the cell was printed inside a
 /// hyperlink.
 ///

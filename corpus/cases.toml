@@ -1129,10 +1129,9 @@ note = "The fresh line is taken at the bottom margin of a region that does not s
 
 [[case]]
 name = "mode-2004-bracketed-paste"
-expect = "diff"
-diff_paths = ["modes.bracketed_paste"]
+expect = "match"
 bytes = "\u001B[?2004h"
-note = "Bracketed paste leaves no trace on the grid; the mode itself is the observable, read from the oracle via ghostty_terminal_mode_get. The core does not track it yet."
+note = "Bracketed paste leaves no trace on the grid; the mode itself is the observable, read from the oracle via ghostty_terminal_mode_get. Went in as diff before the core tracked the mode and was promoted by the implementation."
 
 [[case]]
 name = "mode-2004-set-then-reset"
@@ -1142,10 +1141,9 @@ note = "Set and reset cancel: both sides report the mode off. Trivially green be
 
 [[case]]
 name = "mode-2004-survives-the-alt-screen"
-expect = "diff"
-diff_paths = ["modes.bracketed_paste"]
+expect = "match"
 bytes = "\u001B[?2004h\u001B[?1049h"
-note = "The mode is terminal-global: entering the alternate screen does not clear it. Pins where the state must live once the core tracks it."
+note = "The mode is terminal-global: entering the alternate screen does not clear it. Measured as a diff first; the promotion pins that the state lives on the terminal, not the screen."
 
 [[case]]
 name = "mode-2004-reset-by-ris"

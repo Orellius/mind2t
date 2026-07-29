@@ -165,10 +165,19 @@ unsafe fn read_snapshot(handle: GhosttyTerminal, reader: Reader) -> Snapshot {
                 visible: get(handle, GHOSTTY_TERMINAL_DATA_CURSOR_VISIBLE),
                 style: unpack_style(&cursor_style),
             },
-            // Mode state is not readable through the 13-export surface yet; both sides
-            // of this comparison default it, so the field is inert here until the ABI
-            // gains `ghostty_terminal_mode_get`.
-            modes: Default::default(),
+            modes: {
+                let mut bracketed_paste = false;
+                assert_eq!(
+                    ghostty_terminal_mode_get(
+                        handle,
+                        GHOSTTY_MODE_BRACKETED_PASTE,
+                        &mut bracketed_paste,
+                    ),
+                    GHOSTTY_SUCCESS,
+                    "mode_get(2004)"
+                );
+                ruuah_vt_snapshot::Modes { bracketed_paste }
+            },
             grid,
             history,
             damage: None,

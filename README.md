@@ -1,258 +1,118 @@
-# ruuah-vt
+<p align="center">
+  <img src="docs/images/logo.png" width="140" alt="RUUAH VT" />
+</p>
 
-A terminal core in Rust that implements the C ABI Ghostty already publishes as **`libghostty-vt`**,
-so it can drop in behind an existing native GUI on one link flag.
+<h1 align="center">RUUAH VT</h1>
 
-The point is control and craft, not speed. Rust and Zig are peers here and there is no
-performance win waiting; what a from-scratch core buys is a place to put things the upstream
-ABI has no surface for. Chiefly: **Hebrew, end to end, done properly.**
+<p align="center">
+  A terminal core in Rust, gated on a differential oracle — and the macOS terminal built on top of it.
+</p>
 
-![vim rendered by ruuah-vt](docs/images/vim.png)
+---
 
-That is real vim, on a real pty, rendered by this repo's own rasterizer in a headless test.
+RUUAH VT is two things in one repository:
+
+1. **A VT core** (`crates/`) implementing the C ABI Ghostty publishes as
+   **`libghostty-vt`**, so anything built against that ABI can link either library. The
+   core is a pure, deterministic state machine — bytes in, grid mutations out. No PTY,
+   no GPU, no clock, no I/O.
+2. **A native macOS terminal** (`swift/`, `RUUAH VT.app`) — Hebrew-first, GPU-rendered,
+   built for daily work.
+
+![the feature tour, rendered live](docs/images/feature-tour-20260730.png)
 
 ## Why this exists
 
-Ghostty's VT core is excellent and its C ABI is public. Reimplementing it is only worth doing
-if you can prove you match it, so the project is built the other way round from usual: the
-**differential oracle harness came first**, in slice 0, before a single line of terminal logic.
-Every slice since is measured against the real library rather than against an opinion of what
-terminals do.
+Ghostty's VT core is excellent and its C ABI is public. Reimplementing it is only worth
+doing if you can prove you match it, so the project is built the other way round from
+usual: the **differential oracle harness came first**, before a single line of terminal
+logic. Every slice since is measured against the real library rather than against an
+opinion of what terminals do — including the corpus verdicts that must *disagree*,
+because a harness that cannot detect disagreement proves nothing. The CPU and GPU
+renderers are bit-identical by specification, not merely close.
 
-The consumer is the repo's own **minimal Swift host** (`swift/`, slice 8) -- not RUUAH as it
-stands: measured 2026-07-28, RUUAH's Swift app calls 99 `ghostty_*` symbols and none of them
-is a VT-core symbol, so "swap one link flag" was never true of it. What is true, and now
-tested, is that something built against the published ABI consumes this library from Swift.
+And the reason to want a from-scratch core at all: a place to put things the upstream
+ABI has no surface for. Chiefly — **Hebrew, end to end, done properly.**
+
+## Features
+
+**Terminal core**
+- Full VT parsing on a vendored [vte](https://github.com/alacritty/vte) (one addition: APC dispatch)
+- True color; styled underlines — single/double/curly/dotted/dashed, SGR 58 underline color
+- OSC 8 hyperlinks; the stamps survive scroll and resize
+- OSC 52 clipboard write · OSC 9 / OSC 777 notifications · bell
+- DSR / DA query replies through the pty (programs that probe get real answers)
+- Bracketed paste (mode 2004) with the oracle-measured encoding
+- **Kitty graphics protocol** — direct transmission, RGB/RGBA/PNG, chunked, queries answered
+- **Sixel**, decoded into the same image pipeline
+- Grapheme clusters from day one; wide glyphs and spacer tails; VS16 emoji presentation
+- Paged scrollback with an exact row budget
+
+**Rendering**
+- Glyph atlas, damage-driven redraw; a CPU reference backend and a wgpu compute backend,
+  byte-equal to each other
+- Color emoji (sbix), synthesized block mosaics, per-glyph font fallback measured on this machine
+- **Bidi done right**: UBA reordering in the renderer (91,707/91,707 BidiCharacterTest),
+  mirrored brackets in RTL runs, niqqud placed by GPOS shaping — and never in the core,
+  where reordering would break cursor addressing
+- Font ligatures behind a substitution guard: a non-ligating font renders byte-identically
+  with the feature on or off
+
+**The app**
+- Top tab bar and session management; cmd+T / cmd+W / cmd+V on *physical* keys, so Hebrew
+  layouts keep every chord; cmd+= / cmd+− / cmd+0 live zoom
+- cmd+click opens hyperlinks
+- Shell integration: OSC 133 blocks with a gutter — copy command, copy output, run again —
+  built to survive prompt-rewriting themes (starship's transient prompt included)
+- `~/.ruuah/config.toml`: font size, font family, ligatures, shell, themes, auto-direction
 
 ## The one architectural rule
 
-**The core is a pure, deterministic state machine.** Bytes in, grid mutations out. No PTY, no
-GPU, no clock, no I/O.
-
-Everything else hangs off that, because it is what makes headless CI and differential testing
-possible at all. Ghostty enforces the same split physically between `src/terminal/` and
-`src/renderer/`. I/O lives in exactly one crate, and it is not the core.
-
-## Status
-
-| Slice | What | Tag |
-|---|---|---|
-| 0 | Differential oracle harness against the real `libghostty-vt` | `v0.0.0` |
-| 1 | `vte` parser wired to a flat row-major cell grid, full SGR | `v0.1.0` |
-| 2 | Screen semantics: autowrap phantom state, scroll regions, alt screen, tabs, erase family | `v0.2.0` |
-| 3 | Paged scrollback with an exact row budget | `v0.3.0` |
-| 4 | Reflow on resize, including scrollback and cursor mapping | `v0.4.0` |
-| 5 | Damage tracking, frame channel, pty host, and a renderer that draws vim | `v0.5.0` |
-| 5.5a | Display bidi: Hebrew reorders, measured against the Unicode conformance suite | - |
-| 5.5b | Shaping: niqqud placed by the font's GPOS table, not by default bearings | - |
-| 5.6 | OSC 133 semantic regions and the visual caret | - |
-| 6 | The C ABI: `libruuah-vt.a`, 13 exports, layouts pinned against `ghostty_type_json()` | `v0.6.0` |
-| 7 | GPU backend (wgpu compute), byte-identical to the CPU reference | `v0.7.0` |
-| - | S1 audit wave: 7 defects, each control seen to fail first | `v0.7.1` |
-| - | S2-S4 audit wave: findings 8-31, Miri added as the UB oracle | `v0.7.2` |
-| 8 | The embedder surface (`ruuah_host_*`) and a minimal Swift host: vim in a real window | `v0.8.0` |
-
-**276 tests green.** Corpus: 125 cases, 114 match / 11 diff, 125/125 met expectation.
-Every remaining diff case pins its exact difference paths, so it can go red by being
-differently wrong.
-
-Slice 8 put eyes on all of it: a SwiftPM executable links `libruuah-vt-host.a` -- five
-`ruuah_host_*` calls wrapping the pty -> core -> frame -> GPU pipeline, in one archive with
-the 13 `ghostty_*` exports -- and blits polled frames into an AppKit window at backing
-resolution. Its first vim frame also found a real slice 7 defect: one compute pass per
-operation deadlocks Metal's 64-command-buffer pool on any frame bigger than the pool, which
-no earlier test was large enough to reach.
-
-![vim in the minimal Swift host](docs/images/slice-8-vim-window.png)
-
-Hebrew is now correct end to end: reordered by the Unicode algorithm and pointed by the font.
-
-![Hebrew reordering](docs/images/bidi.png)
-
-![niqqud placement, before and after shaping](docs/images/niqqud.png)
-
-Above: shaping off, then on. The marks move from the cell's left edge to where the font's GPOS
-table actually puts them.
-
-## How correctness is established
-
-Three mechanisms, in order of how much work they do.
-
-**1. The differential corpus.** `corpus/cases.toml` holds byte streams. Each is fed to both
-this core and the real `libghostty-vt`, and the resulting grids are compared cell by cell.
-A case declares the verdict it expects:
-
-```
-78 cases: 71 match, 7 diff. 78/78 met expectation.
-Harness verdict: WORKING - agreement and disagreement both detected.
-```
-
-The seven `diff` cases are deliberate, named omissions. They are not failures, they are the
-proof that the harness can still tell things apart - a corpus where nothing ever differs
-cannot demonstrate that it detects disagreement. When a behaviour gets implemented, its case
-*fails*, and gets promoted to `match`. A harness that cannot be wrong is not evidence.
-
-**2. Extend the harness before the slice. Eight for eight.** Every single slice has had a blind
-spot that would have reported success for a wrong implementation, and each was found by asking
-"can the harness even see this?" *before* writing code. Twice in slice 5 the blind spot was
-total: nothing could observe a concurrency bug, and later, nothing could observe a pixel. The
-bidi suite kept the streak going - it caught a real bug on its first run, a fast path that
-skipped the algorithm for plain text without accounting for the base direction. Slice 8's
-blind spot was the C boundary itself: every pixel test stopped at a Rust API, so a
-`ruuah_host_*` surface returning a black buffer would have failed nothing. Its harness
-byte-compares pixels polled through C against a reference built with the same `Publisher`
-the pump uses -- and promptly caught the Metal pool deadlock the moment a frame was
-window-sized.
-
-**3. Prove the harness can fail.** Both slice 5 harnesses ship a deliberately broken control
-alongside the real one. `read_into_unsynchronized_for_testing` reads frames with the seqlock
-protocol removed and *must* observe tearing; `draw_skipping_for_testing` declines to repaint
-one damaged row and *must* produce different pixels. If a control ever goes quiet, the test it
-guards has stopped being evidence.
-
-## Layout
-
-```
-crates/snapshot/   what "the grid" means for comparison - the contract both
-                   implementations satisfy, owned by neither
-crates/ghostty/    bindings to the real libghostty-vt, pinned against the
-                   library's own ghostty_type_json() ABI description
-crates/core/       the terminal itself: parser, grid, screens, scrollback, reflow.
-                   Pure. No I/O.
-crates/difftest/   runs the corpus and reports
-crates/frame/      publishes a whole frame from the parse thread to a renderer
-                   through a seqlock
-crates/pty/        the pseudoterminal and the child process. The only I/O in the
-                   project, and the only unsafe block.
-crates/render/     font stack, glyph atlas, xterm palette, damage-driven CPU
-                   compositor
-```
-
-One-way dependencies. `core` knows nothing about `frame`; `frame` knows nothing about `pty`.
-
-## Threading
-
-The parse thread owns the `Terminal` outright and never shares it. The renderer receives
-**published frames** through a seqlock: a generation counter that is odd while a publish is in
-flight, so a reader arriving mid-write discards that frame rather than drawing half of one.
-
-Ghostty reached for a mutex here and then had to add a demand-and-handoff protocol on top of
-it, because under sustained pty output an unfair mutex lets the parse loop relock before a
-sleeping renderer can be scheduled. The seqlock sidesteps that fairness question and buys a
-different trade: a busy writer can make a reader skip a frame, and the caller decides when to
-come back.
-
-There is **no `unsafe`** in the seqlock and no volatile trickery. The payload is `AtomicU64`
-accessed `Relaxed`, which is defined under racing access because Rust defines a data race as
-requiring a *non-atomic* access; the counter's `Acquire`/`Release` pair supplies the
-consistency that turns a set of atomic words into one coherent frame.
-
-Rows carry a generation **stamp** rather than a dirty flag, because a reader is allowed to miss
-frames and a flag cleared at publish time cannot express "changed in one of the six frames you
-did not read".
-
-## Hebrew
-
-The reason the project exists, and the part that is deliberately unfinished.
-
-**Where bidi lives: the renderer, never the core.** `libghostty-vt`'s headers have zero bidi
-surface, so reordering inside the core would break the drop-in compatibility that is the whole
-thesis, and would make every RTL line diverge from the oracle *by construction* - deleting the
-only correctness signal there is. Ghostty's own bidi-adjacent code sits in the font shaper too.
-
-So the renderer's only input is **runs**, and a `Run` carries a `Direction` plus `column_of`.
-That seam is what made slice 5.5 cheap: turning reordering on changed the run builder and
-`bidi.rs`, and **not one line of drawing code**. A renderer that had added an index to a run's
-start instead would have compiled, passed every test before 5.5, and drawn Hebrew backwards
-after it.
-
-**Reordering is measured, not eyeballed.** `crates/frame/tests/bidi_conformance.rs` runs all
-91,707 `BidiCharacterTest` cases through the real `visual_spans` path; `./scripts/fetch-ucd.sh`
-vendors the suite and `ucd.lock` pins the Unicode revision. The algorithm underneath is
-`wezterm-bidi`, chosen by running it over the whole suite rather than by reputation:
-770,241/770,241 and 91,707/91,707 on levels and visual order, and it takes `&[char]` and
-returns contiguous level runs, which is why a `Run` stayed a plain slice.
-
-Two policies sit on top of the UBA, and Unicode has no opinion about either, so both are
-unit-tested separately:
-
-- **The base direction is LTR**, not auto. A grid is column-addressed by the program drawing
-  into it, so auto-detection would move a Hebrew status line written at column 0 to the right
-  edge. RTL runs still reorder within their own span.
-- **Segments are bounded by box drawing** (U+2500..=U+259F). Whole-line UBA across a table
-  moves the frame characters relative to the text they enclose.
-
-What that produces, through the real terminal path:
-
-| logical | visual |
-|---|---|
-| `שלום עולם` | `םלוע םולש` (reads right to left, word order kept) |
-| `let msg = "שלום";` | `let msg = "םולש";` (code stays put) |
-| `גיל 42 שנה` | `הנש 42 ליג` (the number stays `42`, not `24`) |
-| `│אבג│abc│` | `│גבא│abc│` (bars stay in columns 0, 4, 8) |
-
-**Fonts.** No single font can draw this terminal. Measured across every font on the machine:
-Menlo maps Hebrew to glyph 0, and Arial Hebrew maps `A` to glyph 0. So fallback is required
-rather than an enhancement, and the atlas keys on **(font, glyph)** - a glyph id without its
-font is meaningless.
-
-The Hebrew face is **Miriam Mono CLM** (Culmus project, GPL v2). Verified by shaping: it
-composes shin+shin-dot and bet+dagesh into single glyphs via GSUB, positions a qamats via GPOS
-at exactly half the advance so the mark is centred under its base, gives marks zero advance so
-a pointed cluster stays *one cell*, and advances Latin and Hebrew identically at 0.6em - the
-same advance as Menlo, so the two share a grid with no seam. It cannot lead the stack, though:
-it covers 0 of 128 box-drawing codepoints.
-
-![font stacks compared](docs/images/font-stacks.png)
-
-Hebrew reaching pixels today, still in logical order:
-
-![Hebrew rendered by ruuah-vt](docs/images/vim-hebrew.png)
-
-That ordering is pinned by a pixel-level test which slice 5.5 must deliberately flip.
-
-**Shaping.** Each cell's cluster goes through swash, so combining marks are placed by the
-font's GPOS table. Only clusters with more than one codepoint pay for it. One cell is shaped at
-a time on purpose: a terminal cell is addressable, and shaping across cells would let the
-renderer merge or re-space cells the program placed deliberately. The cost is that Arabic
-contextual joining does not cross cells, which every terminal shares.
-
-**What is honestly still missing:** input bidi - a visual caret and visual-order arrow keys
-inside a shell's own prompt (slice 5.6). The caret inside a third-party TUI's editing buffer
-(vim insert mode) is not solvable at this layer at all, because the application owns that
-buffer.
+**The core is a pure, deterministic state machine.** Everything else hangs off that,
+because it is what makes headless CI and differential testing possible at all. Ghostty
+enforces the same split physically between `src/terminal/` and `src/renderer/`. I/O
+lives in exactly one crate, and it is not the core.
 
 ## Building
 
-Requires the oracle, which is built from a Ghostty checkout. Zig must be exactly `0.16.0`.
-
 ```sh
-./scripts/build-oracle.sh            # the core's oracle: libghostty-vt into vendor/
-./scripts/fetch-ucd.sh               # the reordering oracle: the Unicode bidi suite
-cargo test --workspace               # the gate
-cargo run -p ruuah-vt-difftest       # the corpus report
-cargo run -p ruuah-vt-difftest -- --dump   # plus both grids, rendered, per case
+cargo test --workspace          # the gate: every test green
+cargo run -p ruuah-vt-difftest  # the corpus, measured against libghostty-vt
+./scripts/build-lib.sh          # libruuah-vt.a       (the drop-in ABI)
+./scripts/build-host.sh         # libruuah-vt-host.a  (ABI + embedder surface)
+./scripts/build-swift.sh        # the Swift host + headless smoke test
+./scripts/build-app.sh          # assemble + sign + install RUUAH VT.app
+sh scripts/demo-features.sh     # the one-screen feature tour, inside the app
 ```
 
-`RUUAH_VT_ORACLE_SRC` points at the Ghostty checkout to build from (defaults to `../ruuah`).
-`RUUAH_VT_ORACLE_PREFIX` uses a prebuilt prefix instead.
+The differential harness needs a Ghostty checkout as its oracle (`RUUAH_VT_ORACLE_SRC`,
+default `../ruuah`); `oracle.lock` pins the exact commit the corpus verdicts were
+measured against, so an upstream behavior change is distinguishable from a regression.
 
-The oracle build never writes to the Ghostty checkout: it redirects both `--prefix` and
-`--cache-dir`, then verifies the checkout is still clean and fails if it is not.
+## Contributing
 
-`oracle.lock` pins the exact Ghostty commit the current oracle was built from. Without it, a
-corpus verdict flipping overnight is indistinguishable from a regression you caused.
+Work lands through **pull requests** — no direct pushes to `main`:
 
-## Dependencies
+1. Branch from `main`, one branch per slice or fix.
+2. **Extend the harness before the change.** Every slice so far had a blind spot the
+   existing tests could not see; the first question is always "can the harness see this?"
+3. A new test must be *seen to fail* — against the pre-fix code or a deliberate mutant.
+   A test that has never been red is not evidence.
+4. Gates before any merge: `cargo test --workspace` green, difftest meeting every corpus
+   expectation, the Swift smoke passing. GUI-facing behavior (clicks, chords, resize)
+   needs a live-tap test or an explicit `untested` note in the PR.
+5. Merges are `--no-ff`, so slice boundaries stay visible in `git log --first-parent`.
 
-Deliberately few: `vte`, `unicode-width`, `thiserror`, `serde`, `toml`, `rustix`, `swash`,
-`wezterm-bidi`.
+## License
 
-`portable-pty` was evaluated for the pty host and rejected - on macOS it costs thirteen crates
-including a serial-port library and a second `thiserror` major version. `rustix` costs three,
-and the pty dance is about sixty lines with one justified `unsafe` block.
+[AGPL-3.0](LICENSE). The vendored `crates/vte` fork remains MIT/Apache-2.0 (both
+license texts kept in-tree). This repository never copies Ghostty source — it links the
+real `libghostty-vt` as a test oracle and measures its behavior through the boundary.
 
-## Notes
+## Acknowledgments
 
-Private, unlicensed, no contributions expected. Engineering conventions and the full record of
-measured gotchas live in `CLAUDE.md`.
+- [Ghostty](https://ghostty.org) (MIT) — the reference implementation this core is
+  measured against, and the origin of the ABI.
+- [vte](https://github.com/alacritty/vte) — the parser this project vendors and extends.
+- [Culmus](https://culmus.sourceforge.io) — Miriam Mono CLM, the only monospace font we
+  found that does Hebrew niqqud correctly.

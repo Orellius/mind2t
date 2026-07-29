@@ -419,10 +419,15 @@ impl State {
         } else {
             Mode::Truncate
         };
+        let cols_changed = cols != self.screen().cols();
         crate::resize::apply(&mut self.primary, cols, rows, primary_mode);
         crate::resize::apply(&mut self.alternate, cols, rows, Mode::Truncate);
 
-        self.tabs = TabStops::new(cols);
+        // Only when the column count changed -- upstream guards its rebuild on exactly that
+        // (`Terminal.zig:3766`), so a rows-only resize keeps custom HTS stops (finding 21).
+        if cols_changed {
+            self.tabs = TabStops::new(cols);
+        }
         self.last_print = None;
         // After the grids are rebuilt, so the whole NEW geometry is marked rather than the
         // old row count. Upstream sets the same clear bit from its own resize.

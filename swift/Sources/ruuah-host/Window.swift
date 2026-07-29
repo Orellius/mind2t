@@ -86,7 +86,11 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "ruuah-vt host"
+        // Inside an assembled .app the window wears the app's name; the bare CLI binary
+        // keeps its development label.
+        window.title =
+            (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String)
+            ?? "ruuah-vt host"
         window.contentView = view
         window.delegate = self
         window.center()

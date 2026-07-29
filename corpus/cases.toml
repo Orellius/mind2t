@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 129
+declared_cases = 131
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -1150,3 +1150,19 @@ name = "mode-2004-reset-by-ris"
 expect = "match"
 bytes = "\u001B[?2004h\u001Bc"
 note = "RIS resets the mode with everything else. Trivially green before the core tracks 2004; afterwards it guards full_reset."
+
+[[case]]
+name = "osc133-d-carries-an-exit-status"
+expect = "match"
+cols = 12
+rows = 3
+bytes = "\u001B]133;A\u0007$ \u001B]133;B\u0007ls\r\n\u001B]133;C\u0007out\r\n\u001B]133;D;0\u0007\u001B]133;A\u0007$ "
+note = "The dialect every real integration emits (Ghostty's own and iTerm2's): D closes the command with its exit status as an option. Added by the S2 compat wave 2026-07-30 to pin that an optioned D is accepted, not dropped as garbage."
+
+[[case]]
+name = "osc133-a-with-options-still-starts-a-prompt"
+expect = "match"
+cols = 12
+rows = 3
+bytes = "xy\u001B]133;A;cl=line\u0007$ "
+note = "Ghostty's zsh integration emits A with cl=line. The option must not invalidate the action: the fresh line and the prompt mark both still happen. Added by the S2 compat wave 2026-07-30."

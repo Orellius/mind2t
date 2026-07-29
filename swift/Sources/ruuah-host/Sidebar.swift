@@ -119,7 +119,19 @@ final class SessionListController: NSViewController, NSTableViewDataSource, NSTa
         label.textColor =
             row == activeIndex ? .white : NSColor.white.withAlphaComponent(0.65)
         label.lineBreakMode = .byTruncatingTail
-        for subview in [icon, label] {
+
+        // Every row carries its own close -- the sidebar is the window management here
+        // (sessions replace split panes), so closing must not require a keyboard chord
+        // or a context menu anyone has to discover.
+        let close = NSButton(
+            image: NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close session")
+                ?? NSImage(),
+            target: self, action: #selector(closeRow(_:)))
+        close.isBordered = false
+        close.tag = row
+        close.contentTintColor = NSColor.white.withAlphaComponent(0.35)
+
+        for subview in [icon, label, close] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             cell.addSubview(subview)
         }
@@ -128,10 +140,17 @@ final class SessionListController: NSViewController, NSTableViewDataSource, NSTa
             icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 16),
             label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
-            label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
+            label.trailingAnchor.constraint(equalTo: close.leadingAnchor, constant: -6),
             label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            close.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
+            close.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            close.widthAnchor.constraint(equalToConstant: 16),
         ])
         return cell
+    }
+
+    @objc private func closeRow(_ sender: NSButton) {
+        delegate?.sessionListDidRequestClose(index: sender.tag)
     }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {

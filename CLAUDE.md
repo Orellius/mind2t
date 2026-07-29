@@ -67,9 +67,12 @@ Three things worth keeping from it, because each cost a wrong first attempt:
   with the floor in place still exited 0. The fix is a count re-derived from the raw file text
   in `tests/corpus.rs`, which shares no code with the loader.
 
-**The S2 wave is in progress on branch `audit-fixes-s2`** (2026-07-29). Findings 8-12 are
-fixed and committed, each with a control seen to fail first; gates green after every one
-(253 tests, corpus 124 cases 102 match / 22 diff 124/124, 13/13 exports).
+**The S2 wave is in progress on branch `audit-fixes-s2`** (2026-07-29). Findings 8-20 are
+fixed and committed -- plus 22, which folded into 14 -- each with a control seen to fail
+first; gates green after every one (265 tests, corpus 125 cases 105 match / 20 diff
+125/125, 13/13 exports). **Miri is now in the toolbox** (nightly + miri installed
+2026-07-29): `cargo +nightly miri test -p ruuah-vt-abi --test soundness` is the oracle for
+UB-class defects, where a native run passing proves nothing.
 
 - 8 `ed5c115` DECRC with nothing saved restores the synthetic default cursor, not nothing.
 - 9 `58378d1` HT no longer clears `pending_wrap`; upstream's horizontalTab never touches it.
@@ -85,8 +88,34 @@ fixed and committed, each with a control seen to fail first; gates green after e
   position, so there is no table to index. Guarantees provided: 0 means default, equal styles
   mean equal ids. Deliberate, documented divergence -- revisit if a consumer ever needs the id
   as a lookup key.
+- 13 `744d504` `CONTENT_TAG` reports `CODEPOINT_GRAPHEME` when the cluster has more than one
+  codepoint (bit 42 of the packed cell). Upstream rule pinned by measurement through its own
+  ABI: `appendGrapheme` flips the tag, `hasGrapheme` IS the tag.
+- 14+22 `2812f8c` reads are reads: the view cache is `Mutex<Option<Snapshot>>`, read entry
+  points take `&Terminal`, and a grid ref's `node` is the raw handle rather than a
+  `&mut`-derived pointer. Both controls live in `abi/tests/soundness.rs` and only fail under
+  **Miri** -- natively, UB looks like passing. Run it whenever the handle model changes.
+- 15 `413fdfe` a pure out-param's `.size` is written from the type, never read. The oracle
+  whole-struct-assigns at all four equivalent sites and its own tests pass `undefined`
+  out-params. `GHOSTTY_INIT_SIZED` governs structs passed IN, not out-params.
+- 16 `0ddbb5e` a resize past the frame channel's capacity is refused at `Host::resize` (and
+  `spawn`) with a structured error, BEFORE the pty sees it. The pump's three `let _ =`
+  publishes became expects -- with both entries gated, a failed publish is a bug in the gate.
+- 17 `c5c5762` the seqlock writer marks in-flight with `start | 1`, not `start + 1`: after a
+  panic escaped a fill closure, the blind bump inverted the counter's parity and every torn
+  read thereafter wore a valid generation. One-line fix, deterministic single-threaded control.
+- 18 `961a522` every `expect = "diff"` case now pins `diff_paths`, the exact measured set of
+  difference paths, and `met_expectation` demands set equality; the loader refuses an
+  unpinned diff case. The `print_measured_diff_paths` authoring test (ignored) regenerates
+  pins when the oracle moves. This closes the trap finding 11 walked into.
+- 19 `de9f1e3` the scroll region is carried across the screen switch in both directions --
+  upstream keeps ONE `Terminal.scrolling_region` and `switchScreenMode` never touches it.
+  Both direction cases measured DIFF first, flipped, promoted.
+- 20 `4b97769` OSC 133 state is per-Screen and travels with the cursor: every switch carries
+  it EXCEPT a 1049 exit (`restoreCursor` restores everything but `semantic_content`), so a
+  `C` issued on the alt screen no longer leaks back.
 
-Findings 13 through 31 (rest of S2, then S3/S4) remain open in the audit's order, then slice 8.
+Findings 21 and 23-31 (S3/S4) remain open in the audit's order, then slice 8.
 
 Slice 5.6, `[tested]`: **OSC 133 and the visual caret.** The core tracks prompt / input /
 output regions (`crates/core/src/semantic.rs`), and the renderer draws the caret at

@@ -184,7 +184,8 @@ impl<S: Surface> Renderer<S> {
                     drawn.background,
                 );
                 if drawn.ink {
-                    self.draw_cell(*glyph_cell, left, top, drawn.foreground);
+                    let mirrored = run.direction == ruuah_vt_frame::Direction::RightToLeft;
+                    self.draw_cell(*glyph_cell, left, top, drawn.foreground, mirrored);
                 }
                 self.draw_decorations(&drawn, left, top, width);
             }
@@ -193,7 +194,7 @@ impl<S: Surface> Renderer<S> {
         self.draw_cursor(frame, y);
     }
 
-    fn draw_cell(&mut self, cell: PackedCell, left: i32, top: i32, color: Rgba) {
+    fn draw_cell(&mut self, cell: PackedCell, left: i32, top: i32, color: Rgba, mirrored: bool) {
         if !cell.has_text() {
             return;
         }
@@ -201,7 +202,21 @@ impl<S: Surface> Renderer<S> {
         let baseline = top + metrics.baseline;
 
         let mut scratch = [0u8; ruuah_vt_frame::CLUSTER_BYTES];
-        let cluster = cell.cluster(&mut scratch);
+        let mut cluster = cell.cluster(&mut scratch);
+
+        // UBA rule L4: paired punctuation at an RTL resolved level draws its mirrored
+        // counterpart -- reordering alone turns `[OK]` into `]OK[`. Display-only, single
+        // codepoints only (a cluster with marks is never a bracket), and the CELL is
+        // untouched: programs reading the grid back see what they wrote.
+        let mut mirror_buf = [0u8; 4];
+        if mirrored {
+            let mut chars = cluster.chars();
+            if let (Some(c), None) = (chars.next(), chars.next()) {
+                if let Some(m) = ruuah_vt_frame::mirror(c) {
+                    cluster = m.encode_utf8(&mut mirror_buf);
+                }
+            }
+        }
 
         // Shaping is what makes a combining mark land where the font says rather than where
         // its own origin happens to be. Only clusters that actually have marks pay for it:
@@ -272,6 +287,14 @@ impl<S: Surface> Renderer<S> {
 
         self.canvas
             .fill(left, top, metrics.width, metrics.height, drawn.foreground);
-        self.draw_cell(frame.cell(frame.cursor.x, y), left, top, drawn.background);
+        // The caret redraws the cell it covers, so it must keep the run's mirroring --
+        // otherwise a bracket in an RTL run flips back the moment the cursor lands on it.
+        // `logical_start` is the cursor's coordinate space; `start` is not.
+        let mirrored = frame.runs(y).into_iter().any(|run| {
+            run.direction == ruuah_vt_frame::Direction::RightToLeft
+                && (run.logical_start..run.logical_start + run.cells.len() as u16)
+                    .contains(&frame.cursor.x)
+        });
+        self.draw_cell(frame.cell(frame.cursor.x, y), left, top, drawn.background, mirrored);
     }
 }

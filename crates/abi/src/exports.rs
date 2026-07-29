@@ -101,6 +101,9 @@ unsafe fn terminal_ref<'a>(node: *mut c_void) -> Option<&'a Terminal> {
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `out`, if non-null, must be valid for writing one pointer. A returned handle is owned by
+/// the caller and must be released with `ghostty_terminal_free`, exactly once.
 pub unsafe extern "C" fn ghostty_terminal_new(
     _allocator: *const GhosttyAllocator,
     out: *mut GhosttyTerminal,
@@ -130,6 +133,10 @@ pub unsafe extern "C" fn ghostty_terminal_new(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `handle` must be null or a pointer returned by `ghostty_terminal_new` that has not been
+/// freed. No other call on this terminal may be in flight, and no grid ref minted from it
+/// may be used afterwards.
 pub unsafe extern "C" fn ghostty_terminal_free(handle: GhosttyTerminal) {
     if handle.is_null() {
         return;
@@ -138,6 +145,11 @@ pub unsafe extern "C" fn ghostty_terminal_free(handle: GhosttyTerminal) {
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `handle` must be null or a live handle from `ghostty_terminal_new`. This is a WRITE: the
+/// caller must serialize it against every other call on the same terminal, and every grid
+/// ref minted before it is dead afterwards. `bytes`, if non-null, must be valid for `len`
+/// reads.
 pub unsafe extern "C" fn ghostty_terminal_vt_write(
     handle: GhosttyTerminal,
     bytes: *const u8,
@@ -156,6 +168,10 @@ pub unsafe extern "C" fn ghostty_terminal_vt_write(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `handle` must be null or a live handle from `ghostty_terminal_new`. This is a WRITE: the
+/// caller must serialize it against every other call on the same terminal, and every grid
+/// ref minted before it is dead afterwards.
 pub unsafe extern "C" fn ghostty_terminal_resize(
     handle: GhosttyTerminal,
     cols: u16,
@@ -175,6 +191,10 @@ pub unsafe extern "C" fn ghostty_terminal_resize(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `handle` must be null or a live handle from `ghostty_terminal_new`. This is a READ: it
+/// may run concurrently with other reads, but the caller must serialize it against writes.
+/// `out` must be valid for writing the type the requested `data` documents.
 pub unsafe extern "C" fn ghostty_terminal_get(
     handle: GhosttyTerminal,
     data: GhosttyTerminalData,
@@ -222,6 +242,10 @@ pub unsafe extern "C" fn ghostty_terminal_get(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `handle` must be null or a live handle from `ghostty_terminal_new`. This is a READ and
+/// may run concurrently with other reads. `out`, if non-null, must be valid for writing a
+/// `GhosttyGridRef`. The ref written is valid until the next write to the terminal.
 pub unsafe extern "C" fn ghostty_terminal_grid_ref(
     handle: GhosttyTerminal,
     point: GhosttyPoint,
@@ -269,6 +293,10 @@ pub unsafe extern "C" fn ghostty_terminal_grid_ref(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `grid_ref` must be null or point at a ref produced by `ghostty_terminal_grid_ref` whose
+/// terminal is still alive. This is a READ and may run concurrently with other reads.
+/// `out`, if non-null, must be valid for writing a `GhosttyCell`.
 pub unsafe extern "C" fn ghostty_grid_ref_cell(
     grid_ref: *const GhosttyGridRef,
     out: *mut GhosttyCell,
@@ -292,6 +320,10 @@ pub unsafe extern "C" fn ghostty_grid_ref_cell(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `grid_ref` must be null or point at a ref produced by `ghostty_terminal_grid_ref` whose
+/// terminal is still alive. This is a READ and may run concurrently with other reads.
+/// `out`, if non-null, must be valid for writing a `GhosttyRow`.
 pub unsafe extern "C" fn ghostty_grid_ref_row(
     grid_ref: *const GhosttyGridRef,
     out: *mut GhosttyRow,
@@ -320,6 +352,11 @@ pub unsafe extern "C" fn ghostty_grid_ref_row(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `grid_ref` must be null or point at a ref produced by `ghostty_terminal_grid_ref` whose
+/// terminal is still alive. This is a READ and may run concurrently with other reads.
+/// `buf`, if non-null, must be valid for `buf_len` writes of `u32`; `out_len` must be valid
+/// for writing one `usize`.
 pub unsafe extern "C" fn ghostty_grid_ref_graphemes(
     grid_ref: *const GhosttyGridRef,
     buf: *mut u32,
@@ -354,6 +391,10 @@ pub unsafe extern "C" fn ghostty_grid_ref_graphemes(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `grid_ref` must be null or point at a ref produced by `ghostty_terminal_grid_ref` whose
+/// terminal is still alive. This is a READ and may run concurrently with other reads.
+/// `out`, if non-null, must be valid for writing a `GhosttyStyle`.
 pub unsafe extern "C" fn ghostty_grid_ref_style(
     grid_ref: *const GhosttyGridRef,
     out: *mut GhosttyStyle,
@@ -377,6 +418,9 @@ pub unsafe extern "C" fn ghostty_grid_ref_style(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `cell` is a plain value; the only obligation is `out`, which must be valid for writing
+/// the type the requested `data` documents.
 pub unsafe extern "C" fn ghostty_cell_get(
     cell: GhosttyCell,
     data: GhosttyCellData,
@@ -422,6 +466,9 @@ pub unsafe extern "C" fn ghostty_cell_get(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `row` is a plain value; the only obligation is `out`, which must be valid for writing
+/// the type the requested `data` documents.
 pub unsafe extern "C" fn ghostty_row_get(
     row: GhosttyRow,
     data: GhosttyRowData,
@@ -452,6 +499,8 @@ pub unsafe extern "C" fn ghostty_row_get(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+/// `out`, if non-null, must be valid for writing a `GhosttyStyle`.
 pub unsafe extern "C" fn ghostty_style_default(out: *mut GhosttyStyle) {
     if out.is_null() {
         return;

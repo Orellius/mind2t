@@ -19,6 +19,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     private let config: OpaquePointer?
     /// Logical font size from the config (or the default); scaled per spawn.
     private let baseFontSize: Float
+    /// The configured lead font family, for metric queries that must match the
+    /// renderer's own stack (zoom math with the wrong font drifts the grid).
+    private let fontFamily: String?
     /// What could not be honoured in the config, shown once at launch -- a settings file
     /// that silently half-applies looks like a broken app, so the failure is loud.
     private let configError: String?
@@ -47,6 +50,11 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         self.config = config
         self.baseFontSize = baseFontSize
         self.configError = configError
+        if let config, let family = ruuah_config_font_family(config) {
+            self.fontFamily = String(cString: family)
+        } else {
+            self.fontFamily = nil
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -352,7 +360,10 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         let size = baseFontSize * Float(device) * clamped
         var cellW: UInt32 = 0
         var cellH: UInt32 = 0
-        guard ruuah_host_cell_metrics(size, &cellW, &cellH) == RUUAH_HOST_SUCCESS,
+        let metricsResult = fontFamily.withCStringOrNil { familyPointer in
+            ruuah_host_cell_metrics(size, familyPointer, &cellW, &cellH)
+        }
+        guard metricsResult == RUUAH_HOST_SUCCESS,
             cellW > 0, cellH > 0
         else { return }
         fontScale = clamped

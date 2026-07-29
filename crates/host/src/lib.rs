@@ -63,6 +63,7 @@ pub struct RuuahHostOptions {
 pub struct RuuahConfig {
     config: Config,
     shell: Option<CString>,
+    font_family: Option<CString>,
     error: Option<CString>,
 }
 
@@ -108,6 +109,10 @@ pub struct RuuahHost {
     pixels: Vec<u8>,
     drawn_generation: u64,
     font_size: f32,
+    /// The configured lead font and ligature switch, kept because every renderer
+    /// rebuild (resize, zoom) must reproduce them.
+    font_family: Option<String>,
+    ligatures: bool,
     /// The theme, kept because resize rebuilds the renderer -- a rebuild that forgot it
     /// would silently revert to the built-in scheme (pinned by the host_abi resize test).
     palette: Palette,
@@ -145,12 +150,20 @@ enum DrawMode {
     SkipRow(u16),
 }
 
-fn build_renderer(font_size: f32, cols: u16, rows: u16) -> Option<Renderer<GpuSurface>> {
-    let fonts = FontStack::system(font_size).ok()?;
+fn build_renderer(
+    font_size: f32,
+    cols: u16,
+    rows: u16,
+    family: Option<&str>,
+    ligatures: bool,
+) -> Option<Renderer<GpuSurface>> {
+    let fonts = FontStack::with_primary(family, font_size).ok()?;
     // `Surface::with_size` panics when no GPU adapter exists; across the C boundary that
     // must be a reported failure, not an unwind into foreign frames.
     catch_unwind(AssertUnwindSafe(move || {
-        Renderer::<GpuSurface>::with_surface(fonts, cols, rows)
+        let mut renderer = Renderer::<GpuSurface>::with_surface(fonts, cols, rows);
+        renderer.set_ligatures(ligatures);
+        renderer
     }))
     .ok()
 }
@@ -287,15 +300,22 @@ pub unsafe extern "C" fn ruuah_host_spawn(
     };
     // The theme rides the config handle; NULL keeps the built-in scheme. Cloned out
     // because the handle's lifetime is the caller's -- freeing it after spawn is legal.
-    let palette = if options.config.is_null() {
-        Palette::default()
+    let (palette, font_family, ligatures) = if options.config.is_null() {
+        (Palette::default(), None, true)
     } else {
-        unsafe { &*options.config }.config.palette.clone()
+        let config = &unsafe { &*options.config }.config;
+        (
+            config.palette.clone(),
+            config.font_family.clone(),
+            config.font_ligatures,
+        )
     };
 
     // The renderer is built before the child so a machine that cannot render never spawns
     // a process it would immediately have to reap.
-    let Some(mut renderer) = build_renderer(font_size, options.cols, options.rows) else {
+    let Some(mut renderer) =
+        build_renderer(font_size, options.cols, options.rows, font_family.as_deref(), ligatures)
+    else {
         return RuuahHostResult::RenderFailed;
     };
     renderer.set_palette(palette.clone());
@@ -323,6 +343,8 @@ pub unsafe extern "C" fn ruuah_host_spawn(
         pixels: Vec::new(),
         drawn_generation: 0,
         font_size,
+        font_family,
+        ligatures,
         palette,
         row_semantics: Vec::new(),
         images,
@@ -453,7 +475,13 @@ pub unsafe extern "C" fn ruuah_host_resize(
     if host.host.resize(Geometry { cols, rows }).is_err() {
         return RuuahHostResult::ResizeRefused;
     }
-    let Some(mut renderer) = build_renderer(host.font_size, cols, rows) else {
+    let Some(mut renderer) = build_renderer(
+        host.font_size,
+        cols,
+        rows,
+        host.font_family.as_deref(),
+        host.ligatures,
+    ) else {
         return RuuahHostResult::RenderFailed;
     };
     // The rebuild starts from the built-in scheme; the theme must survive it.
@@ -479,13 +507,19 @@ pub unsafe extern "C" fn ruuah_host_resize(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ruuah_host_cell_metrics(
     font_size: f32,
+    font_family: *const c_char,
     out_width: *mut u32,
     out_height: *mut u32,
 ) -> RuuahHostResult {
     if out_width.is_null() || out_height.is_null() || !(font_size > 0.0) {
         return RuuahHostResult::InvalidValue;
     }
-    let Ok(fonts) = FontStack::system(font_size) else {
+    let family = if font_family.is_null() {
+        None
+    } else {
+        unsafe { CStr::from_ptr(font_family) }.to_str().ok()
+    };
+    let Ok(fonts) = FontStack::with_primary(family, font_size) else {
         return RuuahHostResult::RenderFailed;
     };
     let metrics = fonts.metrics();
@@ -520,7 +554,13 @@ pub unsafe extern "C" fn ruuah_host_set_font_size(
     if host.host.resize(Geometry { cols, rows }).is_err() {
         return RuuahHostResult::ResizeRefused;
     }
-    let Some(mut renderer) = build_renderer(font_size, cols, rows) else {
+    let Some(mut renderer) = build_renderer(
+        font_size,
+        cols,
+        rows,
+        host.font_family.as_deref(),
+        host.ligatures,
+    ) else {
         return RuuahHostResult::RenderFailed;
     };
     renderer.set_palette(host.palette.clone());
@@ -757,8 +797,12 @@ pub unsafe extern "C" fn ruuah_config_load(
     // Interior NULs cannot occur: both strings come from TOML text that CStr::from_ptr
     // sources would have terminated -- but a file can contain anything, so fall back.
     let shell = config.shell.as_deref().and_then(|text| CString::new(text).ok());
+    let font_family = config
+        .font_family
+        .as_deref()
+        .and_then(|text| CString::new(text).ok());
     let error = config.error.as_deref().and_then(|text| CString::new(text).ok());
-    let handle = Box::new(RuuahConfig { config, shell, error });
+    let handle = Box::new(RuuahConfig { config, shell, font_family, error });
     unsafe { out.write(Box::into_raw(handle)) };
     RuuahHostResult::Success
 }
@@ -789,6 +833,22 @@ pub unsafe extern "C" fn ruuah_config_auto_direction(
         return fallback;
     }
     unsafe { &*config }.config.auto_direction.unwrap_or(fallback)
+}
+
+/// The configured lead font family, or NULL when unset. Borrowed: valid until
+/// `ruuah_config_free`.
+///
+/// # Safety
+/// `config` must be NULL or a live handle from `ruuah_config_load`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_config_font_family(config: *const RuuahConfig) -> *const c_char {
+    if config.is_null() {
+        return std::ptr::null();
+    }
+    match &unsafe { &*config }.font_family {
+        Some(family) => family.as_ptr(),
+        None => std::ptr::null(),
+    }
 }
 
 /// The configured shell command line, or NULL when unset. Borrowed: valid until

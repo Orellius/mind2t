@@ -244,6 +244,44 @@ pub unsafe extern "C" fn ghostty_terminal_get(
 #[unsafe(no_mangle)]
 /// # Safety
 /// `handle` must be null or a live handle from `ghostty_terminal_new`. This is a READ and
+/// may run concurrently with other reads. `out_value`, if non-null, must be valid for
+/// writing one `bool`.
+///
+/// The one mode this core tracks as queryable state is DEC 2004 (bracketed paste) -- the
+/// mode a GUI host must consult before every paste. Anything else answers
+/// `GHOSTTY_INVALID_VALUE` rather than a guessed `false`: a wrong "off" for a mode like
+/// 1006 would make a consumer silently drop mouse encoding, which is worse than an error
+/// it can see. Extend per mode, each with its own corpus pin, as consumers need them.
+pub unsafe extern "C" fn ghostty_terminal_mode_get(
+    handle: GhosttyTerminal,
+    mode: GhosttyMode,
+    out_value: *mut bool,
+) -> GhosttyResult {
+    let Some(terminal) = (unsafe { terminal_shared(handle) }) else {
+        return GHOSTTY_INVALID_VALUE;
+    };
+    if out_value.is_null() {
+        return GHOSTTY_INVALID_VALUE;
+    }
+    let guard = terminal.view_filled();
+    let Some(view) = guard.as_ref() else {
+        return GHOSTTY_INVALID_VALUE;
+    };
+
+    // Bit 15 of a packed GhosttyMode distinguishes ANSI (set) from DEC private (clear);
+    // 2004 is DEC private, so the packed form IS the number.
+    match mode {
+        2004 => {
+            unsafe { *out_value = view.modes.bracketed_paste };
+            GHOSTTY_SUCCESS
+        }
+        _ => GHOSTTY_INVALID_VALUE,
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+/// `handle` must be null or a live handle from `ghostty_terminal_new`. This is a READ and
 /// may run concurrently with other reads. `out`, if non-null, must be valid for writing a
 /// `GhosttyGridRef`. The ref written is valid until the next write to the terminal.
 pub unsafe extern "C" fn ghostty_terminal_grid_ref(

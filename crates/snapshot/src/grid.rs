@@ -152,6 +152,18 @@ pub struct Damage {
     pub rows: Vec<bool>,
 }
 
+/// Terminal modes that leave no trace on the grid.
+///
+/// A mode like bracketed paste changes only what the HOST writes to the pty, so a core
+/// that ignores it entirely scores a perfect match on every grid comparison — which is
+/// exactly the blind-spot shape every slice has hit. These are compared as state, not
+/// as behaviour, because there is no behaviour inside the core to compare.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Modes {
+    /// DEC private mode 2004: the host wraps pastes in `ESC[200~` / `ESC[201~`.
+    pub bracketed_paste: bool,
+}
+
 /// Cursor position and the style newly printed cells will take.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cursor {
@@ -170,6 +182,8 @@ pub struct Snapshot {
     pub rows: u16,
     pub screen: Screen,
     pub cursor: Cursor,
+    /// Modes with no grid-observable effect of their own (see `Modes`).
+    pub modes: Modes,
     /// Active-area rows, top to bottom. Length is `rows`; each row holds `cols` cells.
     pub grid: Vec<Row>,
     /// Scrollback rows above the active area, oldest first.

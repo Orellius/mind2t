@@ -908,6 +908,7 @@ version = "0.1.0"
 dependencies = [
  "bindgen",
  "ruuah-vt-abi-types",
+ "ruuah-vt-pty",
  "ruuah-vt-snapshot",
  "serde_json",
  "thiserror 2.0.19",

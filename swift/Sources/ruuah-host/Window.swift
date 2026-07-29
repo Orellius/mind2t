@@ -18,8 +18,25 @@ final class TerminalView: NSView {
     let contentLayer = CALayer()
 
     var onKeyBytes: (([UInt8]) -> Void)?
+    var onPaste: (([UInt8]) -> Void)?
 
     override var acceptsFirstResponder: Bool { true }
+
+    /// cmd+V, caught before the key-equivalent machinery falls through to keyDown --
+    /// the minimal host has no Edit menu to own it. Raw clipboard bytes go to the host,
+    /// which owns the encoding (fenceposts or newline folding, by the child's mode 2004);
+    /// building either sequence here would duplicate the oracle-measured transform.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let commandOnly: NSEvent.ModifierFlags = [.command]
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == commandOnly,
+            event.charactersIgnoringModifiers == "v",
+            let text = NSPasteboard.general.string(forType: .string)
+        {
+            onPaste?(Array(text.utf8))
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 
     override func layout() {
         super.layout()
@@ -118,6 +135,12 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let host = self?.host else { return }
             _ = bytes.withUnsafeBufferPointer { buffer in
                 ruuah_host_send(host, buffer.baseAddress, buffer.count)
+            }
+        }
+        view.onPaste = { [weak self] bytes in
+            guard let host = self?.host else { return }
+            _ = bytes.withUnsafeBufferPointer { buffer in
+                ruuah_host_paste(host, buffer.baseAddress, buffer.count)
             }
         }
 

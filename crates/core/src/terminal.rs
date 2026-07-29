@@ -88,6 +88,15 @@ impl Terminal {
     pub fn is_wholly_damaged(&self) -> bool {
         self.state.full_damage
     }
+
+    /// Whether the child enabled bracketed paste (DEC mode 2004).
+    ///
+    /// The host consults this before writing a paste: wrapped in `ESC[200~`/`ESC[201~`
+    /// when on, newlines folded to carriage returns when off. The core itself never
+    /// writes either -- it does no I/O.
+    pub fn bracketed_paste(&self) -> bool {
+        self.state.bracketed_paste
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,6 +119,11 @@ pub(crate) struct State {
     pub(crate) origin: bool,
     /// DECTCEM (mode 25).
     pub(crate) cursor_visible: bool,
+    /// Bracketed paste (mode 2004). Terminal-global, not per-screen: measured against the
+    /// oracle, entering the alternate screen keeps it and only RIS or `2004l` clears it.
+    /// The core only TRACKS it -- wrapping paste bytes is the host's job, because the
+    /// core does no I/O.
+    pub(crate) bracketed_paste: bool,
     /// Flat index of the last printed cell, so a following zero-width codepoint knows which
     /// cluster it belongs to. Cleared by anything that moves the cursor.
     pub(crate) last_print: Option<usize>,
@@ -135,6 +149,7 @@ impl State {
             autowrap: true,
             origin: false,
             cursor_visible: true,
+            bracketed_paste: false,
             last_print: None,
             max_scrollback,
             full_damage: false,
@@ -207,6 +222,9 @@ impl State {
             screen: match self.active {
                 Active::Primary => SnapshotScreen::Primary,
                 Active::Alternate => SnapshotScreen::Alternate,
+            },
+            modes: ruuah_vt_snapshot::Modes {
+                bracketed_paste: self.bracketed_paste,
             },
             cursor: Cursor {
                 x: screen.x,

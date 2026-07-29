@@ -47,12 +47,15 @@ answers for 2004 and returns INVALID_VALUE for untracked modes rather than a gue
 "off". End-to-end proof in `host_abi.rs` uses the pty's ECHOCTL to make the fenceposts
 visible as pixels; the fence appears exactly when the child enabled 2004. The cmd+V tap
 in the installed app still needs live eyes.
-**The full open backlog lives in `docs/BACKLOG-2026.md`** (written 2026-07-29 after
-RUUAH VT.app shipped and ran Claude Code live): P0 = paste + bracketed paste (mode
-2004, absent from core) and color emoji (renderer feature, not a font line); P1 =
-synchronized output (mode 2026, absent), DSR/DA replies (= slice 9), SGR mouse,
-scrollback viewport, kitty keyboard; P2 polish items and their boundaries are in
-the file. Read it before picking the next slice.
+**Two open backlogs — read both before picking the next slice.**
+`docs/BACKLOG-2026.md` (protocol, written 2026-07-29 after the app ran Claude Code live):
+P0.1 paste is DONE; still open are P0.2 color emoji (renderer feature, not a font line),
+P1 = synchronized output (mode 2026), DSR/DA replies (= slice 9), SGR mouse, scrollback
+viewport, kitty keyboard, and the P2 polish items.
+`docs/APP-BACKLOG-2026.md` (app slices S1-S9, mapped 2026-07-29 from Warp's open-source
+release and Superset): settings+themes, Blocks on our OSC 133 rails, palette+workflows,
+autosuggestions, worktree workspaces, diff panel, splits, persistent sessions, MCP
+control. Homegrown clean-room law stated in the file — never copy AGPL/ELv2 code.
 
 **Next: slice 9 (esctest2)** -- its blocker is gone: the DSR/DA reply path's seam,
 `Host::send`, is now exercised end to end through the C surface.

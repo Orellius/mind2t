@@ -60,6 +60,51 @@ pub struct CellMetrics {
 }
 
 /// An ordered list of fonts, searched first-to-last for each cluster.
+/// Finds an installed font file whose stem matches `family` with spaces and dashes
+/// ignored, searching the user dir first so a user-installed face wins over a system
+/// one of the same name.
+fn find_family(family: &str) -> Option<String> {
+    let normalize = |text: &str| -> String {
+        text.chars()
+            .filter(|c| !matches!(c, ' ' | '-' | '_'))
+            .flat_map(char::to_lowercase)
+            .collect()
+    };
+    let wanted = normalize(family);
+    let home = std::env::var("HOME").unwrap_or_default();
+    let dirs = [
+        format!("{home}/Library/Fonts"),
+        "/Library/Fonts".to_string(),
+        "/System/Library/Fonts".to_string(),
+        "/System/Library/Fonts/Supplemental".to_string(),
+    ];
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut names: Vec<_> = entries
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| {
+                matches!(
+                    path.extension().and_then(|e| e.to_str()),
+                    Some("ttf" | "otf" | "ttc")
+                )
+            })
+            .collect();
+        names.sort(); // deterministic pick when several weights match
+        for path in names {
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if normalize(stem).contains(&wanted) {
+                return path.to_str().map(str::to_owned);
+            }
+        }
+    }
+    None
+}
+
 pub struct FontStack {
     faces: Vec<Face>,
     size: f32,
@@ -114,7 +159,50 @@ impl FontStack {
     ///
     /// Arial Hebrew is the last resort: it ships on every macOS but is proportional, so
     /// Hebrew sits unevenly in a fixed grid.
+    /// The system stack with a user-chosen lead font in FRONT -- it answers first and
+    /// defines the cell box; the stack backstops coverage exactly as before. `family`
+    /// is an absolute path to a font file, or a name matched case-insensitively
+    /// against installed font FILE STEMS (spaces and dashes ignored) across the user,
+    /// local and system font dirs. Honest v1: no CoreText name-table lookup, and an
+    /// unresolvable family falls back to the plain system stack -- the terminal must
+    /// come up either way; the config layer owns reporting the miss.
+    pub fn with_primary(family: Option<&str>, size: f32) -> Result<FontStack, FontError> {
+        let Some(family) = family else {
+            return FontStack::system(size);
+        };
+        let path = if family.starts_with('/') && std::path::Path::new(family).is_file() {
+            Some(family.to_string())
+        } else {
+            find_family(family)
+        };
+        match path {
+            Some(path) => {
+                let mut candidates = vec![(path.as_str(), 0usize)];
+                let system = FontStack::system_paths();
+                candidates.extend(system.iter().map(|entry| (entry.as_str(), 0)));
+                FontStack::load(&candidates, size)
+            }
+            None => FontStack::system(size),
+        }
+    }
+
+    /// Whether a named family resolved to an installed font file -- the config layer's
+    /// loud-miss check, kept next to the resolution rule it reports on.
+    pub fn family_resolves(family: &str) -> bool {
+        (family.starts_with('/') && std::path::Path::new(family).is_file())
+            || find_family(family).is_some()
+    }
+
     pub fn system(size: f32) -> Result<FontStack, FontError> {
+        let candidates = FontStack::system_paths();
+        let present: Vec<(&str, usize)> = candidates
+            .iter()
+            .map(|path| (path.as_str(), 0))
+            .collect();
+        FontStack::load(&present, size)
+    }
+
+    fn system_paths() -> Vec<String> {
         let home = std::env::var("HOME").unwrap_or_default();
         let candidates = [
             ("/System/Library/Fonts/Menlo.ttc".to_string(), 0),
@@ -139,13 +227,11 @@ impl FontStack {
             (format!("{home}/Library/Fonts/IosevkaNerdFontMono-Regular.ttf"), 0),
         ];
 
-        let present: Vec<(&str, usize)> = candidates
-            .iter()
+        candidates
+            .into_iter()
             .filter(|(path, _)| std::path::Path::new(path).is_file())
-            .map(|(path, index)| (path.as_str(), *index))
-            .collect();
-
-        FontStack::load(&present, size)
+            .map(|(path, _)| path)
+            .collect()
     }
 
     pub fn metrics(&self) -> CellMetrics {

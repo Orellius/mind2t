@@ -27,6 +27,14 @@ pub struct Config {
     pub auto_direction: Option<bool>,
     /// Command line for new sessions, run via `/bin/sh -c`. `None` means the login $SHELL.
     pub shell: Option<String>,
+    /// Lead font: an absolute path to a font file, or a name matched against installed
+    /// font file stems (spaces/dashes ignored -- no CoreText name lookup, documented
+    /// boundary). `None` keeps the built-in Menlo-led stack. A name that resolves to
+    /// nothing is a loud config error and the stack stays default.
+    pub font_family: Option<String>,
+    /// Whether ASCII segments may form ligatures (needs a font that ships them; the
+    /// default stack's Menlo has none, so this changes nothing until font-family does).
+    pub font_ligatures: bool,
     /// The theme palette, resolved onto the built-in scheme. Always usable.
     pub palette: Palette,
     /// Every problem hit while loading, newline-joined. `None` when the load was clean.
@@ -41,6 +49,8 @@ impl Default for Config {
             font_size: 0.0,
             auto_direction: None,
             shell: None,
+            font_family: None,
+            font_ligatures: true,
             palette: Palette::default(),
             error: None,
         }
@@ -57,6 +67,10 @@ struct RawConfig {
     #[serde(rename = "auto-direction")]
     auto_direction: Option<bool>,
     shell: Option<String>,
+    #[serde(rename = "font-family")]
+    font_family: Option<String>,
+    #[serde(rename = "font-ligatures")]
+    font_ligatures: Option<bool>,
     theme: Option<String>,
 }
 
@@ -111,6 +125,19 @@ impl Config {
         }
         config.auto_direction = raw.auto_direction;
         config.shell = raw.shell.filter(|shell| !shell.is_empty());
+        if let Some(family) = raw.font_family.filter(|family| !family.is_empty()) {
+            if ruuah_vt_render::FontStack::family_resolves(&family) {
+                config.font_family = Some(family);
+            } else {
+                if !errors.is_empty() {
+                    errors.push('\n');
+                }
+                let _ = write!(errors, "font-family \"{family}\" matches no installed font");
+            }
+        }
+        if let Some(on) = raw.font_ligatures {
+            config.font_ligatures = on;
+        }
 
         if let Some(name) = raw.theme {
             let path = dir.join("themes").join(format!("{name}.toml"));
@@ -321,5 +348,27 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn font_keys_parse_and_a_missing_family_is_loud() {
+        let dir = std::env::temp_dir().join(format!("ruuah-config-fonts-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("config.toml"),
+            "font-ligatures = false\nfont-family = \"NoSuchFontFamily9000\"\n",
+        )
+        .unwrap();
+        let config = Config::load(Some(&dir));
+        assert!(!config.font_ligatures);
+        assert_eq!(config.font_family, None, "an unresolved family stays default");
+        let error = config.error.expect("the miss is loud");
+        assert!(error.contains("NoSuchFontFamily9000"), "{error}");
+
+        std::fs::write(dir.join("config.toml"), "font-family = \"Menlo\"\n").unwrap();
+        let config = Config::load(Some(&dir));
+        assert_eq!(config.font_family.as_deref(), Some("Menlo"));
+        assert!(config.font_ligatures, "default stays on");
+        assert!(config.error.is_none(), "{:?}", config.error);
     }
 }

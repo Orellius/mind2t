@@ -127,7 +127,7 @@ RuuahHostResult ruuah_host_resize(RuuahHost *host, uint16_t cols, uint16_t rows)
  * zoom flow needs this BEFORE the new renderer exists: window pixels stay fixed, the
  * grid that fits them moves with the metrics. Pure query. */
 RuuahHostResult ruuah_host_cell_metrics(
-    float font_size, uint32_t *out_width, uint32_t *out_height);
+    float font_size, const char *font_family, uint32_t *out_width, uint32_t *out_height);
 
 /* Changes the font size live: pty resize to the new grid plus render-target rebuild at
  * the new metrics, in one call. Derive cols/rows from ruuah_host_cell_metrics and the
@@ -193,6 +193,10 @@ bool ruuah_config_auto_direction(const RuuahConfig *config, bool fallback);
 /* The configured shell command line, or NULL when unset. Borrowed: valid until
  * ruuah_config_free on the same handle. */
 const char *ruuah_config_shell(const RuuahConfig *config);
+
+/* The configured lead font family (config font-family), or NULL when unset.
+ * Borrowed: valid until ruuah_config_free. */
+const char *ruuah_config_font_family(const RuuahConfig *config);
 
 /* Everything that went wrong while loading, newline-joined; NULL when clean. Borrowed:
  * valid until ruuah_config_free on the same handle. */

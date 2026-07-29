@@ -38,6 +38,9 @@ pub struct Renderer<S = Canvas> {
     shaping: bool,
     /// Whether the caret follows its cell through the bidi layout. Off is a test control only.
     visual_caret: bool,
+    /// Whether same-style ASCII segments may form ligatures (config `font-ligatures`).
+    /// With a non-ligating lead font this changes nothing, by construction.
+    ligatures: bool,
     cols: u16,
     rows: u16,
     /// The last generation fully painted. Rows stamped above it are what is owed.
@@ -65,6 +68,7 @@ impl<S: Surface> Renderer<S> {
             positioned: Vec::with_capacity(8),
             shaping: true,
             visual_caret: true,
+            ligatures: true,
             palette: Palette::xterm(),
             canvas,
             cols,
@@ -104,6 +108,10 @@ impl<S: Surface> Renderer<S> {
     /// the real path does not; a positioning test that has never been seen to fail cannot
     /// tell a working GPOS lookup from an ignored one.
     #[doc(hidden)]
+    pub fn set_ligatures(&mut self, on: bool) {
+        self.ligatures = on;
+    }
+
     pub fn set_shaping_for_testing(&mut self, on: bool) {
         self.shaping = on;
     }
@@ -179,6 +187,14 @@ impl<S: Surface> Renderer<S> {
 
         for run in frame.runs(y) {
             let drawn = self.palette.draw(&run.style);
+            // Ligature pass: plan which segments of this run form ligatures. Ink for
+            // their cells is skipped below and blitted from the plan afterwards;
+            // backgrounds and decorations stay per-cell.
+            let plans = if self.ligatures && drawn.ink {
+                self.ligature_plan(&run)
+            } else {
+                Vec::new()
+            };
             for (index, glyph_cell) in run.cells.iter().enumerate() {
                 let column = run.column_of(index);
                 let width = cell_width(*glyph_cell);
@@ -193,15 +209,77 @@ impl<S: Surface> Renderer<S> {
                     cell.height,
                     drawn.background,
                 );
-                if drawn.ink {
+                let ligated = plans
+                    .iter()
+                    .any(|(start, count, _)| index >= *start && index < start + count);
+                if drawn.ink && !ligated {
                     let mirrored = run.direction == ruuah_vt_frame::Direction::RightToLeft;
                     self.draw_cell(*glyph_cell, left, top, width, drawn.foreground, mirrored);
                 }
                 self.draw_decorations(&drawn, left, top, width);
             }
+            // The ligature ink goes over the freshly painted backgrounds.
+            for (start, _, glyphs) in &plans {
+                let origin = i32::from(run.column_of(*start)) * cell.width as i32;
+                let baseline = top + cell.baseline;
+                for placed in glyphs {
+                    let Some(glyph) = self.atlas.glyph(&self.fonts, placed.key) else {
+                        continue;
+                    };
+                    if let crate::atlas::GlyphData::Mask(coverage) = &glyph.data {
+                        let x = origin + placed.x.round() as i32 + glyph.left;
+                        let y = baseline - placed.y.round() as i32 - glyph.top;
+                        let (width, height) = (glyph.width, glyph.height);
+                        self.canvas
+                            .blend_mask(x, y, width, height, coverage, drawn.foreground);
+                    }
+                }
+            }
         }
 
         self.draw_cursor(frame, y);
+    }
+
+    /// Plans ligature segments for one run: maximal stretches of single-codepoint
+    /// printable-ASCII narrow cells, shaped as one string with calt/liga. A plan is
+    /// kept ONLY when a ligature actually formed, so non-ligating fonts draw exactly
+    /// as they always did.
+    fn ligature_plan(
+        &mut self,
+        run: &ruuah_vt_frame::Run<'_>,
+    ) -> Vec<(usize, usize, Vec<PositionedGlyph>)> {
+        if run.direction == ruuah_vt_frame::Direction::RightToLeft {
+            return Vec::new();
+        }
+        let mut plans = Vec::new();
+        let mut index = 0usize;
+        let cells = run.cells;
+        while index < cells.len() {
+            let mut text = String::new();
+            let mut end = index;
+            while end < cells.len() {
+                let cell = cells[end];
+                if cell_width(cell) != 1 {
+                    break;
+                }
+                let mut scratch = [0u8; ruuah_vt_frame::CLUSTER_BYTES];
+                let cluster = cell.cluster(&mut scratch);
+                let mut chars = cluster.chars();
+                match (chars.next(), chars.next()) {
+                    (Some(c), None) if ('!'..='~').contains(&c) => text.push(c),
+                    _ => break,
+                }
+                end += 1;
+            }
+            if end - index >= 2 {
+                let (glyphs, formed) = self.shaper.shape_run(&mut self.fonts, &text);
+                if formed {
+                    plans.push((index, end - index, glyphs.to_vec()));
+                }
+            }
+            index = end.max(index + 1);
+        }
+        plans
     }
 
     fn draw_cell(

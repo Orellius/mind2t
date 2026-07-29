@@ -739,11 +739,11 @@ fn a_live_font_size_change_reaches_the_polled_pixels() {
     let (mut small_w, mut small_h) = (0u32, 0u32);
     let (mut large_w, mut large_h) = (0u32, 0u32);
     assert_eq!(
-        unsafe { ruuah_host_cell_metrics(14.0, &mut small_w, &mut small_h) },
+        unsafe { ruuah_host_cell_metrics(14.0, ptr::null(), &mut small_w, &mut small_h) },
         RuuahHostResult::Success
     );
     assert_eq!(
-        unsafe { ruuah_host_cell_metrics(28.0, &mut large_w, &mut large_h) },
+        unsafe { ruuah_host_cell_metrics(28.0, ptr::null(), &mut large_w, &mut large_h) },
         RuuahHostResult::Success
     );
     assert!(
@@ -751,7 +751,7 @@ fn a_live_font_size_change_reaches_the_polled_pixels() {
         "cell metrics must grow with the font size: {small_w}x{small_h} -> {large_w}x{large_h}"
     );
     assert_eq!(
-        unsafe { ruuah_host_cell_metrics(0.0, &mut small_w, &mut small_h) },
+        unsafe { ruuah_host_cell_metrics(0.0, ptr::null(), &mut small_w, &mut small_h) },
         RuuahHostResult::InvalidValue,
         "a zero size is refused, not defaulted"
     );

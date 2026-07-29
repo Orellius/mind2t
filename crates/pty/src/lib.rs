@@ -12,5 +12,6 @@
 //! is justified where it sits.
 
 pub mod host;
+pub mod paste;
 
 pub use host::{Geometry, Host, Options, ResizeError, SpawnError};

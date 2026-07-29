@@ -248,6 +248,29 @@ fn poll_impl(host: &mut RuuahHost, mode: DrawMode) -> RuuahHostFrame {
     }
 }
 
+/// Builds the child command from the options: the configured command via `/bin/sh -c`,
+/// or an interactive login shell. TERM is declared by the host (a Finder launch
+/// inherits none) and the Claude Code child-session markers are scrubbed -- a terminal
+/// window is a session boundary (seen live 2026-07-29). Returns None on a non-UTF-8
+/// command string.
+fn build_command(options: &RuuahHostOptions) -> Option<Command> {
+    let mut command = if options.command.is_null() {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+        let mut command = Command::new(shell);
+        command.arg("-il");
+        command
+    } else {
+        let text = unsafe { CStr::from_ptr(options.command) }.to_str().ok()?;
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", text]);
+        command
+    };
+    command.env("TERM", "xterm-256color");
+    command.env_remove("CLAUDECODE");
+    command.env_remove("CLAUDE_CODE_CHILD_SESSION");
+    Some(command)
+}
+
 /// Spawns the command on a fresh pty and starts the parse/publish pipeline.
 ///
 /// # Safety
@@ -268,30 +291,10 @@ pub unsafe extern "C" fn ruuah_host_spawn(
         return RuuahHostResult::InvalidValue;
     }
 
-    let mut command = if options.command.is_null() {
-        // An interactive login shell, which is what a terminal window means by "a shell".
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-        let mut command = Command::new(shell);
-        command.arg("-il");
-        command
-    } else {
-        let Ok(text) = unsafe { CStr::from_ptr(options.command) }.to_str() else {
-            return RuuahHostResult::InvalidValue;
-        };
-        let mut command = Command::new("/bin/sh");
-        command.args(["-c", text]);
-        command
+    let Some(mut command) = build_command(&options) else {
+        return RuuahHostResult::InvalidValue;
     };
-
-    // The host owns the pty, so the host declares what it emulates -- a child launched
-    // from Finder inherits no TERM at all, and one from a terminal inherits the wrong one.
-    command.env("TERM", "xterm-256color");
-    // A terminal window is a session boundary. When the app itself was launched from
-    // inside a Claude Code session, the inherited child-session markers make a `claude`
-    // run in this window believe it is nested and silently disable transcript saving
-    // (seen live 2026-07-29). The shell in this window is a fresh session; scrub them.
-    command.env_remove("CLAUDECODE");
-    command.env_remove("CLAUDE_CODE_CHILD_SESSION");
+    let _ = &mut command; // rebuilt per retry below; the binding must stay mutable
 
     let font_size = if options.font_size > 0.0 {
         options.font_size
@@ -320,9 +323,24 @@ pub unsafe extern "C" fn ruuah_host_spawn(
     };
     renderer.set_palette(palette.clone());
 
-    let (host, reader) = match Host::spawn(command, Options::new(options.cols, options.rows)) {
-        Ok(spawned) => spawned,
-        Err(_) => return RuuahHostResult::SpawnFailed,
+    // fork/openpt can transiently EAGAIN when the machine is busy (measured under the
+    // parallel test load, 2026-07-30: one spawn in a full run failed and passed alone).
+    // A terminal window should survive that moment; genuine failures -- bad shell, no
+    // pty -- fail identically on every attempt and still surface, 50ms later.
+    let mut attempt = 0;
+    let (host, reader) = loop {
+        match Host::spawn(command, Options::new(options.cols, options.rows)) {
+            Ok(spawned) => break spawned,
+            Err(_) if attempt < 2 => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(25));
+                command = match build_command(&options) {
+                    Some(rebuilt) => rebuilt,
+                    None => return RuuahHostResult::InvalidValue,
+                };
+            }
+            Err(_) => return RuuahHostResult::SpawnFailed,
+        }
     };
 
     // Base direction is a reader-side layout preference on the host's own Frame -- the

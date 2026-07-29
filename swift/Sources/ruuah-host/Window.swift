@@ -20,6 +20,19 @@ final class TerminalView: NSView {
     var onPaste: (([UInt8]) -> Void)?
     var onNewSession: (() -> Void)?
     var onCloseSession: (() -> Void)?
+    /// A click on a block's gutter bar. The receiver owns the menu and the actions.
+    var onBlockClick: ((Block, NSEvent) -> Void)?
+
+    /// The gutter (S2): one thin bar per block in the left margin, drawn from the
+    /// shell's OSC 133 marks. Empty without shell integration -- the margin stays bare
+    /// rather than guessing at boundaries.
+    private var blocks: [Block] = []
+    private var bars: [CALayer] = []
+    /// Device pixels per cell row, from the active session's first frame; 0 = no grid.
+    private var cellHeightDevice = 0
+    private static let barColor = NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.22).cgColor
+    private static let barHotColor =
+        NSColor(srgbRed: 0x58 / 255.0, green: 0x65 / 255.0, blue: 0xF2 / 255.0, alpha: 1).cgColor
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -27,6 +40,66 @@ final class TerminalView: NSView {
         super.layout()
         contentLayer.frame = bounds.insetBy(
             dx: TerminalView.padding, dy: TerminalView.padding)
+        layoutBars()
+    }
+
+    /// Replaces the gutter with the active session's blocks. Cheap when nothing moved.
+    func updateGutter(blocks: [Block], cellHeightDevice: Int) {
+        guard blocks != self.blocks || cellHeightDevice != self.cellHeightDevice else { return }
+        self.blocks = blocks
+        self.cellHeightDevice = cellHeightDevice
+        while bars.count > blocks.count {
+            bars.removeLast().removeFromSuperlayer()
+        }
+        while bars.count < blocks.count {
+            let bar = CALayer()
+            bar.actions = ["bounds": NSNull(), "position": NSNull(), "backgroundColor": NSNull()]
+            bar.cornerRadius = 1
+            layer?.addSublayer(bar)
+            bars.append(bar)
+        }
+        layoutBars()
+    }
+
+    /// One point-space rect per block bar, y-flipped (AppKit views grow upward; grid
+    /// rows grow downward from the top padding edge).
+    private func layoutBars() {
+        guard cellHeightDevice > 0, let scale = window?.backingScaleFactor else { return }
+        let rowHeight = CGFloat(cellHeightDevice) / scale
+        for (block, bar) in zip(blocks, bars) {
+            let top = TerminalView.padding + CGFloat(block.rows.lowerBound) * rowHeight
+            let height = CGFloat(block.rows.count) * rowHeight
+            bar.frame = CGRect(
+                x: 2, y: bounds.height - top - height, width: 3, height: height - 2)
+            bar.backgroundColor = TerminalView.barColor
+        }
+    }
+
+    /// The block whose bar band contains a click in the left margin, if any.
+    private func block(at point: NSPoint) -> Block? {
+        guard point.x < TerminalView.padding, cellHeightDevice > 0,
+            let scale = window?.backingScaleFactor
+        else { return nil }
+        let rowHeight = CGFloat(cellHeightDevice) / scale
+        let row = Int((bounds.height - point.y - TerminalView.padding) / rowHeight)
+        return blocks.first { $0.rows.contains(row) }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let block = block(at: point) else {
+            super.mouseDown(with: event)
+            return
+        }
+        // The clicked bar flashes hot so the menu visibly belongs to it.
+        if let index = blocks.firstIndex(of: block), index < bars.count {
+            bars[index].backgroundColor = TerminalView.barHotColor
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                guard let self, index < self.bars.count else { return }
+                self.bars[index].backgroundColor = TerminalView.barColor
+            }
+        }
+        onBlockClick?(block, event)
     }
 
     /// The app's chords, caught before the key-equivalent machinery falls through to

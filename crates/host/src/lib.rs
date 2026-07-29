@@ -83,7 +83,19 @@ pub struct RuuahHostFrame {
     /// as well as any future palette theme. Never sampled from pixels: the corner
     /// pixel belongs to the caret whenever the cursor sits at home.
     pub background: [u8; 4],
+    /// One byte per grid row (`row_count` of them): the row's shell-semantic class per
+    /// OSC 133 -- `RUUAH_ROW_OUTPUT`, `RUUAH_ROW_PROMPT` or `RUUAH_ROW_INPUT`. This is
+    /// what a block gutter draws from (S2). Borrowed with the same lifetime as `pixels`:
+    /// valid until the next poll, resize, or free. NULL before the first drawn frame.
+    pub row_semantics: *const u8,
+    pub row_count: u32,
 }
+
+pub const RUUAH_ROW_OUTPUT: u8 = 0;
+pub const RUUAH_ROW_PROMPT: u8 = 1;
+pub const RUUAH_ROW_INPUT: u8 = 2;
+/// `ruuah_host_row_text` filter value: every cell regardless of its OSC 133 mark.
+pub const RUUAH_TEXT_ALL: u8 = 255;
 
 /// The state behind the opaque handle: the whole pipeline, composed.
 pub struct RuuahHost {
@@ -99,7 +111,25 @@ pub struct RuuahHost {
     /// The theme, kept because resize rebuilds the renderer -- a rebuild that forgot it
     /// would silently revert to the built-in scheme (pinned by the host_abi resize test).
     palette: Palette,
+    /// Stable storage backing the borrowed `row_semantics` pointer, one byte per row.
+    /// Rebuilt on every draw, same lifetime contract as `pixels`.
+    row_semantics: Vec<u8>,
     exited: bool,
+}
+
+/// One row's shell-semantic class, derived from the per-cell OSC 133 marks the core
+/// tracks. Prompt wins over input: the row a prompt starts on usually also holds the
+/// typed command, and the gutter wants block STARTS.
+fn row_semantic(frame: &Frame, y: u16) -> u8 {
+    let mut class = RUUAH_ROW_OUTPUT;
+    for x in 0..frame.cols {
+        match frame.cell(x, y).semantic() {
+            ruuah_vt_snapshot::Semantic::Prompt => return RUUAH_ROW_PROMPT,
+            ruuah_vt_snapshot::Semantic::Input => class = RUUAH_ROW_INPUT,
+            ruuah_vt_snapshot::Semantic::Output => {}
+        }
+    }
+    class
 }
 
 /// How a poll paints. `SkipRow` is the harness's broken renderer, never the real path.
@@ -138,6 +168,10 @@ fn poll_impl(host: &mut RuuahHost, mode: DrawMode) -> RuuahHostFrame {
         }
         host.drawn_generation = host.frame.generation;
         host.pixels = host.renderer.pixels();
+        // Rebuilt with the pixels so the two borrowed views always describe one frame.
+        host.row_semantics.clear();
+        host.row_semantics
+            .extend((0..host.frame.rows).map(|y| row_semantic(&host.frame, y)));
         drew = true;
     }
 
@@ -169,6 +203,12 @@ fn poll_impl(host: &mut RuuahHost, mode: DrawMode) -> RuuahHostFrame {
                 palette.default_background
             }
         },
+        row_semantics: if host.row_semantics.is_empty() {
+            std::ptr::null()
+        } else {
+            host.row_semantics.as_ptr()
+        },
+        row_count: host.row_semantics.len() as u32,
     }
 }
 
@@ -260,6 +300,7 @@ pub unsafe extern "C" fn ruuah_host_spawn(
         drawn_generation: 0,
         font_size,
         palette,
+        row_semantics: Vec::new(),
         exited: false,
     });
     unsafe { out.write(Box::into_raw(handle)) };
@@ -396,6 +437,82 @@ pub unsafe extern "C" fn ruuah_host_resize(
     // geometry -- the borrowed pointer contract says they die here.
     host.drawn_generation = 0;
     host.pixels = Vec::new();
+    host.row_semantics = Vec::new();
+    RuuahHostResult::Success
+}
+
+/// Copies one grid row's text as UTF-8 into `out`, trailing blanks trimmed.
+///
+/// `semantic` filters by the per-cell OSC 133 mark: `RUUAH_TEXT_ALL` (255) takes every
+/// cell; `RUUAH_ROW_OUTPUT`/`RUUAH_ROW_PROMPT`/`RUUAH_ROW_INPUT` take only cells wearing
+/// that mark (a filtered-out cell contributes nothing, not a space). This is what makes
+/// "copy command" exact: the prompt row holds `$ ls -la`, and the input filter returns
+/// `ls -la` alone.
+///
+/// Reads the last POLLED frame -- poll at least once first; a rendering host does so
+/// continuously. Spacer cells of wide glyphs are skipped, so a row with emoji comes back
+/// as its clusters once each. Writes at most `cap` bytes (no NUL terminator is added),
+/// stores the full length in `*len`, and fails with INVALID_VALUE when the row is out of
+/// range or no frame has been polled. A `cap` smaller than `*len` copies the truncated
+/// prefix (backed off to a UTF-8 boundary); the caller sizes `cap` from it and calls
+/// again.
+///
+/// This is the copy-command/copy-output seam for blocks (S2): the GUI groups rows with
+/// `row_semantics` and reads the text of the rows it selected.
+///
+/// # Safety
+/// `host` must be a live handle; `out` must point to `cap` writable bytes or be NULL when
+/// `cap` is 0; `len` must be non-NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_host_row_text(
+    host: *mut RuuahHost,
+    row: u16,
+    semantic: u8,
+    out: *mut u8,
+    cap: usize,
+    len: *mut usize,
+) -> RuuahHostResult {
+    if host.is_null() || len.is_null() || (out.is_null() && cap != 0) {
+        return RuuahHostResult::InvalidValue;
+    }
+    unsafe { len.write(0) };
+    let host = unsafe { &mut *host };
+    if !host.frame.is_valid() || row >= host.frame.rows {
+        return RuuahHostResult::InvalidValue;
+    }
+
+    let wanted = |cell_semantic: ruuah_vt_snapshot::Semantic| match semantic {
+        RUUAH_TEXT_ALL => true,
+        RUUAH_ROW_OUTPUT => cell_semantic == ruuah_vt_snapshot::Semantic::Output,
+        RUUAH_ROW_PROMPT => cell_semantic == ruuah_vt_snapshot::Semantic::Prompt,
+        RUUAH_ROW_INPUT => cell_semantic == ruuah_vt_snapshot::Semantic::Input,
+        _ => false,
+    };
+
+    let mut text = String::new();
+    let mut scratch = [0u8; ruuah_vt_frame::CLUSTER_BYTES];
+    for x in 0..host.frame.cols {
+        let cell = host.frame.cell(x, row);
+        if ruuah_vt_frame::cell_width(cell) == 0 || !wanted(cell.semantic()) {
+            continue;
+        }
+        let cluster = cell.cluster(&mut scratch);
+        if cluster.is_empty() {
+            text.push(' ');
+        } else {
+            text.push_str(cluster);
+        }
+    }
+    let trimmed = text.trim_end_matches(' ');
+
+    unsafe { len.write(trimmed.len()) };
+    if cap > 0 {
+        let copy = trimmed.len().min(cap);
+        // A UTF-8 boundary is not guaranteed at `copy`; back off to one so a truncated
+        // read is still valid UTF-8 rather than a torn code unit.
+        let boundary = (0..=copy).rev().find(|i| trimmed.is_char_boundary(*i)).unwrap_or(0);
+        unsafe { std::ptr::copy_nonoverlapping(trimmed.as_ptr(), out, boundary) };
+    }
     RuuahHostResult::Success
 }
 

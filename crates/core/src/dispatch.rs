@@ -151,6 +151,7 @@ impl State {
                 // behind, so their per-row damage is real information; measured 2026-07-28.
                 if mode == 2 {
                     self.mark_full_damage();
+                    self.scroll_clear_at_prompt(blank);
                 }
                 self.screen_mut().erase_in_display(mode, blank);
             }

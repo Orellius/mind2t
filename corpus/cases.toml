@@ -934,12 +934,12 @@ note = "The same write seen through style instead of semantics. Upstream's space
 
 [[case]]
 name = "ed2-at-a-prompt-scrolls-instead-of-clearing"
-expect = "diff"
+expect = "match"
 cols = 10
 rows = 3
 scrollback = 50
 bytes = "a\r\nb\r\n\u001B]133;A\u0007$ \u001B[2J"
-note = "eraseDisplay(.complete) checks the bottom active row for a prompt mark and, on the primary screen, runs scrollClear() first (Terminal.zig:3310-3336) -- the clear-at-a-prompt behaviour that keeps history. This core always blanks in place."
+note = "eraseDisplay(.complete) checks the bottom active row for a prompt mark and, on the primary screen, runs scrollClear() first (Terminal.zig:3310-3336) -- the clear-at-a-prompt behaviour that keeps history. Promoted by the S2 wave: scroll_clear_at_prompt gates on the bottom row's mark and Screen::scroll_clear mirrors both the row count and cursorReload."
 
 [[case]]
 name = "ed3-clears-the-scrollback"

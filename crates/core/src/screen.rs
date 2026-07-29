@@ -267,6 +267,48 @@ impl Screen {
             .scroll_up(self.scroll_top, self.scroll_bottom, count, blank);
     }
 
+    /// Scrolls everything written into scrollback, so a clear at a prompt keeps history.
+    ///
+    /// Mirrors `PageList.scrollClear` (`PageList.zig:3099`): it walks the active area from
+    /// the bottom for the first row holding text and scrolls by the count that reaches it,
+    /// so trailing blank rows are not pushed. It ignores the scroll region -- upstream grows
+    /// the page list itself rather than scrolling a region -- which is why this does not
+    /// route through `scroll_region_up`.
+    pub fn scroll_clear(&mut self, blank: Cell) {
+        let rows = self.rows();
+        let mut count = 0;
+        for y in (0..rows).rev() {
+            let row_has_text = (0..self.grid.cols())
+                .any(|x| self.grid.cell(self.grid.index(x, y)).has_text());
+            if row_has_text {
+                count = y + 1;
+                break;
+            }
+        }
+        if count == 0 {
+            return;
+        }
+        if self.history.enabled() {
+            for y in 0..count {
+                let row = self.grid.extract_row(y);
+                self.history.push(row);
+            }
+        }
+        let last = self.last_row();
+        self.grid.scroll_up(0, last, count, blank);
+
+        // `Screen.scrollClear` then calls `cursorReload` (`Screen.zig:844`), which derives the
+        // cursor from its tracked pin: the pin follows its row up, and only when that row has
+        // left the active area entirely does it reset to the top-left.
+        if self.y >= count {
+            let y = self.y - count;
+            self.set_y(y);
+        } else {
+            self.x = 0;
+            self.set_y(0);
+        }
+    }
+
     pub fn scroll_down(&mut self, count: u16, blank: Cell) {
         self.grid
             .scroll_down(self.scroll_top, self.scroll_bottom, count, blank);

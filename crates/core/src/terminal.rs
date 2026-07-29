@@ -11,7 +11,7 @@
 //!   restating expected cell contents here.
 
 use ruuah_vt_snapshot::{
-    Cursor, Damage, Dirty, Screen as SnapshotScreen, Semantic, Snapshot, Style,
+    Cursor, Damage, Dirty, RowSemantic, Screen as SnapshotScreen, Semantic, Snapshot, Style,
 };
 use unicode_width::UnicodeWidthChar;
 use vte::{Params, Perform};
@@ -359,6 +359,27 @@ impl State {
         };
         let x = self.cursor_x();
         self.goto(x, y + count.min(limit));
+    }
+
+    /// ED 2 at a prompt scrolls the screen into scrollback before clearing, so `^L` keeps
+    /// history (`Terminal.zig:3303-3337`, the `at_prompt` block).
+    ///
+    /// Upstream walks the active area upwards from the bottom, but `SemanticPrompt` has only
+    /// the three values matched there -- a prompt row breaks the loop and a `none` row aborts
+    /// it -- so the decision is settled by the bottom row alone. The alternate screen is
+    /// excluded: it has no scrollback to keep.
+    pub(crate) fn scroll_clear_at_prompt(&mut self, blank: Cell) {
+        if self.active != Active::Primary {
+            return;
+        }
+        let last = self.screen().rows().saturating_sub(1);
+        let at_prompt = matches!(
+            self.screen().grid.row_meta(last).semantic_prompt,
+            RowSemantic::Prompt | RowSemantic::PromptContinuation
+        );
+        if at_prompt {
+            self.screen_mut().scroll_clear(blank);
+        }
     }
 
     pub(crate) fn save_cursor(&mut self) {

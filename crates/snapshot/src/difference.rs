@@ -61,6 +61,14 @@ pub fn diff(oracle: &Snapshot, candidate: &Snapshot) -> Vec<Difference> {
         ));
     }
 
+    if oracle.modes.bracketed_paste != candidate.modes.bracketed_paste {
+        out.push(Difference::new(
+            "modes.bracketed_paste",
+            oracle.modes.bracketed_paste,
+            candidate.modes.bracketed_paste,
+        ));
+    }
+
     diff_cursor(oracle, candidate, &mut out);
 
     // History length first: a shorter or longer history shifts every row, so comparing rows
@@ -291,6 +299,7 @@ mod tests {
                     cells: (0..cols).map(|_| Cell::blank()).collect(),
                 })
                 .collect(),
+            modes: crate::grid::Modes::default(),
             history: Vec::new(),
             damage: None,
         }
@@ -324,6 +333,20 @@ mod tests {
         let found = diff(&a, &b);
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].path, "screen");
+    }
+
+    /// The mode has no grid effect at all, so this control is the ONLY thing that dies
+    /// if the comparison is deleted -- there is no corpus case that could catch it by
+    /// accident the way a content comparison might be caught.
+    #[test]
+    fn a_bracketed_paste_disagreement_is_reported() {
+        let a = snapshot(4, 2);
+        let mut b = a.clone();
+        b.modes.bracketed_paste = true;
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "modes.bracketed_paste");
     }
 
     #[test]

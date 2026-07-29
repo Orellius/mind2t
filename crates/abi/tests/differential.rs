@@ -165,6 +165,10 @@ unsafe fn read_snapshot(handle: GhosttyTerminal, reader: Reader) -> Snapshot {
                 visible: get(handle, GHOSTTY_TERMINAL_DATA_CURSOR_VISIBLE),
                 style: unpack_style(&cursor_style),
             },
+            // Mode state is not readable through the 13-export surface yet; both sides
+            // of this comparison default it, so the field is inert here until the ABI
+            // gains `ghostty_terminal_mode_get`.
+            modes: Default::default(),
             grid,
             history,
             damage: None,

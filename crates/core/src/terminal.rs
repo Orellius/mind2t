@@ -208,6 +208,9 @@ impl State {
                 Active::Primary => SnapshotScreen::Primary,
                 Active::Alternate => SnapshotScreen::Alternate,
             },
+            // The core does not track mode 2004 yet; the corpus pins the disagreement
+            // as a measured diff until it does.
+            modes: ruuah_vt_snapshot::Modes::default(),
             cursor: Cursor {
                 x: screen.x,
                 y: screen.y,

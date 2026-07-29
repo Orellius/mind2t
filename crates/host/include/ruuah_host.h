@@ -64,6 +64,12 @@ typedef struct {
   bool drew;
   /* True once the child has exited. Frames already published remain readable. */
   bool child_exited;
+  /* The background the grid currently shows at its edge, RGBA -- the top-left cell's
+   * resolved style, falling back to the renderer default before any frame. Painting
+   * window margins with it makes the terminal read as continuing into the frame, and
+   * it follows program backgrounds (vim themes, BCE clears) and future palette themes
+   * alike. Never pixel-sampled: the corner pixel is the caret when the cursor is home. */
+  uint8_t background[4];
 } RuuahHostFrame;
 
 /* Spawns the command on a fresh pty and starts the parse/publish pipeline.

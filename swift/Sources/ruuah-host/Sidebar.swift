@@ -29,9 +29,16 @@ final class SessionListController: NSViewController, NSTableViewDataSource, NSTa
         container.wantsLayer = true
         container.layer?.backgroundColor = SessionListController.background.cgColor
 
+        // The ghost leads, like the reference: the app icon IS the brand asset, so the
+        // bundle needs no second copy and the bare CLI binary degrades to its generic
+        // icon instead of a missing image.
+        let logo = NSImageView()
+        logo.image = NSApp.applicationIconImage
+        logo.imageScaling = .scaleProportionallyUpOrDown
+
         let wordmark = NSTextField(labelWithString: "RUUAH VT")
-        wordmark.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
-        wordmark.textColor = NSColor.white.withAlphaComponent(0.4)
+        wordmark.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        wordmark.textColor = NSColor.white.withAlphaComponent(0.9)
 
         let newButton = NSButton(
             title: "  New Session", image: plusImage(), target: self,
@@ -62,14 +69,18 @@ final class SessionListController: NSViewController, NSTableViewDataSource, NSTa
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
 
-        for subview in [wordmark, newButton, scroll] {
+        for subview in [logo, wordmark, newButton, scroll] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(subview)
         }
         NSLayoutConstraint.activate([
-            wordmark.topAnchor.constraint(equalTo: container.topAnchor, constant: 18),
-            wordmark.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-            newButton.topAnchor.constraint(equalTo: wordmark.bottomAnchor, constant: 14),
+            logo.topAnchor.constraint(equalTo: container.topAnchor, constant: 14),
+            logo.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
+            logo.widthAnchor.constraint(equalToConstant: 28),
+            logo.heightAnchor.constraint(equalToConstant: 28),
+            wordmark.centerYAnchor.constraint(equalTo: logo.centerYAnchor),
+            wordmark.leadingAnchor.constraint(equalTo: logo.trailingAnchor, constant: 8),
+            newButton.topAnchor.constraint(equalTo: logo.bottomAnchor, constant: 16),
             newButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
             newButton.trailingAnchor.constraint(
                 lessThanOrEqualTo: container.trailingAnchor, constant: -14),

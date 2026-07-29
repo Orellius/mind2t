@@ -68,6 +68,18 @@ if [ -f "$ICON_SRC" ]; then
   iconutil -c icns "$ICONSET" -o "$BUILD/Contents/Resources/RuuahVT.icns"
 fi
 
+# Sign the assembled bundle. SwiftPM's binary arrives only linker-signed: Info.plist
+# unbound, no sealed resources -- and TCC identifies an app by its signature, so macOS
+# SILENTLY denies Desktop/Documents/Downloads without ever showing the permission
+# prompt (measured live 2026-07-30: "cannot cd into Desktop" inside the app). A real
+# ad-hoc signature over the bundle binds the plist and seals Resources, which is enough
+# for TCC to attribute the app and prompt. Known cost: the ad-hoc identity is the
+# cdhash, so every rebuild is a new identity and macOS may re-prompt after reinstall.
+codesign --force -s - "$BUILD"
+codesign -dv "$BUILD" 2>&1 | grep -q "Info.plist=not bound" && {
+  echo "codesign failed to bind Info.plist" >&2; exit 1; }
+codesign --verify --deep --strict "$BUILD"
+
 # Install (replace-in-place is fine: the bundle is regenerable by definition).
 INSTALL="$HOME/Applications/$APP_NAME.app"
 rm -rf "$INSTALL"

@@ -67,7 +67,26 @@ Three things worth keeping from it, because each cost a wrong first attempt:
   with the floor in place still exited 0. The fix is a count re-derived from the raw file text
   in `tests/corpus.rs`, which shares no code with the loader.
 
-Findings 8 through 31 (S2/S3/S4) remain open in the audit's order.
+**The S2 wave is in progress on branch `audit-fixes-s2`** (2026-07-29). Findings 8-12 are
+fixed and committed, each with a control seen to fail first; gates green after every one
+(253 tests, corpus 124 cases 102 match / 22 diff 124/124, 13/13 exports).
+
+- 8 `ed5c115` DECRC with nothing saved restores the synthetic default cursor, not nothing.
+- 9 `58378d1` HT no longer clears `pending_wrap`; upstream's horizontalTab never touches it.
+- 10 `6feed8d` reflow gated on DECAWM (`reflow = modes.get(.wraparound)`).
+- 11 `5239f3c` ED 2 at a prompt scrolls into scrollback first. Two halves: the row count comes
+  from the last row holding text (`PageList.zig:3099`), and the cursor follows its tracked pin,
+  homing ONLY when that row left the active area (`Screen.zig:844` `cursorReload`). The first
+  attempt got the grid right and the cursor wrong, and **difftest exited 0 while still wrong** --
+  a case declared `diff` stays green whether or not the fix worked, so the flip to MATCH is the
+  only real signal. Read the dump, not the exit code.
+- 12 `5080cb2` `STYLE_ID` had dead bits 25-40. The id is **derived from the style**, not a table
+  index: upstream's number is its own allocation order and this ABI resolves styles by grid
+  position, so there is no table to index. Guarantees provided: 0 means default, equal styles
+  mean equal ids. Deliberate, documented divergence -- revisit if a consumer ever needs the id
+  as a lookup key.
+
+Findings 13 through 31 (rest of S2, then S3/S4) remain open in the audit's order, then slice 8.
 
 Slice 5.6, `[tested]`: **OSC 133 and the visual caret.** The core tracks prompt / input /
 output regions (`crates/core/src/semantic.rs`), and the renderer draws the caret at

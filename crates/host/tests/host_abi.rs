@@ -22,7 +22,8 @@ use ruuah_vt_core::Terminal;
 use ruuah_vt_frame::{Frame, Publisher, channel};
 use ruuah_vt_host::{
     DEFAULT_FONT_SIZE, RuuahHost, RuuahHostFrame, RuuahHostOptions, RuuahHostResult,
-    ruuah_host_free, ruuah_host_poll, ruuah_host_poll_skipping_row_for_testing, ruuah_host_spawn,
+    ruuah_host_free, ruuah_host_poll, ruuah_host_poll_skipping_row_for_testing, ruuah_host_send,
+    ruuah_host_spawn,
 };
 use ruuah_vt_render::{FontStack, Renderer};
 
@@ -203,4 +204,76 @@ fn a_host_that_skips_a_row_is_caught() {
         "the difference must lie in the skipped row's band, not at byte {index}"
     );
     unsafe { ruuah_host_free(host) };
+}
+
+/// The send seam, end to end: bytes written through the C surface reach the child's input,
+/// and what the pty and the child do with them comes back as pixels. `cat` makes the round
+/// trip observable -- the line discipline echoes the typed line, then cat repeats it.
+#[test]
+fn send_reaches_the_child_and_comes_back_as_pixels() {
+    // The tty echoes "ping\r" as "ping\r\n"; cat then writes "ping\n", which ONLCR turns
+    // into "ping\r\n" again. Two identical rows.
+    let reference = {
+        let mut terminal = Terminal::new(COLS, ROWS);
+        terminal.write(b"ping\r\nping\r\n");
+        let (writer, reader) = channel(COLS, ROWS);
+        let mut publisher = Publisher::new(writer);
+        publisher.publish(&mut terminal).expect("publish reference");
+        let mut frame = Frame::new();
+        reader.read_into(&mut frame);
+        let fonts = FontStack::system(DEFAULT_FONT_SIZE).expect("system fonts");
+        let mut renderer = Renderer::new(fonts, COLS, ROWS);
+        renderer.draw_all(&frame);
+        renderer.pixels()
+    };
+
+    let command = CString::new("cat").expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+
+    let line = b"ping\r";
+    assert_eq!(
+        unsafe { ruuah_host_send(host, line.as_ptr(), line.len()) },
+        RuuahHostResult::Success
+    );
+
+    let deadline = Instant::now() + PATIENCE;
+    let mut matched = false;
+    while Instant::now() < deadline {
+        let mut polled = RuuahHostFrame {
+            pixels: ptr::null(),
+            width: 0,
+            height: 0,
+            generation: 0,
+            drew: false,
+            child_exited: false,
+        };
+        assert_eq!(
+            unsafe { ruuah_host_poll(host, &mut polled) },
+            RuuahHostResult::Success
+        );
+        if !polled.pixels.is_null() {
+            let len = polled.width as usize * polled.height as usize * 4;
+            let got = unsafe { std::slice::from_raw_parts(polled.pixels, len) };
+            if got == reference.as_slice() {
+                matched = true;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    unsafe { ruuah_host_free(host) };
+    assert!(
+        matched,
+        "the sent line never came back as the expected pixels"
+    );
 }

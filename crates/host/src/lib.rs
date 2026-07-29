@@ -152,7 +152,7 @@ pub unsafe extern "C" fn ruuah_host_spawn(
         return RuuahHostResult::InvalidValue;
     }
 
-    let command = if options.command.is_null() {
+    let mut command = if options.command.is_null() {
         // An interactive login shell, which is what a terminal window means by "a shell".
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
         let mut command = Command::new(shell);
@@ -166,6 +166,10 @@ pub unsafe extern "C" fn ruuah_host_spawn(
         command.args(["-c", text]);
         command
     };
+
+    // The host owns the pty, so the host declares what it emulates -- a child launched
+    // from Finder inherits no TERM at all, and one from a terminal inherits the wrong one.
+    command.env("TERM", "xterm-256color");
 
     let font_size = if options.font_size > 0.0 {
         options.font_size

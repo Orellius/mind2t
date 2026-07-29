@@ -9,7 +9,9 @@
 //!   through the core's Rust API and requires the two snapshots to be identical, with a
 //!   control that proves the comparison can fail.
 
+use std::collections::hash_map::DefaultHasher;
 use std::ffi::c_void;
+use std::hash::{Hash, Hasher};
 
 use ruuah_vt_snapshot::{Color, Row, Screen, Snapshot, Underline, Wide};
 
@@ -433,7 +435,26 @@ fn pack_cell(cell: &ruuah_vt_snapshot::Cell) -> GhosttyCell {
         ruuah_vt_snapshot::Semantic::Prompt => 2,
     };
     let styled = u64::from(!cell.style.is_default());
-    codepoint | (wide << 21) | (semantic << 23) | (styled << 41)
+    let style_id = u64::from(style_id(&cell.style));
+    codepoint | (wide << 21) | (semantic << 23) | (style_id << 25) | (styled << 41)
+}
+
+/// The id a consumer reads back through `GHOSTTY_CELL_DATA_STYLE_ID`.
+///
+/// Upstream's id indexes its style table. This ABI has no table to index -- `ghostty_grid_ref_style`
+/// resolves a style from the grid position, not from an id -- so the id here is derived from the
+/// style itself. That keeps the two properties a consumer can actually rely on: the default style
+/// is 0, matching upstream, and equal styles get equal ids. It does NOT promise upstream's exact
+/// numbering, which is an allocation order no other implementation could reproduce anyway.
+fn style_id(style: &ruuah_vt_snapshot::Style) -> u16 {
+    if style.is_default() {
+        return 0;
+    }
+    let mut hasher = DefaultHasher::new();
+    style.hash(&mut hasher);
+    // Fold into 1..=u16::MAX: zero is reserved for the default style above.
+    let folded = (hasher.finish() % u64::from(u16::MAX)) as u16;
+    folded + 1
 }
 
 fn pack_row(row: &Row) -> GhosttyRow {

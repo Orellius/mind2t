@@ -495,3 +495,58 @@ fn a_failed_creation_nulls_the_out_param_here_too() {
         "left {handle:?} in the out-param; a stale non-null handle reads as success"
     );
 }
+
+/// The style id is the one cell field with no consumer inside this harness: `read_cell` gets
+/// the style by grid ref, so a `STYLE_ID` that is always zero passes every test above. The
+/// audit's mutation M7 proved exactly that -- returning `0xDEAD` from the branch changed
+/// nothing. This asserts the property a consumer actually gates on: a default cell is 0 and a
+/// styled cell is not, and two cells wearing the same style report the same id.
+#[test]
+fn a_styled_cell_reports_a_non_zero_style_id() {
+    unsafe {
+        let mut handle: GhosttyTerminal = std::ptr::null_mut();
+        assert_eq!(
+            ghostty_terminal_new(
+                std::ptr::null(),
+                &mut handle,
+                GhosttyTerminalOptions {
+                    cols: 8,
+                    rows: 2,
+                    max_scrollback: 0,
+                },
+            ),
+            GHOSTTY_SUCCESS
+        );
+
+        // "a" plain, then "bc" bold: one unstyled cell and two sharing one style.
+        let bytes = b"a\x1b[1mbc";
+        ghostty_terminal_vt_write(handle, bytes.as_ptr(), bytes.len());
+
+        let id_of = |x: u16| -> u16 {
+            let cell_ref = grid_ref(handle, GHOSTTY_POINT_TAG_ACTIVE, x, 0);
+            let mut raw: GhosttyCell = 0;
+            assert_eq!(
+                ghostty_grid_ref_cell(&cell_ref, &mut raw),
+                GHOSTTY_SUCCESS
+            );
+            cell_get::<u16>(raw, GHOSTTY_CELL_DATA_STYLE_ID)
+        };
+
+        let plain = id_of(0);
+        let bold_b = id_of(1);
+        let bold_c = id_of(2);
+
+        assert_eq!(plain, 0, "an unstyled cell must report the default style id");
+        assert_ne!(
+            bold_b, 0,
+            "a bold cell reported style id 0, which is the default style -- a consumer \
+             gating on the id sees every cell as unstyled"
+        );
+        assert_eq!(
+            bold_b, bold_c,
+            "two cells wearing the same style must report the same id"
+        );
+
+        ghostty_terminal_free(handle);
+    }
+}

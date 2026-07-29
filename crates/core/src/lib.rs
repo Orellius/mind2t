@@ -27,6 +27,7 @@ pub mod resize;
 pub mod screen;
 mod semantic;
 pub mod sgr;
+mod sixel;
 mod split;
 pub mod style;
 pub mod tabs;

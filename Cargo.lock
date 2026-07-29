@@ -914,6 +914,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruuah-vt-host"
+version = "0.1.0"
+dependencies = [
+ "ruuah-vt-abi",
+ "ruuah-vt-core",
+ "ruuah-vt-frame",
+ "ruuah-vt-pty",
+ "ruuah-vt-render",
+]
+
+[[package]]
 name = "ruuah-vt-pty"
 version = "0.1.0"
 dependencies = [

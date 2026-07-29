@@ -60,6 +60,13 @@ pub struct RuuahHostFrame {
     pub generation: u64,
     pub drew: bool,
     pub child_exited: bool,
+    /// The background the grid currently shows at its edge, RGBA -- resolved from the
+    /// top-left cell's style, falling back to the palette default before any frame. A
+    /// GUI painting window margins with it makes the terminal read as continuing into
+    /// the frame, and it follows a program's own background (vim themes, BCE clears)
+    /// as well as any future palette theme. Never sampled from pixels: the corner
+    /// pixel belongs to the caret whenever the cursor sits at home.
+    pub background: [u8; 4],
 }
 
 /// The state behind the opaque handle: the whole pipeline, composed.
@@ -130,6 +137,19 @@ fn poll_impl(host: &mut RuuahHost, mode: DrawMode) -> RuuahHostFrame {
         generation: host.drawn_generation,
         drew,
         child_exited: host.exited,
+        background: {
+            // The background the GRID currently shows at its edge, so a margin painted
+            // with it reads as the terminal continuing (Ghostty's `extend`). Resolved
+            // from the top-left cell's STYLE -- pixels there belong to the caret
+            // whenever the cursor sits at home, but the style is the cell's own.
+            let palette = host.renderer.palette();
+            if host.frame.is_valid() {
+                let style = host.frame.style(host.frame.cell(0, 0).style_id());
+                palette.draw(&style).background
+            } else {
+                palette.default_background
+            }
+        },
     }
 }
 

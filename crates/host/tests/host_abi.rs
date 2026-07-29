@@ -97,6 +97,7 @@ fn host_pixels_match_a_reference_renderer_fed_the_same_bytes() {
             generation: 0,
             drew: false,
             child_exited: false,
+            background: [0; 4],
         };
         let result = unsafe { ruuah_host_poll(host, &mut polled) };
         assert_eq!(result, RuuahHostResult::Success, "poll failed: {result:?}");
@@ -188,6 +189,7 @@ fn a_host_that_skips_a_row_is_caught() {
             generation: 0,
             drew: false,
             child_exited: false,
+            background: [0; 4],
         };
         let result = unsafe { ruuah_host_poll_skipping_row_for_testing(host, 0, &mut polled) };
         assert_eq!(result, RuuahHostResult::Success);
@@ -267,6 +269,7 @@ fn send_reaches_the_child_and_comes_back_as_pixels() {
             generation: 0,
             drew: false,
             child_exited: false,
+            background: [0; 4],
         };
         assert_eq!(
             unsafe { ruuah_host_poll(host, &mut polled) },
@@ -327,6 +330,7 @@ fn auto_direction_reorders_a_hebrew_row_through_the_c_boundary() {
             generation: 0,
             drew: false,
             child_exited: false,
+            background: [0; 4],
         };
         assert_eq!(
             unsafe { ruuah_host_poll(host, &mut polled) },
@@ -361,6 +365,7 @@ fn poll_until_pixels(host: *mut RuuahHost, want: &[u8]) -> bool {
             generation: 0,
             drew: false,
             child_exited: false,
+            background: [0; 4],
         };
         assert_eq!(
             unsafe { ruuah_host_poll(host, &mut polled) },

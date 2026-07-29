@@ -19,6 +19,10 @@ final class Session {
     /// The newest pixels seen, kept so a switch can blit instantly without waiting for
     /// the next draw.
     private(set) var lastImage: CGImage?
+    /// The terminal's own background, sampled from the frame so the window margin can
+    /// wear it. When theme support arrives, the margin follows automatically -- nothing
+    /// app-side hardcodes a color.
+    private(set) var background: CGColor?
     private(set) var exited = false
 
     init?(
@@ -43,6 +47,14 @@ final class Session {
         guard let host, !exited else { return nil }
         var frame = RuuahHostFrame()
         guard ruuah_host_poll(host, &frame) == RUUAH_HOST_SUCCESS else { return nil }
+
+        // The C surface reports the renderer's default background outright -- sampling
+        // the corner pixel instead picks up the caret whenever the cursor sits at home,
+        // which the margin then wears (measured 2026-07-29, the gray-frame screenshot).
+        let (r, g, b, _) = frame.background
+        background = CGColor(
+            srgbRed: CGFloat(r) / 255, green: CGFloat(g) / 255, blue: CGFloat(b) / 255,
+            alpha: 1)
 
         var fresh: CGImage?
         if frame.drew, let pixels = frame.pixels {

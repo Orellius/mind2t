@@ -188,6 +188,45 @@ fn needs_bidi(c: char) -> bool {
     )
 }
 
+/// UBA rule L4: the mirrored counterpart a paired glyph must render as when its resolved
+/// level is right-to-left. `None` means "draw the character as-is".
+///
+/// The table is CURATED, not the full BidiMirroring.txt (~550 pairs): it covers the paired
+/// punctuation a terminal actually meets and a monospace font actually carries -- ASCII
+/// pairs, guillemets, angle/mathematical brackets, floor/ceiling, and the comparison signs.
+/// The boundary is deliberate and visible: an exotic mirrored codepoint outside this table
+/// renders unmirrored rather than as tofu from a font hole. Extend the table when a real
+/// line hits the gap; the symmetry of every entry is asserted in the tests below.
+pub fn mirror(c: char) -> Option<char> {
+    Some(match c {
+        '(' => ')',
+        ')' => '(',
+        '[' => ']',
+        ']' => '[',
+        '{' => '}',
+        '}' => '{',
+        '<' => '>',
+        '>' => '<',
+        '«' => '»',
+        '»' => '«',
+        '‹' => '›',
+        '›' => '‹',
+        '⟨' => '⟩',
+        '⟩' => '⟨',
+        '⟦' => '⟧',
+        '⟧' => '⟦',
+        '⟪' => '⟫',
+        '⟫' => '⟪',
+        '⌈' => '⌉',
+        '⌉' => '⌈',
+        '⌊' => '⌋',
+        '⌋' => '⌊',
+        '≤' => '≥',
+        '≥' => '≤',
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,5 +387,18 @@ mod tests {
     #[test]
     fn an_empty_row_produces_no_spans() {
         assert!(visual_spans(&[], BaseDirection::LeftToRight).is_empty());
+    }
+
+    #[test]
+    fn every_mirror_entry_is_an_involution() {
+        // L4 mirroring is symmetric by definition: if a maps to b, b maps back to a. An
+        // asymmetric entry would mirror a bracket into a glyph that cannot mirror back.
+        for code in 0u32..=0x2FFF {
+            let Some(c) = char::from_u32(code) else { continue };
+            if let Some(m) = mirror(c) {
+                assert_eq!(mirror(m), Some(c), "asymmetric mirror entry: {c:?} -> {m:?}");
+                assert_ne!(m, c, "a character cannot be its own mirror: {c:?}");
+            }
+        }
     }
 }

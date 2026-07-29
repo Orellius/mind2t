@@ -25,6 +25,7 @@
 //! individually and drawn at one pen position, which is right for Latin and approximate for
 //! combining marks. Real mark attachment is slice 5.5.
 
+mod images;
 pub mod atlas;
 pub mod canvas;
 pub mod color;

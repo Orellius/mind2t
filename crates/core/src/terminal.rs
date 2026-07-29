@@ -80,6 +80,12 @@ impl Terminal {
         std::mem::take(&mut self.state.replies)
     }
 
+    /// Drains the kitty-graphics store ops (add/remove image), in order. The pump
+    /// applies them to the shared store the renderer reads -- pixels move once.
+    pub fn take_image_ops(&mut self) -> Vec<crate::graphics::ImageOp> {
+        std::mem::take(&mut self.state.graphics.ops)
+    }
+
     /// The URI behind a grid cell's link stamp (`Grid::link_id`). The stamp is a table
     /// index; the table is terminal-global so one link keeps one identity everywhere.
     pub fn link_uri(&self, id: u16) -> Option<&str> {
@@ -152,6 +158,12 @@ pub(crate) struct State {
     pub(crate) events: Vec<crate::events::Event>,
     /// Protocol replies (DSR/DA) owed to the child, drained by the pump to the pty.
     pub(crate) replies: Vec<u8>,
+    /// Kitty graphics: the image store and its op log (`graphics.rs`).
+    pub(crate) graphics: crate::graphics::Graphics,
+    /// The APC string being accumulated, if any; `true` when it overflowed and the
+    /// whole command is to be dropped at the terminator.
+    pub(crate) apc: Vec<u8>,
+    pub(crate) apc_overflow: bool,
     /// OSC 8: interned (explicit id, uri) pairs the grids' cell stamps point into.
     /// Terminal-global so a link spanning a screen switch keeps one identity.
     pub(crate) link_table: Vec<(String, String)>,
@@ -183,6 +195,9 @@ impl State {
             last_print: None,
             events: Vec::new(),
             replies: Vec::new(),
+            graphics: crate::graphics::Graphics::default(),
+            apc: Vec::new(),
+            apc_overflow: false,
             link_table: Vec::new(),
             cursor_link: None,
             max_scrollback,
@@ -543,6 +558,30 @@ impl Perform for State {
                 self.last_print = None;
             }
             _ => {}
+        }
+    }
+
+    fn apc_start(&mut self) {
+        self.apc.clear();
+        self.apc_overflow = false;
+    }
+
+    fn apc_put(&mut self, byte: u8) {
+        if self.apc.len() >= crate::graphics::APC_CEILING {
+            self.apc_overflow = true;
+            return;
+        }
+        self.apc.push(byte);
+    }
+
+    fn apc_end(&mut self) {
+        if self.apc_overflow || self.apc.is_empty() {
+            return;
+        }
+        if self.apc.first() == Some(&b'G') {
+            let apc = std::mem::take(&mut self.apc);
+            self.apc_graphics(&apc);
+            self.apc = apc; // reuse the allocation; content is dead
         }
     }
 

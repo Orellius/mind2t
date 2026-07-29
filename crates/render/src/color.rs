@@ -33,27 +33,34 @@ pub struct Palette {
 }
 
 impl Palette {
-    /// The xterm defaults: sixteen system colours, a 6x6x6 cube, then a 24-step grey ramp.
+    /// The default scheme: Ghostty's sixteen named colours and defaults (measured from
+    /// the oracle's `color.zig` and `Config.zig`, 2026-07-29), then the standard 6x6x6
+    /// cube and 24-step grey ramp both palettes share.
+    ///
+    /// The original xterm primaries (`CD0000` red and friends) were the first version
+    /// here, and the first live Hebrew session called the result "faded" -- harsh 1994
+    /// phosphor values plus a D0D0D0 default foreground read as washed out next to any
+    /// modern terminal. The fix is the same scheme the user's daily driver shows.
     pub fn xterm() -> Palette {
         let mut colors = [[0, 0, 0, 255]; 256];
 
         const SYSTEM: [[u8; 3]; 16] = [
-            [0x00, 0x00, 0x00],
-            [0xcd, 0x00, 0x00],
-            [0x00, 0xcd, 0x00],
-            [0xcd, 0xcd, 0x00],
-            [0x00, 0x00, 0xee],
-            [0xcd, 0x00, 0xcd],
-            [0x00, 0xcd, 0xcd],
-            [0xe5, 0xe5, 0xe5],
-            [0x7f, 0x7f, 0x7f],
-            [0xff, 0x00, 0x00],
-            [0x00, 0xff, 0x00],
-            [0xff, 0xff, 0x00],
-            [0x5c, 0x5c, 0xff],
-            [0xff, 0x00, 0xff],
-            [0x00, 0xff, 0xff],
-            [0xff, 0xff, 0xff],
+            [0x1d, 0x1f, 0x21],
+            [0xcc, 0x66, 0x66],
+            [0xb5, 0xbd, 0x68],
+            [0xf0, 0xc6, 0x74],
+            [0x81, 0xa2, 0xbe],
+            [0xb2, 0x94, 0xbb],
+            [0x8a, 0xbe, 0xb7],
+            [0xc5, 0xc8, 0xc6],
+            [0x66, 0x66, 0x66],
+            [0xd5, 0x4e, 0x53],
+            [0xb9, 0xca, 0x4a],
+            [0xe7, 0xc5, 0x47],
+            [0x7a, 0xa6, 0xda],
+            [0xc3, 0x97, 0xd8],
+            [0x70, 0xc0, 0xb1],
+            [0xea, 0xea, 0xea],
         ];
         for (index, rgb) in SYSTEM.iter().enumerate() {
             colors[index] = [rgb[0], rgb[1], rgb[2], 255];
@@ -76,8 +83,8 @@ impl Palette {
 
         Palette {
             colors,
-            default_foreground: [0xd0, 0xd0, 0xd0, 255],
-            default_background: [0x0d, 0x0d, 0x0d, 255],
+            default_foreground: [0xff, 0xff, 0xff, 255],
+            default_background: [0x28, 0x2c, 0x34, 255],
         }
     }
 

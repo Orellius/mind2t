@@ -22,7 +22,7 @@ use ruuah_vt_core::Terminal;
 use ruuah_vt_frame::{Frame, Publisher, channel};
 use ruuah_vt_host::{
     DEFAULT_FONT_SIZE, RuuahHost, RuuahHostFrame, RuuahHostOptions, RuuahHostResult,
-    ruuah_host_free, ruuah_host_poll, ruuah_host_spawn,
+    ruuah_host_free, ruuah_host_poll, ruuah_host_poll_skipping_row_for_testing, ruuah_host_spawn,
 };
 use ruuah_vt_render::{FontStack, Renderer};
 
@@ -146,4 +146,61 @@ fn a_refused_spawn_nulls_the_out_param() {
         host.is_null(),
         "a failed spawn must not leave *out dangling"
     );
+}
+
+/// The sensitivity control: a host whose draw skips the text row must fail the comparison
+/// the passing test relies on -- and fail it inside the skipped row, not by accident.
+#[test]
+fn a_host_that_skips_a_row_is_caught() {
+    let (want, _, _) = reference_pixels();
+
+    let command = CString::new("printf 'RUUAH-VT-HOST\\n'").expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    let result = unsafe { ruuah_host_spawn(&options, &mut host) };
+    assert_eq!(result, RuuahHostResult::Success);
+
+    // Drain until the child is gone and its final frame has been drawn, exactly as the
+    // passing test would -- except every draw declines row 0, where the text lives.
+    let deadline = Instant::now() + PATIENCE;
+    let mut frame = None;
+    while Instant::now() < deadline {
+        let mut polled = RuuahHostFrame {
+            pixels: ptr::null(),
+            width: 0,
+            height: 0,
+            generation: 0,
+            drew: false,
+            child_exited: false,
+        };
+        let result = unsafe { ruuah_host_poll_skipping_row_for_testing(host, 0, &mut polled) };
+        assert_eq!(result, RuuahHostResult::Success);
+        if polled.child_exited && !polled.pixels.is_null() && !polled.drew {
+            frame = Some(polled);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let frame = frame.expect("the broken host never settled on a frame");
+
+    let len = frame.width as usize * frame.height as usize * 4;
+    let got = unsafe { std::slice::from_raw_parts(frame.pixels, len) };
+    let index = first_difference(got, &want)
+        .expect("a renderer that skipped the text row still matched the reference");
+    let row_band = frame.width as usize
+        * FontStack::system(DEFAULT_FONT_SIZE)
+            .expect("system fonts")
+            .metrics()
+            .height as usize
+        * 4;
+    assert!(
+        index < row_band,
+        "the difference must lie in the skipped row's band, not at byte {index}"
+    );
+    unsafe { ruuah_host_free(host) };
 }

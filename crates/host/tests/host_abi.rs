@@ -727,3 +727,91 @@ fn tempdir() -> std::path::PathBuf {
     std::fs::create_dir_all(&dir).expect("tempdir");
     dir
 }
+
+/// The zoom seam: a live font-size change must reach the pixels through the C surface.
+/// Same grid, bigger font => the polled frame's pixel dimensions must grow, and the
+/// metric query that drives the GUI's grid math must be monotonic in the size. A
+/// set_font_size that silently kept the old renderer passes neither.
+#[test]
+fn a_live_font_size_change_reaches_the_polled_pixels() {
+    use ruuah_vt_host::{ruuah_host_cell_metrics, ruuah_host_set_font_size};
+
+    let (mut small_w, mut small_h) = (0u32, 0u32);
+    let (mut large_w, mut large_h) = (0u32, 0u32);
+    assert_eq!(
+        unsafe { ruuah_host_cell_metrics(14.0, &mut small_w, &mut small_h) },
+        RuuahHostResult::Success
+    );
+    assert_eq!(
+        unsafe { ruuah_host_cell_metrics(28.0, &mut large_w, &mut large_h) },
+        RuuahHostResult::Success
+    );
+    assert!(
+        large_w > small_w && large_h > small_h,
+        "cell metrics must grow with the font size: {small_w}x{small_h} -> {large_w}x{large_h}"
+    );
+    assert_eq!(
+        unsafe { ruuah_host_cell_metrics(0.0, &mut small_w, &mut small_h) },
+        RuuahHostResult::InvalidValue,
+        "a zero size is refused, not defaulted"
+    );
+
+    let command = CString::new("printf 'ZOOM'; sleep 8").expect("command");
+    let options = RuuahHostOptions {
+        cols: 20,
+        rows: 4,
+        font_size: 14.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+        config: ptr::null(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+
+    let deadline = Instant::now() + PATIENCE;
+    let mut before = (0u32, 0u32);
+    while Instant::now() < deadline {
+        let mut polled = empty_frame();
+        assert_eq!(
+            unsafe { ruuah_host_poll(host, &mut polled) },
+            RuuahHostResult::Success
+        );
+        if polled.drew && polled.width > 0 {
+            before = (polled.width, polled.height);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if before.0 == 0 {
+        die(host, "the small-font frame never drew".into());
+    }
+    assert_eq!(before.0, 20 * small_w, "width is cols * cell width");
+
+    assert_eq!(
+        unsafe { ruuah_host_set_font_size(host, 28.0, 20, 4) },
+        RuuahHostResult::Success
+    );
+    let deadline = Instant::now() + PATIENCE;
+    let mut after = (0u32, 0u32);
+    while Instant::now() < deadline {
+        let mut polled = empty_frame();
+        assert_eq!(
+            unsafe { ruuah_host_poll(host, &mut polled) },
+            RuuahHostResult::Success
+        );
+        if polled.drew && polled.width > before.0 {
+            after = (polled.width, polled.height);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if after.0 == 0 {
+        die(host, "the frame never re-drew at the larger font".into());
+    }
+    assert_eq!(after.0, 20 * large_w, "the new width wears the 28px metrics");
+    assert!(after.1 > before.1, "height grew with the font");
+    unsafe { ruuah_host_free(host) };
+}

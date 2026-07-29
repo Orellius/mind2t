@@ -9,6 +9,8 @@
 //! Test strategy: measured against libghostty-vt by the corpus; unit tests below cover the
 //!   region arithmetic, where off-by-ones are cheapest to catch in isolation.
 
+use ruuah_vt_snapshot::Semantic;
+
 use crate::cell::Cell;
 use crate::grid::Grid;
 use crate::history::History;
@@ -35,6 +37,14 @@ pub struct Screen {
     pub scroll_top: u16,
     pub scroll_bottom: u16,
     pub saved: Option<SavedCursor>,
+    /// What OSC 133 says this screen's cursor is currently writing. Per-screen because it is
+    /// per-cursor upstream (`Screen.zig:173`): every switch copies it across with the cursor
+    /// EXCEPT a 1049 exit, whose `restoreCursor` restores everything but this -- so a `C`
+    /// issued on the alternate screen must not leak back (finding 20).
+    pub semantic_content: Semantic,
+    /// The input state was declared to end at end-of-line, so the next row entry returns the
+    /// cursor to output instead of marking a continuation.
+    pub semantic_clear_at_eol: bool,
     /// Rows that have scrolled off the top of this screen. The alternate screen is created
     /// with a zero budget, which is how it ends up with no scrollback.
     pub history: History,
@@ -51,6 +61,8 @@ impl Screen {
             scroll_top: 0,
             scroll_bottom: rows.saturating_sub(1),
             saved: None,
+            semantic_content: Semantic::Output,
+            semantic_clear_at_eol: false,
         }
     }
 

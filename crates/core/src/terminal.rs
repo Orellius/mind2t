@@ -11,7 +11,7 @@
 //!   restating expected cell contents here.
 
 use ruuah_vt_snapshot::{
-    Cursor, Damage, Dirty, RowSemantic, Screen as SnapshotScreen, Semantic, Snapshot, Style,
+    Cursor, Damage, Dirty, RowSemantic, Screen as SnapshotScreen, Snapshot, Style,
 };
 use unicode_width::UnicodeWidthChar;
 use vte::{Params, Perform};
@@ -114,13 +114,6 @@ pub(crate) struct State {
     /// cluster it belongs to. Cleared by anything that moves the cursor.
     pub(crate) last_print: Option<usize>,
     pub(crate) max_scrollback: usize,
-    /// What OSC 133 says the cursor is currently writing: prompt, user input, or output.
-    /// Shared across both screens rather than kept per screen, because it is measured to
-    /// survive a switch in either direction.
-    pub(crate) semantic_content: Semantic,
-    /// The input state was declared to end at end-of-line, so the next row entry returns the
-    /// cursor to output instead of marking a continuation.
-    pub(crate) semantic_clear_at_eol: bool,
     /// Something changed that no per-row flag can express, so the whole frame is stale.
     ///
     /// Four triggers, each confirmed in upstream's `Terminal.zig` as the places that set its
@@ -144,8 +137,6 @@ impl State {
             cursor_visible: true,
             last_print: None,
             max_scrollback,
-            semantic_content: Semantic::Output,
-            semantic_clear_at_eol: false,
             full_damage: false,
         }
     }
@@ -268,7 +259,7 @@ impl State {
         }
 
         let pen = self.pen;
-        let semantic = self.semantic_content;
+        let semantic = self.screen().semantic_content;
         let style_id = self.screen_mut().grid.intern_style(pen);
         let (x, y) = (self.screen().x, self.screen().y);
         let index = self.screen().grid.index(x, y);

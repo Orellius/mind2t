@@ -211,6 +211,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         guard index >= 0 && index < sessions.count else { return }
         activeIndex = index
         let session = sessions[index]
+        session.markSeen()
         window.title = session.title
         refreshSidebar()
         fitToPane(session)
@@ -229,7 +230,10 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     }
 
     private func refreshSidebar() {
-        tabBar.update(titles: sessions.map(\.title), activeIndex: activeIndex)
+        tabBar.update(
+            titles: sessions.map(\.title),
+            states: sessions.map(\.workState),
+            activeIndex: activeIndex)
     }
 
     // MARK: polling
@@ -252,7 +256,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             closeSession(index: activeIndex)
             return
         }
-        apply(events: session.drainEvents())
+        apply(events: session.drainEvents(), to: session)
         if tick % HostAppDelegate.backgroundEvery == 0 {
             reapBackgroundSessions()
         }
@@ -262,9 +266,16 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// OSC 52 writes the system clipboard (write-only -- reads are refused core-side),
     /// notifications post through the user-notification center when we are a real
     /// bundle (the bare CLI has no identity to post as), BEL beeps.
-    private func apply(events: [Session.HostEvent]) {
+    private func apply(events: [Session.HostEvent], to session: Session) {
+        var chromeChanged = false
         for event in events {
             switch event {
+            case .title(let text):
+                session.applyTitle(text)
+                chromeChanged = true
+            case .progress(let state):
+                session.apply(progress: state)
+                chromeChanged = true
             case .clipboard(let text):
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(text, forType: .string)
@@ -272,6 +283,12 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
                 postNotification(title: title.isEmpty ? "RUUAH VT" : title, body: body)
             case .bell:
                 NSSound.beep()
+            }
+        }
+        if chromeChanged {
+            refreshSidebar()
+            if session === activeSession {
+                window.title = session.title
             }
         }
     }
@@ -302,7 +319,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             session.poll()
             // Background sessions still ring, notify and set the clipboard -- the
             // program asked; being off-screen is not a veto.
-            apply(events: session.drainEvents())
+            apply(events: session.drainEvents(), to: session)
             if session.exited {
                 sessions[index].close()
                 sessions.remove(at: index)

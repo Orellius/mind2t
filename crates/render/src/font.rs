@@ -125,6 +125,12 @@ impl FontStack {
             // RUUAH splash's ghost simply failed to appear. Apple Braille ships on every
             // macOS and sits last so it can never shadow a glyph the leads own.
             ("/System/Library/Fonts/Apple Braille.ttf".to_string(), 0),
+            // Backstop for Symbols for Legacy Computing beyond what mosaic.rs
+            // synthesizes (wedges, rounded mosaics, segmented digits -- Claude Code's
+            // mascot needs the block, measured 2026-07-29). Iosevka is narrow, so its
+            // BLOCK glyphs would leave gutters; those never reach it because the
+            // synthesized set answers first in the draw path.
+            (format!("{home}/Library/Fonts/IosevkaNerdFontMono-Regular.ttf"), 0),
         ];
 
         let present: Vec<(&str, usize)> = candidates

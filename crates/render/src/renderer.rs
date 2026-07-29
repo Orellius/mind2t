@@ -204,6 +204,18 @@ impl<S: Surface> Renderer<S> {
         let mut scratch = [0u8; ruuah_vt_frame::CLUSTER_BYTES];
         let mut cluster = cell.cluster(&mut scratch);
 
+        // Block mosaics are synthesized at exactly this cell's geometry so they meet
+        // edge-to-edge; a fallback font's block fills that font's em, not this grid's
+        // cell, and the gutters shred any mosaic art (see mosaic.rs).
+        let mut chars = cluster.chars();
+        if let (Some(first), None) = (chars.next(), chars.next()) {
+            if let Some(mask) = crate::mosaic::coverage(first, metrics.width, metrics.height) {
+                self.canvas
+                    .blend_mask(left, top, metrics.width, metrics.height, &mask, color);
+                return;
+            }
+        }
+
         // UBA rule L4: paired punctuation at an RTL resolved level draws its mirrored
         // counterpart -- reordering alone turns `[OK]` into `]OK[`. Display-only, single
         // codepoints only (a cluster with marks is never a bracket), and the CELL is

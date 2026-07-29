@@ -26,14 +26,17 @@ use ruuah_vt_render::{Canvas, FontStack, GpuSurface, Renderer, Surface, Truncati
 const COLS: u16 = 24;
 const ROWS: u16 = 6;
 
-/// Text, colour, reverse video and Hebrew: everything that puts partial coverage on the
-/// canvas, which is the only place two backends can drift.
+/// Text, colour, reverse video, Hebrew and emoji: everything that puts partial coverage on
+/// the canvas, which is the only place two backends can drift. The emoji line is what
+/// exercises the image op (P0.2) -- without it the GPU's color-blit shader is never compared
+/// against the CPU at all.
 const SCRIPT: &[&[u8]] = &[
     b"the quick brown fox",
     b"\r\n\x1b[31mred\x1b[0m \x1b[7mreverse\x1b[0m",
     "\r\nשלום עולם".as_bytes(),
     b"\r\n\x1b[4munderlined\x1b[0m tail",
     "\r\nmixed ab \x1b[32mגד\x1b[0m 42".as_bytes(),
+    "\r\nemoji \u{1F9E0} and \u{1F3A8} end".as_bytes(),
 ];
 
 fn fonts() -> FontStack {

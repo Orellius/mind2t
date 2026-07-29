@@ -89,6 +89,24 @@ impl Canvas {
         }
     }
 
+    /// Blends a straight-RGBA image over the canvas, its own alpha as coverage.
+    ///
+    /// The per-channel arithmetic is the SAME rounded integer expression as `blend_mask`
+    /// -- one blend spec, two sources of color -- so the CPU/GPU differential holds for
+    /// images by the same argument it holds for masks.
+    pub fn blend_image(&mut self, x: i32, y: i32, width: u32, height: u32, rgba: &[u8]) {
+        for row in 0..height {
+            for column in 0..width {
+                let base = ((row * width + column) * 4) as usize;
+                let pixel = [rgba[base], rgba[base + 1], rgba[base + 2], rgba[base + 3]];
+                if pixel[3] == 0 {
+                    continue;
+                }
+                self.blend(x + column as i32, y + row as i32, pixel, pixel[3]);
+            }
+        }
+    }
+
     fn set(&mut self, x: i32, y: i32, color: Rgba) {
         let Some(base) = self.offset(x, y) else {
             return;

@@ -125,6 +125,12 @@ impl FontStack {
             // RUUAH splash's ghost simply failed to appear. Apple Braille ships on every
             // macOS and sits last so it can never shadow a glyph the leads own.
             ("/System/Library/Fonts/Apple Braille.ttf".to_string(), 0),
+            // Color emoji (P0.2): none of the fonts above carry emoji, so `[🧠 BRAIN]`
+            // in Claude Code rendered as a blank gap until 2026-07-29. Apple Color
+            // Emoji is sbix (bitmap strikes), which the atlas rasterizes through the
+            // color source and the renderer blits through the image path -- putting it
+            // in the stack alone draws NOTHING, which is why emoji_probe.rs pins pixels.
+            ("/System/Library/Fonts/Apple Color Emoji.ttc".to_string(), 0),
             // Backstop for Symbols for Legacy Computing beyond what mosaic.rs
             // synthesizes (wedges, rounded mosaics, segmented digits -- Claude Code's
             // mascot needs the block, measured 2026-07-29). Iosevka is narrow, so its
@@ -242,6 +248,18 @@ mod tests {
         assert!(
             resolved.is_some(),
             "braille pattern U+28FF resolves to no glyph in any stack font"
+        );
+    }
+
+    #[test]
+    fn emoji_resolve_somewhere_in_the_stack() {
+        // Resolution alone is NOT the emoji pin (the braille lesson: resolve passed while
+        // the screen stayed blank). emoji_probe.rs owns the pixel truth; this only catches
+        // the font file disappearing from the machine.
+        let mut stack = FontStack::system(16.0).expect("system fonts");
+        assert!(
+            stack.resolve('\u{1F9E0}').is_some(),
+            "U+1F9E0 resolves to no glyph in any stack font"
         );
     }
 

@@ -1,12 +1,11 @@
-// The window half of the minimal host: blit polled frames, forward keys, live resize.
+// The terminal surface: blit target, key forwarding, and the app's keyboard chords.
 //
 // The view draws exactly what ruuah_host_poll hands over -- an RGBA8 buffer at native
 // (backing) resolution, because the host is spawned with font_size scaled by the window's
 // backingScaleFactor and the layer's contentsScale set to match. Pixels map 1:1 to device
-// pixels; nothing is stretched.
+// pixels; nothing is stretched. Session plumbing lives in AppDelegate.swift.
 
 import AppKit
-import CRuuahHost
 
 final class TerminalView: NSView {
     /// Breathing room between the glyph grid and the window edge, in points. The grid
@@ -19,29 +18,42 @@ final class TerminalView: NSView {
 
     var onKeyBytes: (([UInt8]) -> Void)?
     var onPaste: (([UInt8]) -> Void)?
+    var onNewSession: (() -> Void)?
+    var onCloseSession: (() -> Void)?
 
     override var acceptsFirstResponder: Bool { true }
-
-    /// cmd+V, caught before the key-equivalent machinery falls through to keyDown --
-    /// the minimal host has no Edit menu to own it. Raw clipboard bytes go to the host,
-    /// which owns the encoding (fenceposts or newline folding, by the child's mode 2004);
-    /// building either sequence here would duplicate the oracle-measured transform.
-    override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        let commandOnly: NSEvent.ModifierFlags = [.command]
-        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == commandOnly,
-            event.charactersIgnoringModifiers == "v",
-            let text = NSPasteboard.general.string(forType: .string)
-        {
-            onPaste?(Array(text.utf8))
-            return true
-        }
-        return super.performKeyEquivalent(with: event)
-    }
 
     override func layout() {
         super.layout()
         contentLayer.frame = bounds.insetBy(
             dx: TerminalView.padding, dy: TerminalView.padding)
+    }
+
+    /// The app's chords, caught before the key-equivalent machinery falls through to
+    /// keyDown -- the minimal host has no menu bar to own them. cmd+V hands the host raw
+    /// clipboard bytes: the host owns the encoding (fenceposts or newline folding, by the
+    /// child's mode 2004), and building either sequence here would duplicate the
+    /// oracle-measured transform.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let commandOnly: NSEvent.ModifierFlags = [.command]
+        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == commandOnly
+        else { return super.performKeyEquivalent(with: event) }
+        switch event.charactersIgnoringModifiers {
+        case "v":
+            if let text = NSPasteboard.general.string(forType: .string) {
+                onPaste?(Array(text.utf8))
+                return true
+            }
+            return false
+        case "t":
+            onNewSession?()
+            return true
+        case "w":
+            onCloseSession?()
+            return true
+        default:
+            return super.performKeyEquivalent(with: event)
+        }
     }
 
     override func keyDown(with event: NSEvent) {
@@ -73,167 +85,5 @@ final class TerminalView: NSView {
             return nil
         }
         return Array(characters.utf8)
-    }
-}
-
-final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    private let command: String?
-    private let autoDirection: Bool
-    private var host: OpaquePointer?
-    private var window: NSWindow!
-    private var view: TerminalView!
-    private var timer: Timer?
-    private var cols: UInt16 = 80
-    private var rows: UInt16 = 24
-    private var cellWidth = 0
-    private var cellHeight = 0
-
-    init(command: String?, autoDirection: Bool) {
-        self.command = command
-        self.autoDirection = autoDirection
-    }
-
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        view = TerminalView(frame: .zero)
-        view.wantsLayer = true
-
-        window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 800, height: 480),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        // Inside an assembled .app the window wears the app's name; the bare CLI binary
-        // keeps its development label.
-        window.title =
-            (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String)
-            ?? "ruuah-vt host"
-        window.contentView = view
-        window.delegate = self
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(view)
-        NSApp.activate(ignoringOtherApps: true)
-
-        // Native resolution: the renderer rasterizes at backing scale, the layer declares
-        // it, and one buffer pixel is one device pixel.
-        let scale = Float(window.backingScaleFactor)
-        view.layer?.backgroundColor = NSColor.black.cgColor
-        view.layer?.addSublayer(view.contentLayer)
-        view.contentLayer.contentsScale = window.backingScaleFactor
-        view.contentLayer.magnificationFilter = .nearest
-
-        guard let spawned = spawnHost(
-            cols: cols, rows: rows, fontSize: 16 * scale, command: command,
-            autoDirection: autoDirection)
-        else {
-            NSApp.terminate(nil)
-            return
-        }
-        host = spawned
-        view.onKeyBytes = { [weak self] bytes in
-            guard let host = self?.host else { return }
-            _ = bytes.withUnsafeBufferPointer { buffer in
-                ruuah_host_send(host, buffer.baseAddress, buffer.count)
-            }
-        }
-        view.onPaste = { [weak self] bytes in
-            guard let host = self?.host else { return }
-            _ = bytes.withUnsafeBufferPointer { buffer in
-                ruuah_host_paste(host, buffer.baseAddress, buffer.count)
-            }
-        }
-
-        // For screenshots: `screencapture -l` takes this id. Written unbuffered, because a
-        // scripted capture reads it while the app is still running.
-        FileHandle.standardOutput.write(Data("RUUAH_HOST_WINDOW=\(window.windowNumber)\n".utf8))
-
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            self?.poll()
-        }
-    }
-
-    private func poll() {
-        guard let host else { return }
-        var frame = RuuahHostFrame()
-        guard ruuah_host_poll(host, &frame) == RUUAH_HOST_SUCCESS else { return }
-
-        if frame.drew, let pixels = frame.pixels {
-            blit(pixels, width: Int(frame.width), height: Int(frame.height))
-            if cellWidth == 0 {
-                // The C surface reports pixels, not metrics; the cell size is derived once
-                // from the first frame and the geometry this side chose.
-                cellWidth = Int(frame.width) / Int(cols)
-                cellHeight = Int(frame.height) / Int(rows)
-                sizeWindowToGrid()
-            }
-        }
-        if frame.child_exited {
-            NSApp.terminate(nil)
-        }
-    }
-
-    private func blit(_ pixels: UnsafePointer<UInt8>, width: Int, height: Int) {
-        // Copied because the borrow dies at the next poll, and CoreGraphics reads lazily.
-        let data = Data(bytes: pixels, count: width * height * 4)
-        guard let provider = CGDataProvider(data: data as CFData),
-            let image = CGImage(
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bitsPerPixel: 32,
-                bytesPerRow: width * 4,
-                // The core's palette bytes are sRGB values and the render crate deliberately
-                // does no gamma work ("any gamma decision belongs to whoever puts these
-                // pixels on a screen" — gpu.rs). DeviceRGB would hand those numbers to the
-                // panel's native gamut, oversaturating every colour on a P3 display.
-                space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
-                provider: provider,
-                decode: nil,
-                shouldInterpolate: false,
-                intent: .defaultIntent
-            )
-        else { return }
-        view.contentLayer.contents = image
-    }
-
-    /// Sizes the window so the content view is exactly the grid, in points.
-    private func sizeWindowToGrid() {
-        let scale = window.backingScaleFactor
-        let size = NSSize(
-            width: CGFloat(cellWidth * Int(cols)) / scale + TerminalView.padding * 2,
-            height: CGFloat(cellHeight * Int(rows)) / scale + TerminalView.padding * 2
-        )
-        window.setContentSize(size)
-        window.contentResizeIncrements = NSSize(
-            width: CGFloat(cellWidth) / scale, height: CGFloat(cellHeight) / scale)
-    }
-
-    func windowDidEndLiveResize(_ notification: Notification) {
-        guard let host, cellWidth > 0 else { return }
-        let scale = window.backingScaleFactor
-        let inner = view.bounds.insetBy(
-            dx: TerminalView.padding, dy: TerminalView.padding)
-        let backing = NSSize(width: inner.width * scale, height: inner.height * scale)
-        let newCols = UInt16(max(2, Int(backing.width) / cellWidth))
-        let newRows = UInt16(max(2, Int(backing.height) / cellHeight))
-        guard newCols != cols || newRows != rows else { return }
-        if ruuah_host_resize(host, newCols, newRows) == RUUAH_HOST_SUCCESS {
-            cols = newCols
-            rows = newRows
-        }
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        NSApp.terminate(nil)
-    }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        timer?.invalidate()
-        if let host {
-            ruuah_host_free(host)
-            self.host = nil
-        }
     }
 }

@@ -14,8 +14,9 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-./scripts/build-host.sh
-(cd swift && swift build -c release)
+# The full chain including the forced relink and the headless smoke -- the bundle
+# only ever ships a binary the smoke has seen draw.
+./scripts/build-swift.sh
 
 APP_NAME="RUUAH VT"
 BUILD="swift/.build/$APP_NAME.app"

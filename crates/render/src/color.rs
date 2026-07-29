@@ -8,7 +8,7 @@
 //! NOT responsible for: where the colours are painted (`canvas.rs`, `renderer.rs`).
 //! Test strategy: unit tests below pin the ordering rules, which is the part that breaks.
 
-use ruuah_vt_snapshot::{Color, Style};
+use ruuah_vt_snapshot::{Color, Style, Underline};
 
 /// Straight (non-premultiplied) 8-bit RGBA.
 pub type Rgba = [u8; 4];
@@ -20,7 +20,10 @@ pub struct Drawn {
     pub background: Rgba,
     /// False when the glyph must not be drawn at all, even though a background still is.
     pub ink: bool,
-    pub underline: bool,
+    pub underline: Underline,
+    /// SGR 58/59: its own color when set, otherwise the text's -- resolved AFTER
+    /// inverse, so a default-colored underline follows the ink it decorates.
+    pub underline_color: Rgba,
     pub strikethrough: bool,
 }
 
@@ -133,7 +136,8 @@ impl Palette {
             background,
             // After inverse, so an inverse-invisible cell still hides its text.
             ink: !style.invisible,
-            underline: style.underline != ruuah_vt_snapshot::Underline::None,
+            underline: style.underline,
+            underline_color: self.resolve(style.underline_color, foreground),
             strikethrough: style.strikethrough,
         }
     }
@@ -216,6 +220,31 @@ mod tests {
             ..Style::DEFAULT
         });
         assert_eq!(drawn.foreground, [1, 2, 3, 255]);
-        assert!(drawn.underline);
+        assert_eq!(drawn.underline, Underline::Curly, "the kind survives resolution");
+    }
+
+    /// The 58/59 rules: an explicit underline color resolves on its own; the default
+    /// follows the text's ink -- INCLUDING through inverse, where "the text's ink" is
+    /// the swapped color, not the original foreground.
+    #[test]
+    fn underline_color_follows_the_ink_unless_set() {
+        let palette = Palette::xterm();
+        let explicit = palette.draw(&Style {
+            underline: Underline::Single,
+            underline_color: Color::Rgb { r: 9, g: 8, b: 7 },
+            ..Style::DEFAULT
+        });
+        assert_eq!(explicit.underline_color, [9, 8, 7, 255]);
+
+        let inherited = palette.draw(&Style {
+            underline: Underline::Single,
+            inverse: true,
+            ..Style::DEFAULT
+        });
+        assert_eq!(
+            inherited.underline_color, inherited.foreground,
+            "default underline color is the drawn ink, after inverse"
+        );
+        assert_eq!(inherited.foreground, palette.default_background, "inverse swapped");
     }
 }

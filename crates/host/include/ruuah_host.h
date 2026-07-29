@@ -83,6 +83,15 @@ RuuahHostResult ruuah_host_poll(RuuahHost *host, RuuahHostFrame *out);
  * bytes may be NULL only when len is 0. */
 RuuahHostResult ruuah_host_send(RuuahHost *host, const uint8_t *bytes, size_t len);
 
+/* Encodes clipboard bytes for the child and writes them to the pty. Pass raw clipboard
+ * bytes: unsafe control bytes become spaces (xterm's strip set), and the data is wrapped
+ * in the bracketed-paste fenceposts when the child enabled mode 2004, or has newlines
+ * folded to carriage returns when it did not. The mode rides the last polled frame, so
+ * poll at least once after the child enables it -- a rendering host does continuously.
+ *
+ * bytes may be NULL only when len is 0. */
+RuuahHostResult ruuah_host_paste(RuuahHost *host, const uint8_t *bytes, size_t len);
+
 /* Resizes the pty, the terminal and the render target. Refused (with no state change)
  * when the geometry exceeds the frame channel's capacity or either dimension is 0. */
 RuuahHostResult ruuah_host_resize(RuuahHost *host, uint16_t cols, uint16_t rows);

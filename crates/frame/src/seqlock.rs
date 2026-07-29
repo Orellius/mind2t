@@ -61,6 +61,9 @@ struct Shared {
     /// Generation of the last whole-frame invalidation, so a renderer that skipped frames
     /// can still tell that per-row information stopped meaning anything at some point.
     full: AtomicU64,
+    /// Terminal mode bits (`Frame::MODE_*`). One word for all of them, so a mode the
+    /// renderer never looks at costs the channel nothing.
+    modes: AtomicU64,
     cursor: [AtomicU64; 3],
     cells: Box<[AtomicU64]>,
     row_generation: Box<[AtomicU64]>,
@@ -92,6 +95,7 @@ pub fn channel(cols: u16, rows: u16) -> (FrameWriter, FrameReader) {
         generation: AtomicU64::new(0),
         geometry: AtomicU64::new(0),
         full: AtomicU64::new(0),
+        modes: AtomicU64::new(0),
         cursor: [const { AtomicU64::new(0) }; 3],
         cells: zeroed(cells * CELL_WORDS),
         row_generation: zeroed(usize::from(rows)),
@@ -219,6 +223,11 @@ impl Publish<'_> {
         self.shared.full.store(self.generation, Ordering::Relaxed);
     }
 
+    /// Publishes the terminal mode bits (`Frame::MODE_*`), one word for all of them.
+    pub fn modes(&mut self, modes: u64) {
+        self.shared.modes.store(modes, Ordering::Relaxed);
+    }
+
     pub fn cursor(&mut self, x: u16, y: u16, pending_wrap: bool, visible: bool, style: [u64; 2]) {
         self.shared.cursor[0].store(
             u64::from(x)
@@ -304,6 +313,7 @@ impl FrameReader {
         let cols = geometry as u16;
         let rows = (geometry >> 16) as u16;
         frame.resize(cols, rows);
+        frame.modes = shared.modes.load(Ordering::Relaxed);
 
         let cells = usize::from(cols) * usize::from(rows);
         for index in 0..cells {

@@ -11,7 +11,7 @@
 use std::ffi::c_void;
 use std::mem;
 
-use ruuah_vt_snapshot::{Cell, Color, Cursor, Row, Screen, Snapshot, Style};
+use ruuah_vt_snapshot::{Cell, Color, Cursor, Modes, Row, Screen, Snapshot, Style};
 
 use crate::convert::{convert_row_semantic, convert_semantic, convert_style, convert_wide};
 use crate::sys;
@@ -118,10 +118,24 @@ impl Terminal {
             rows,
             screen: self.screen()?,
             cursor: self.cursor()?,
+            modes: Modes {
+                bracketed_paste: self.dec_mode(2004)?,
+            },
             grid,
             history,
             damage: None,
         })
+    }
+
+    /// Reads a DEC private mode's current state.
+    ///
+    /// A `GhosttyMode` packs the numeric value in bits 0-14 with bit 15 clear for DEC
+    /// private modes (`modes.h`); a plain mode number below 32768 IS the packed form.
+    pub fn dec_mode(&self, mode: u16) -> Result<bool, Error> {
+        let mut value = false;
+        let code = unsafe { sys::ghostty_terminal_mode_get(self.raw, mode & 0x7FFF, &mut value) };
+        check("ghostty_terminal_mode_get", code)?;
+        Ok(value)
     }
 
     /// Total rows in the active screen including scrollback.

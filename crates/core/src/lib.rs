@@ -17,6 +17,7 @@ pub mod cell;
 pub mod dispatch;
 pub mod grid;
 pub mod history;
+mod hyperlink;
 pub mod page;
 pub mod reflow;
 pub mod resize;

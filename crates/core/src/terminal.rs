@@ -69,6 +69,15 @@ impl Terminal {
     ///
     /// `snapshot` allocates a `String` per cell, which is right for a corpus case and wrong
     /// for a renderer reading every frame. This is the same state without the convenience.
+    /// The URI behind a grid cell's link stamp (`Grid::link_id`). The stamp is a table
+    /// index; the table is terminal-global so one link keeps one identity everywhere.
+    pub fn link_uri(&self, id: u16) -> Option<&str> {
+        self.state
+            .link_table
+            .get(usize::from(id))
+            .map(|(_, uri)| uri.as_str())
+    }
+
     pub fn screen(&self) -> &Screen {
         self.state.screen()
     }
@@ -127,6 +136,11 @@ pub(crate) struct State {
     /// Flat index of the last printed cell, so a following zero-width codepoint knows which
     /// cluster it belongs to. Cleared by anything that moves the cursor.
     pub(crate) last_print: Option<usize>,
+    /// OSC 8: interned (explicit id, uri) pairs the grids' cell stamps point into.
+    /// Terminal-global so a link spanning a screen switch keeps one identity.
+    pub(crate) link_table: Vec<(String, String)>,
+    /// The link newly printed cells are stamped with, as a `link_table` index.
+    pub(crate) cursor_link: Option<u16>,
     pub(crate) max_scrollback: usize,
     /// Something changed that no per-row flag can express, so the whole frame is stale.
     ///
@@ -151,6 +165,8 @@ impl State {
             cursor_visible: true,
             bracketed_paste: false,
             last_print: None,
+            link_table: Vec::new(),
+            cursor_link: None,
             max_scrollback,
             full_damage: false,
         }
@@ -282,6 +298,7 @@ impl State {
                     flags: CellFlags::with_semantic(semantic),
                 },
             );
+            self.stamp_link(index);
             self.wrap(blank);
         }
 
@@ -299,6 +316,7 @@ impl State {
                 flags: CellFlags::with_semantic(semantic),
             },
         );
+        self.stamp_link(index);
         self.last_print = Some(index);
 
         if width == 2 {
@@ -311,6 +329,7 @@ impl State {
                     flags: CellFlags::with_semantic(semantic),
                 },
             );
+            self.stamp_link(index + 1);
         }
 
         // At the right edge the cursor stays put and the wrap is deferred. Advancing to
@@ -509,6 +528,10 @@ impl Perform for State {
     }
 
     fn osc_dispatch(&mut self, params: &[&[u8]], _bell_terminated: bool) {
+        if params.first().copied() == Some(b"8".as_slice()) {
+            self.osc_hyperlink(params);
+            return;
+        }
         let blank = self.blank();
         self.osc(params, blank);
     }

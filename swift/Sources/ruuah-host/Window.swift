@@ -9,9 +9,23 @@ import AppKit
 import CRuuahHost
 
 final class TerminalView: NSView {
+    /// Breathing room between the glyph grid and the window edge, in points. The grid
+    /// itself stays exactly cols x rows; the margin belongs to the window, not the pty.
+    static let padding: CGFloat = 8
+
+    /// The terminal image draws on this sublayer, inset by `padding`. The root layer
+    /// holds only the background color, so the margin matches the terminal's own black.
+    let contentLayer = CALayer()
+
     var onKeyBytes: (([UInt8]) -> Void)?
 
     override var acceptsFirstResponder: Bool { true }
+
+    override func layout() {
+        super.layout()
+        contentLayer.frame = bounds.insetBy(
+            dx: TerminalView.padding, dy: TerminalView.padding)
+    }
 
     override func keyDown(with event: NSEvent) {
         guard let bytes = encode(event) else { return }
@@ -47,6 +61,7 @@ final class TerminalView: NSView {
 
 final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let command: String?
+    private let autoDirection: Bool
     private var host: OpaquePointer?
     private var window: NSWindow!
     private var view: TerminalView!
@@ -56,8 +71,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var cellWidth = 0
     private var cellHeight = 0
 
-    init(command: String?) {
+    init(command: String?, autoDirection: Bool) {
         self.command = command
+        self.autoDirection = autoDirection
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -81,11 +97,14 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Native resolution: the renderer rasterizes at backing scale, the layer declares
         // it, and one buffer pixel is one device pixel.
         let scale = Float(window.backingScaleFactor)
-        view.layer?.contentsScale = window.backingScaleFactor
-        view.layer?.magnificationFilter = .nearest
+        view.layer?.backgroundColor = NSColor.black.cgColor
+        view.layer?.addSublayer(view.contentLayer)
+        view.contentLayer.contentsScale = window.backingScaleFactor
+        view.contentLayer.magnificationFilter = .nearest
 
         guard let spawned = spawnHost(
-            cols: cols, rows: rows, fontSize: 16 * scale, command: command)
+            cols: cols, rows: rows, fontSize: 16 * scale, command: command,
+            autoDirection: autoDirection)
         else {
             NSApp.terminate(nil)
             return
@@ -149,15 +168,15 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 intent: .defaultIntent
             )
         else { return }
-        view.layer?.contents = image
+        view.contentLayer.contents = image
     }
 
     /// Sizes the window so the content view is exactly the grid, in points.
     private func sizeWindowToGrid() {
         let scale = window.backingScaleFactor
         let size = NSSize(
-            width: CGFloat(cellWidth * Int(cols)) / scale,
-            height: CGFloat(cellHeight * Int(rows)) / scale
+            width: CGFloat(cellWidth * Int(cols)) / scale + TerminalView.padding * 2,
+            height: CGFloat(cellHeight * Int(rows)) / scale + TerminalView.padding * 2
         )
         window.setContentSize(size)
         window.contentResizeIncrements = NSSize(
@@ -167,8 +186,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func windowDidEndLiveResize(_ notification: Notification) {
         guard let host, cellWidth > 0 else { return }
         let scale = window.backingScaleFactor
-        let backing = NSSize(
-            width: view.bounds.width * scale, height: view.bounds.height * scale)
+        let inner = view.bounds.insetBy(
+            dx: TerminalView.padding, dy: TerminalView.padding)
+        let backing = NSSize(width: inner.width * scale, height: inner.height * scale)
         let newCols = UInt16(max(2, Int(backing.width) / cellWidth))
         let newRows = UInt16(max(2, Int(backing.height) / cellHeight))
         guard newCols != cols || newRows != rows else { return }

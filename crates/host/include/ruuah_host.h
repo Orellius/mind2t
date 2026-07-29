@@ -44,6 +44,10 @@ typedef struct {
   float font_size;
   /* Shell command line, run via `/bin/sh -c`. NULL means an interactive $SHELL. */
   const char *command;
+  /* When true, each row's base direction is detected from its own text (Hebrew-first
+   * rows flow right-to-left; rows that resolve LTR are laid out exactly as with false).
+   * False keeps the terminal default: left-to-right base, RTL runs reordered in place. */
+  bool auto_direction;
 } RuuahHostOptions;
 
 /* One rendered frame, filled by ruuah_host_poll. */

@@ -11,19 +11,22 @@
 import AppKit
 import CRuuahHost
 
-func spawnHost(cols: UInt16, rows: UInt16, fontSize: Float, command: String?)
-    -> OpaquePointer?
-{
+func spawnHost(
+    cols: UInt16, rows: UInt16, fontSize: Float, command: String?, autoDirection: Bool = false
+) -> OpaquePointer? {
     var host: OpaquePointer?
     let result: RuuahHostResult
     if let command {
         result = command.withCString { pointer in
             var options = RuuahHostOptions(
-                cols: cols, rows: rows, font_size: fontSize, command: pointer)
+                cols: cols, rows: rows, font_size: fontSize, command: pointer,
+                auto_direction: autoDirection)
             return ruuah_host_spawn(&options, &host)
         }
     } else {
-        var options = RuuahHostOptions(cols: cols, rows: rows, font_size: fontSize, command: nil)
+        var options = RuuahHostOptions(
+            cols: cols, rows: rows, font_size: fontSize, command: nil,
+            auto_direction: autoDirection)
         result = ruuah_host_spawn(&options, &host)
     }
     guard result == RUUAH_HOST_SUCCESS, let host else {
@@ -80,9 +83,10 @@ var command: String?
 if let index = arguments.firstIndex(of: "--command"), index + 1 < arguments.count {
     command = arguments[index + 1]
 }
+let autoDirection = arguments.contains("--auto-direction")
 
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
-let delegate = HostAppDelegate(command: command)
+let delegate = HostAppDelegate(command: command, autoDirection: autoDirection)
 app.delegate = delegate
 app.run()

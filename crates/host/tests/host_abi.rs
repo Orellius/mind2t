@@ -19,7 +19,7 @@ use std::ptr;
 use std::time::{Duration, Instant};
 
 use ruuah_vt_core::Terminal;
-use ruuah_vt_frame::{Frame, Publisher, channel};
+use ruuah_vt_frame::{BaseDirection, Frame, Publisher, channel};
 use ruuah_vt_host::{
     DEFAULT_FONT_SIZE, RuuahHost, RuuahHostFrame, RuuahHostOptions, RuuahHostResult,
     ruuah_host_free, ruuah_host_poll, ruuah_host_poll_skipping_row_for_testing, ruuah_host_send,
@@ -36,14 +36,21 @@ const WIRE: &[u8] = b"RUUAH-VT-HOST\r\n";
 
 /// The pixels a correct host must produce for WIRE, rendered through the Rust API.
 fn reference_pixels() -> (Vec<u8>, u32, u32) {
+    reference_pixels_for(WIRE, BaseDirection::LeftToRight)
+}
+
+/// The reference oracle, parameterized: identical bytes through the Rust API, published
+/// with the same `Publisher` the pump uses, laid out under the given base direction.
+fn reference_pixels_for(wire: &[u8], base: BaseDirection) -> (Vec<u8>, u32, u32) {
     let mut terminal = Terminal::new(COLS, ROWS);
-    terminal.write(WIRE);
+    terminal.write(wire);
 
     let (writer, reader) = channel(COLS, ROWS);
     let mut publisher = Publisher::new(writer);
     publisher.publish(&mut terminal).expect("publish reference");
 
     let mut frame = Frame::new();
+    frame.base_direction = base;
     reader.read_into(&mut frame);
     assert!(frame.is_valid(), "single-threaded read cannot tear");
 
@@ -70,6 +77,7 @@ fn host_pixels_match_a_reference_renderer_fed_the_same_bytes() {
         rows: ROWS,
         font_size: 0.0,
         command: command.as_ptr(),
+        auto_direction: false,
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     let result = unsafe { ruuah_host_spawn(&options, &mut host) };
@@ -139,6 +147,7 @@ fn a_refused_spawn_nulls_the_out_param() {
         rows: ROWS,
         font_size: 0.0,
         command: ptr::null(),
+        auto_direction: false,
     };
     let mut host: *mut RuuahHost = ptr::dangling_mut();
     let result = unsafe { ruuah_host_spawn(&options, &mut host) };
@@ -161,6 +170,7 @@ fn a_host_that_skips_a_row_is_caught() {
         rows: ROWS,
         font_size: 0.0,
         command: command.as_ptr(),
+        auto_direction: false,
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     let result = unsafe { ruuah_host_spawn(&options, &mut host) };
@@ -233,6 +243,7 @@ fn send_reaches_the_child_and_comes_back_as_pixels() {
         rows: ROWS,
         font_size: 0.0,
         command: command.as_ptr(),
+        auto_direction: false,
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -275,5 +286,66 @@ fn send_reaches_the_child_and_comes_back_as_pixels() {
     assert!(
         matched,
         "the sent line never came back as the expected pixels"
+    );
+}
+
+/// The `auto_direction` option must be provably not inert (the SCAR-004 shape: a flag
+/// that changes nothing looks exactly like a flag that works). Two oracles are built for
+/// the same Hebrew line — LTR base and Auto base — and must DISAGREE with each other
+/// (sensitivity: the line really exercises reordering), and a host spawned with the flag
+/// must byte-match the Auto oracle, which the LTR layout by construction cannot.
+#[test]
+fn auto_direction_reorders_a_hebrew_row_through_the_c_boundary() {
+    const HEBREW_WIRE: &[u8] = "שלום עולם\r\n".as_bytes();
+    let (ltr, ..) = reference_pixels_for(HEBREW_WIRE, BaseDirection::LeftToRight);
+    let (want, want_width, want_height) =
+        reference_pixels_for(HEBREW_WIRE, BaseDirection::Auto);
+    assert_ne!(
+        ltr, want,
+        "the Hebrew line lays out identically under both bases — the oracle cannot see the flag"
+    );
+
+    let command = CString::new("printf 'שלום עולם\\n'").expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: true,
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    let result = unsafe { ruuah_host_spawn(&options, &mut host) };
+    assert_eq!(result, RuuahHostResult::Success, "spawn failed: {result:?}");
+
+    let mut matched = false;
+    let deadline = Instant::now() + PATIENCE;
+    while Instant::now() < deadline {
+        let mut polled = RuuahHostFrame {
+            pixels: ptr::null(),
+            width: 0,
+            height: 0,
+            generation: 0,
+            drew: false,
+            child_exited: false,
+        };
+        assert_eq!(
+            unsafe { ruuah_host_poll(host, &mut polled) },
+            RuuahHostResult::Success
+        );
+        if !polled.pixels.is_null() {
+            assert_eq!((polled.width, polled.height), (want_width, want_height));
+            let len = polled.width as usize * polled.height as usize * 4;
+            let got = unsafe { std::slice::from_raw_parts(polled.pixels, len) };
+            if got == want.as_slice() {
+                matched = true;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    unsafe { ruuah_host_free(host) };
+    assert!(
+        matched,
+        "a host spawned with auto_direction never produced the Auto-base layout"
     );
 }

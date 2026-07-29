@@ -815,3 +815,81 @@ fn a_live_font_size_change_reaches_the_polled_pixels() {
     assert!(after.1 > before.1, "height grew with the font");
     unsafe { ruuah_host_free(host) };
 }
+
+/// OSC 8 through the C boundary: the URI a child printed under comes back from
+/// ruuah_host_link_at at the linked cell, an unlinked cell answers SUCCESS with len 0,
+/// and out-of-range is refused. The child emits the marks itself, no shell involved.
+#[test]
+fn a_hyperlink_is_readable_at_its_cell_through_the_c_surface() {
+    use ruuah_vt_host::ruuah_host_link_at;
+
+    let command =
+        CString::new("printf 'a\\033]8;;https://x.il/p\\033\\\\bc\\033]8;;\\033\\\\d'; sleep 8")
+            .expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+        config: ptr::null(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+
+    let link = |host, col, row| -> Option<(RuuahHostResult, String)> {
+        let mut len = 0usize;
+        let result = unsafe { ruuah_host_link_at(host, col, row, ptr::null_mut(), 0, &mut len) };
+        if result != RuuahHostResult::Success {
+            return Some((result, String::new()));
+        }
+        let mut buffer = vec![0u8; len];
+        let result = unsafe {
+            ruuah_host_link_at(host, col, row, buffer.as_mut_ptr(), len, &mut len)
+        };
+        Some((result, String::from_utf8(buffer).ok()?))
+    };
+
+    let deadline = Instant::now() + PATIENCE;
+    let mut found = String::new();
+    while Instant::now() < deadline {
+        let mut polled = empty_frame();
+        assert_eq!(
+            unsafe { ruuah_host_poll(host, &mut polled) },
+            RuuahHostResult::Success
+        );
+        if let Some((RuuahHostResult::Success, uri)) = link(host, 1, 0) {
+            if !uri.is_empty() {
+                found = uri;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if found.is_empty() {
+        die(host, "the linked cell never answered with a URI".into());
+    }
+    assert_eq!(found, "https://x.il/p");
+    assert_eq!(
+        link(host, 2, 0),
+        Some((RuuahHostResult::Success, "https://x.il/p".into())),
+        "the second linked cell"
+    );
+
+    // The control half: cell 0 was printed before the link and must answer len 0.
+    let mut len = 5usize;
+    assert_eq!(
+        unsafe { ruuah_host_link_at(host, 0, 0, ptr::null_mut(), 0, &mut len) },
+        RuuahHostResult::Success
+    );
+    assert_eq!(len, 0, "an unlinked cell is SUCCESS with no bytes");
+    assert_eq!(
+        unsafe { ruuah_host_link_at(host, COLS + 1, 0, ptr::null_mut(), 0, &mut len) },
+        RuuahHostResult::InvalidValue,
+        "out of range is refused"
+    );
+    unsafe { ruuah_host_free(host) };
+}

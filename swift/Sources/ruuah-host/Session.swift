@@ -92,6 +92,22 @@ final class Session {
         return String(decoding: buffer, as: UTF8.self)
     }
 
+    /// The OSC 8 URI under a cell, if any (last polled frame).
+    func linkAt(col: UInt16, row: UInt16) -> String? {
+        guard let host else { return nil }
+        var length = 0
+        guard ruuah_host_link_at(host, col, row, nil, 0, &length) == RUUAH_HOST_SUCCESS,
+            length > 0
+        else { return nil }
+        var buffer = [UInt8](repeating: 0, count: length)
+        guard
+            buffer.withUnsafeMutableBufferPointer({ pointer in
+                ruuah_host_link_at(host, col, row, pointer.baseAddress, length, &length)
+            }) == RUUAH_HOST_SUCCESS
+        else { return nil }
+        return String(decoding: buffer, as: UTF8.self)
+    }
+
     func send(_ bytes: [UInt8]) {
         guard let host else { return }
         _ = bytes.withUnsafeBufferPointer { buffer in

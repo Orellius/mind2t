@@ -525,6 +525,49 @@ pub unsafe extern "C" fn ruuah_host_set_font_size(
 /// This is the copy-command/copy-output seam for blocks (S2): the GUI groups rows with
 /// `row_semantics` and reads the text of the rows it selected.
 ///
+/// Copies the OSC 8 URI under one cell into `out`, if the cell was printed inside a
+/// hyperlink.
+///
+/// Reads the last POLLED frame, like `ruuah_host_row_text`. A cell with no link is
+/// SUCCESS with `*len` 0 -- a click on plain text is not an error. INVALID_VALUE only
+/// for an out-of-range cell or a host that has never polled. Truncation contract
+/// matches `ruuah_host_row_text` (size `cap` from a first call's `*len`).
+///
+/// # Safety
+/// `host` must be a live handle; `out` must point to `cap` writable bytes or be NULL
+/// when `cap` is 0; `len` must be non-NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_host_link_at(
+    host: *mut RuuahHost,
+    col: u16,
+    row: u16,
+    out: *mut u8,
+    cap: usize,
+    len: *mut usize,
+) -> RuuahHostResult {
+    if host.is_null() || len.is_null() || (out.is_null() && cap != 0) {
+        return RuuahHostResult::InvalidValue;
+    }
+    unsafe { len.write(0) };
+    let host = unsafe { &mut *host };
+    if !host.frame.is_valid() || row >= host.frame.rows || col >= host.frame.cols {
+        return RuuahHostResult::InvalidValue;
+    }
+    let Some(uri) = host.frame.link(col, row) else {
+        return RuuahHostResult::Success;
+    };
+    let bytes = uri.as_bytes();
+    unsafe { len.write(bytes.len()) };
+    if cap > 0 {
+        let mut take = bytes.len().min(cap);
+        while take > 0 && !uri.is_char_boundary(take) {
+            take -= 1;
+        }
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, take) };
+    }
+    RuuahHostResult::Success
+}
+
 /// # Safety
 /// `host` must be a live handle; `out` must point to `cap` writable bytes or be NULL when
 /// `cap` is 0; `len` must be non-NULL.

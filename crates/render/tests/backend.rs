@@ -257,3 +257,57 @@ fn a_read_retires_the_recorded_work() {
         "the per-round backlog reached {high_water}, which is more than one round of work"
     );
 }
+
+/// A frame with more operations than Metal's command-buffer pool must still complete.
+///
+/// Found by slice 8's window, hung on its first vim frame: recording one compute pass per
+/// operation makes the Metal backend open a command buffer per pass, none of which can
+/// complete before the one submit at the end -- and the queue's pool (64) blocks the 65th
+/// request forever, mid-encoding. Every other test in this file stays under the pool by
+/// accident; this one is a full screen of glyphs, and it is run under a watchdog because
+/// the failure mode is not a wrong byte but a hang.
+#[test]
+fn a_frame_with_more_ops_than_the_command_buffer_pool_completes() {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut terminal = Terminal::new(80, 24);
+        for row in 0..24 {
+            let line = "abcdefghij".repeat(7);
+            terminal.write(line.as_bytes());
+            if row < 23 {
+                terminal.write(b"\r\n");
+            }
+        }
+        let (writer, reader) = channel(80, 24);
+        let mut publisher = Publisher::new(writer);
+        publisher.publish(&mut terminal).expect("fits");
+        let mut frame = Frame::new();
+        assert!(matches!(
+            reader.read_into(&mut frame),
+            ReadOutcome::Fresh(_)
+        ));
+
+        let mut gpu: Renderer<GpuSurface> = Renderer::with_surface(fonts(), 80, 24);
+        gpu.draw_all(&frame);
+        let recorded = gpu.canvas().recorded_ops();
+        assert!(
+            recorded > 64,
+            "only {recorded} operations were recorded; this test no longer exceeds the pool"
+        );
+        let gpu_pixels = gpu.pixels();
+
+        let mut cpu: Renderer<Canvas> = Renderer::with_surface(fonts(), 80, 24);
+        cpu.draw_all(&frame);
+        let cpu_pixels = cpu.pixels();
+
+        let _ = sender.send((gpu_pixels, cpu_pixels));
+    });
+
+    let (gpu_pixels, cpu_pixels) = receiver
+        .recv_timeout(std::time::Duration::from_secs(30))
+        .expect("the GPU never finished the frame -- encoding exhausted the command-buffer pool");
+    assert_eq!(
+        gpu_pixels, cpu_pixels,
+        "the backends disagree on a large frame"
+    );
+}

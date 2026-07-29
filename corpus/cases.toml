@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 131
+declared_cases = 132
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -1166,3 +1166,11 @@ cols = 12
 rows = 3
 bytes = "xy\u001B]133;A;cl=line\u0007$ "
 note = "Ghostty's zsh integration emits A with cl=line. The option must not invalidate the action: the fresh line and the prompt mark both still happen. Added by the S2 compat wave 2026-07-30."
+
+[[case]]
+name = "vs16-cluster-stays-narrow"
+expect = "match"
+cols = 8
+rows = 2
+bytes = "a\u2764\uFE0Fb"
+note = "MEASURED 2026-07-30: upstream keeps a VS16 emoji-presentation cluster at width 1 -- b lands in column 2 and the grids agree exactly. Pinned so the renderer-side emoji-presentation work (which draws the color glyph in that single cell) can never leak a width change into the core."

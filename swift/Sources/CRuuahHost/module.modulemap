@@ -1,0 +1,4 @@
+module CRuuahHost {
+    header "../../../crates/host/include/ruuah_host.h"
+    export *
+}

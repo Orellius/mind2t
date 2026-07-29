@@ -441,3 +441,84 @@ fn a_cell_holding_a_multi_codepoint_cluster_wears_the_grapheme_content_tag() {
         sys::ghostty_terminal_free(handle);
     }
 }
+
+/// A NULL out-param on the four grid-ref readers is the validate-only idiom, not an error:
+/// the headers say "(may be NULL)" and the source skips the write and returns success
+/// (`grid_ref.zig`, `if (out) |o| ...`). A ref that does NOT resolve still reports
+/// INVALID_VALUE, so NULL-out is not simply always-success.
+#[test]
+fn a_null_out_param_validates_instead_of_failing() {
+    use ruuah_vt_ghostty::sys;
+    unsafe {
+        let mut handle: sys::GhosttyTerminal = std::ptr::null_mut();
+        let options = sys::GhosttyTerminalOptions {
+            cols: 8,
+            rows: 2,
+            max_scrollback: 0,
+        };
+        assert_eq!(
+            sys::ghostty_terminal_new(std::ptr::null(), &mut handle, options),
+            sys::GhosttyResult_GHOSTTY_SUCCESS
+        );
+        let bytes = b"hi";
+        sys::ghostty_terminal_vt_write(handle, bytes.as_ptr(), bytes.len());
+
+        let point = sys::GhosttyPoint {
+            tag: sys::GhosttyPointTag_GHOSTTY_POINT_TAG_ACTIVE,
+            value: sys::GhosttyPointValue {
+                coordinate: sys::GhosttyPointCoordinate { x: 0, y: 0 },
+            },
+        };
+
+        // grid_ref with NULL out still validates the point.
+        assert_eq!(
+            sys::ghostty_terminal_grid_ref(handle, point, std::ptr::null_mut()),
+            sys::GhosttyResult_GHOSTTY_SUCCESS
+        );
+        let bad_point = sys::GhosttyPoint {
+            tag: sys::GhosttyPointTag_GHOSTTY_POINT_TAG_ACTIVE,
+            value: sys::GhosttyPointValue {
+                coordinate: sys::GhosttyPointCoordinate { x: 99, y: 99 },
+            },
+        };
+        assert_eq!(
+            sys::ghostty_terminal_grid_ref(handle, bad_point, std::ptr::null_mut()),
+            sys::GhosttyResult_GHOSTTY_INVALID_VALUE,
+            "NULL out must not turn an out-of-bounds point into success"
+        );
+
+        let mut cell_ref: sys::GhosttyGridRef = std::mem::zeroed();
+        cell_ref.size = size_of::<sys::GhosttyGridRef>();
+        assert_eq!(
+            sys::ghostty_terminal_grid_ref(handle, point, &mut cell_ref),
+            sys::GhosttyResult_GHOSTTY_SUCCESS
+        );
+
+        assert_eq!(
+            sys::ghostty_grid_ref_cell(&cell_ref, std::ptr::null_mut()),
+            sys::GhosttyResult_GHOSTTY_SUCCESS
+        );
+        assert_eq!(
+            sys::ghostty_grid_ref_row(&cell_ref, std::ptr::null_mut()),
+            sys::GhosttyResult_GHOSTTY_SUCCESS
+        );
+        assert_eq!(
+            sys::ghostty_grid_ref_style(&cell_ref, std::ptr::null_mut()),
+            sys::GhosttyResult_GHOSTTY_SUCCESS
+        );
+
+        // And a dead ref stays an error even with NULL out.
+        let dead = sys::GhosttyGridRef {
+            size: size_of::<sys::GhosttyGridRef>(),
+            node: std::ptr::null_mut(),
+            x: 0,
+            y: 0,
+        };
+        assert_eq!(
+            sys::ghostty_grid_ref_cell(&dead, std::ptr::null_mut()),
+            sys::GhosttyResult_GHOSTTY_INVALID_VALUE
+        );
+
+        sys::ghostty_terminal_free(handle);
+    }
+}

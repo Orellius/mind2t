@@ -54,6 +54,7 @@ struct Op {
 
 const KIND_FILL: u32 = 0;
 const KIND_BLEND: u32 = 1;
+const KIND_IMAGE: u32 = 2;
 
 /// The uniform block a dispatch reads its parameters from. Padded to the dynamic-offset
 /// alignment the backend requires, which is why the struct is written out rather than
@@ -83,6 +84,7 @@ pub struct GpuSurface {
     queue: wgpu::Queue,
     fill: wgpu::ComputePipeline,
     blend: wgpu::ComputePipeline,
+    image: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
     ops: Vec<Op>,
     coverage: Vec<u8>,
@@ -188,6 +190,7 @@ impl GpuSurface {
             pixels,
             fill: make("fill"),
             blend: make("blend"),
+            image: make("image"),
             layout,
             device,
             queue,
@@ -300,10 +303,10 @@ impl GpuSurface {
                 timestamp_writes: None,
             });
             for (index, op) in self.ops.iter().enumerate() {
-                pass.set_pipeline(if op.kind == KIND_FILL {
-                    &self.fill
-                } else {
-                    &self.blend
+                pass.set_pipeline(match op.kind {
+                    KIND_FILL => &self.fill,
+                    KIND_BLEND => &self.blend,
+                    _ => &self.image,
                 });
                 pass.set_bind_group(0, &bind_group, &[(index * alignment) as u32]);
                 pass.dispatch_workgroups(op.width.div_ceil(8), op.height.div_ceil(8), 1);
@@ -405,6 +408,29 @@ impl Surface for GpuSurface {
         });
     }
 
+    fn blend_image(&mut self, x: i32, y: i32, width: u32, height: u32, rgba: &[u8]) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        // Image pixels are read as whole u32 words in the shader, so the payload starts on
+        // a word boundary of the shared byte buffer -- mask payloads have byte granularity
+        // and can leave it anywhere.
+        while self.coverage.len() % 4 != 0 {
+            self.coverage.push(0);
+        }
+        let mask_offset = self.coverage.len() as u32;
+        self.coverage.extend_from_slice(rgba);
+        self.ops.push(Op {
+            kind: KIND_IMAGE,
+            x,
+            y,
+            width,
+            height,
+            color: 0,
+            mask_offset,
+        });
+    }
+
     fn read_pixels(&mut self) -> Vec<u8> {
         self.execute().expect("the GPU replayed the recorded frame")
     }
@@ -466,6 +492,38 @@ fn blend(@builtin(global_invocation_id) gid: vec3<u32>) {
     var out: u32 = 255u << 24u;
     for (var channel: u32 = 0u; channel < 3u; channel = channel + 1u) {
         let source = (params.color >> (channel * 8u)) & 255u;
+        let destination = (dst >> (channel * 8u)) & 255u;
+        let value = (source * alpha + destination * (255u - alpha) + 127u) / 255u;
+        out = out | (value << (channel * 8u));
+    }
+    pixels[u32(offset)] = out;
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn image(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if (gid.x >= params.width || gid.y >= params.height) { return; }
+
+    // One whole RGBA word per image pixel; blend_image aligned the payload, so the word
+    // index is exact. Byte layout matches the pixel buffer: R in the low byte.
+    let index = params.mask_offset / 4u + gid.y * params.width + gid.x;
+    let source_pixel = coverage[index];
+    let alpha = (source_pixel >> 24u) & 255u;
+    if (alpha == 0u) { return; }
+
+    let offset = pixel_offset(gid);
+    if (offset < 0) { return; }
+
+    if (alpha == 255u) {
+        pixels[u32(offset)] = source_pixel | (255u << 24u);
+        return;
+    }
+
+    // The identical rounded integer expression as `blend`, with the source color coming
+    // from the image word instead of the uniform.
+    let dst = pixels[u32(offset)];
+    var out: u32 = 255u << 24u;
+    for (var channel: u32 = 0u; channel < 3u; channel = channel + 1u) {
+        let source = (source_pixel >> (channel * 8u)) & 255u;
         let destination = (dst >> (channel * 8u)) & 255u;
         let value = (source * alpha + destination * (255u - alpha) + 127u) / 255u;
         out = out | (value << (channel * 8u));

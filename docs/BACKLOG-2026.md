@@ -19,10 +19,19 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
    fenceposts are visible grid text with plain `cat` -- two runs differing only in
    the child's `2004h` are the discriminating pair (`host_abi.rs`). The cmd+V tap
    itself in the installed app is the one thing still owed eyes.
-2. **Emoji / color glyphs.** `[🧠 BRAIN]` renders as a gap in Claude Code
-   (screenshot 2026-07-29). Apple Color Emoji is a color font (sbix strikes);
-   the renderer only draws alpha masks, so this is a renderer feature (RGBA
-   glyph blit + atlas entry kind), not a font-stack line. The largest P0.
+2. **Emoji / color glyphs. DONE 2026-07-29.** `[🧠 BRAIN]` renders in color
+   (`docs/images/emoji-brain-20260729.png`). Landed as predicted: an atlas entry
+   kind (`GlyphData::Mask`/`Color`), a fifth surface op (`blend_image`, same
+   rounded integer blend spec), a GPU `image` shader entry sharing the coverage
+   buffer word-aligned, and Apple Color Emoji in the stack. The sbix strike is
+   scaled to the cell height IN THE ATLAS (fixed-point bilinear, once, CPU-side)
+   so both backends receive identical bytes -- CPU==GPU stays byte-exact with an
+   emoji line in backend.rs's script. Pixel pin: `emoji_probe.rs` requires
+   CHROMATIC ink (a mask-tinted silhouette or nothing both score zero).
+   **Known boundary:** a VS16 cluster (`❤️` = U+2764+FE0F) resolves its base
+   char at the first TEXT font that carries it and draws text presentation;
+   emoji-presentation override for VS16 clusters is future cluster-level
+   resolution work. Single-codepoint emoji -- the entire flagged case -- work.
 
 ## P1 — the modern-TUI contract
 

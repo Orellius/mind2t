@@ -70,6 +70,11 @@ struct Shared {
     row_flags: Box<[AtomicU64]>,
     styles: Box<[AtomicU64]>,
     style_len: AtomicU64,
+    /// OSC 8 URIs for the links visible in this frame, densely remapped per publish.
+    /// Fixed slots of plain words for the same reason as everything else here: a torn
+    /// read is garbage text wearing an invalid generation, never a fault.
+    links: Box<[AtomicU64]>,
+    link_len: AtomicU64,
     capacity: (u16, u16),
     style_capacity: usize,
 }
@@ -77,6 +82,13 @@ struct Shared {
 /// Words per cell in the shared buffer. Two of UTF-8, one of attributes.
 pub(crate) const CELL_WORDS: usize = 3;
 const STYLE_WORDS: usize = 2;
+/// Link slots per frame and words per slot (word 0 = byte length, then the URI bytes).
+/// 64 visible links x 248 bytes is 16KB of fixed payload -- small next to the cells.
+pub const LINK_SLOTS: usize = 64;
+const LINK_WORDS: usize = 32;
+/// The longest URI a slot can carry; longer ones are truncated at a char boundary by
+/// the publisher (a click target, not an archive).
+pub const LINK_URI_BYTES: usize = (LINK_WORDS - 1) * 8;
 
 fn zeroed(len: usize) -> Box<[AtomicU64]> {
     (0..len).map(|_| AtomicU64::new(0)).collect()
@@ -102,6 +114,8 @@ pub fn channel(cols: u16, rows: u16) -> (FrameWriter, FrameReader) {
         row_flags: zeroed(usize::from(rows)),
         styles: zeroed(style_capacity * STYLE_WORDS),
         style_len: AtomicU64::new(0),
+        links: zeroed(LINK_SLOTS * LINK_WORDS),
+        link_len: AtomicU64::new(0),
         capacity: (cols, rows),
         style_capacity,
     });
@@ -240,6 +254,26 @@ impl Publish<'_> {
         self.shared.cursor[2].store(style[1], Ordering::Relaxed);
     }
 
+    /// Writes the frame's link table: one URI per slot, in the dense order the cells'
+    /// link ids point at (slot 0 is id 1). Entries past `LINK_SLOTS` are dropped -- the
+    /// publisher already refused to hand out ids for them.
+    pub fn links<'uri>(&mut self, table: impl ExactSizeIterator<Item = &'uri str>) {
+        let len = table.len().min(LINK_SLOTS);
+        self.shared.link_len.store(len as u64, Ordering::Relaxed);
+        for (slot, uri) in table.take(len).enumerate() {
+            let base = slot * LINK_WORDS;
+            let bytes = uri.as_bytes();
+            let take = bytes.len().min(LINK_URI_BYTES);
+            self.shared.links[base].store(take as u64, Ordering::Relaxed);
+            for (offset, chunk) in bytes[..take].chunks(8).enumerate() {
+                let mut raw = [0u8; 8];
+                raw[..chunk.len()].copy_from_slice(chunk);
+                self.shared.links[base + 1 + offset]
+                    .store(u64::from_le_bytes(raw), Ordering::Relaxed);
+            }
+        }
+    }
+
     /// Writes the interned style table. Entries past the buffer are dropped, which the
     /// channel's sizing makes unreachable for a table the core produced.
     pub fn styles(&mut self, table: impl ExactSizeIterator<Item = [u64; 2]>) {
@@ -342,6 +376,24 @@ impl FrameReader {
                 shared.styles[base].load(Ordering::Relaxed),
                 shared.styles[base + 1].load(Ordering::Relaxed),
             ]);
+        }
+
+        let link_len = (shared.link_len.load(Ordering::Relaxed) as usize).min(LINK_SLOTS);
+        frame.links.clear();
+        for slot in 0..link_len {
+            let base = slot * LINK_WORDS;
+            let len = (shared.links[base].load(Ordering::Relaxed) as usize).min(LINK_URI_BYTES);
+            let mut bytes = Vec::with_capacity(len);
+            for offset in 0..len.div_ceil(8) {
+                let word = shared.links[base + 1 + offset].load(Ordering::Relaxed);
+                bytes.extend_from_slice(&word.to_le_bytes());
+            }
+            bytes.truncate(len);
+            // Lossy on purpose: a torn read is garbage text wearing an invalid
+            // generation -- the frame gets discarded, and this must never fault first.
+            frame
+                .links
+                .push(String::from_utf8_lossy(&bytes).into_owned());
         }
 
         frame.full_generation = shared.full.load(Ordering::Relaxed);

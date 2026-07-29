@@ -147,6 +147,11 @@ RuuahHostResult ruuah_host_set_font_size(
 RuuahHostResult ruuah_host_row_text(
     RuuahHost *host, uint16_t row, uint8_t semantic, uint8_t *out, size_t cap, size_t *len);
 
+/* Copies the OSC 8 URI under one cell (last POLLED frame). No link = SUCCESS with *len
+ * 0 -- clicking plain text is not an error. Truncation contract as ruuah_host_row_text. */
+RuuahHostResult ruuah_host_link_at(
+    RuuahHost *host, uint16_t col, uint16_t row, uint8_t *out, size_t cap, size_t *len);
+
 /* Tears down the child, the pump thread and the renderer. NULL is a no-op. Any pixels
  * pointer previously returned for this handle is dead after this call. */
 void ruuah_host_free(RuuahHost *host);

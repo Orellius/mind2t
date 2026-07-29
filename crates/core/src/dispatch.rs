@@ -48,6 +48,13 @@ impl State {
             return;
         }
 
+        // Upstream keeps ONE `Terminal.scrolling_region` for both screens and
+        // `switchScreenMode` never touches it (`Terminal.zig:67`). Storage here is
+        // per-`Screen`, so the region is carried across the switch instead -- observably
+        // identical, because only the active screen's region is ever read or written, and
+        // both screens always share one geometry.
+        let (scroll_top, scroll_bottom) = (self.screen().scroll_top, self.screen().scroll_bottom);
+
         if to_alternate {
             if save {
                 self.save_cursor();
@@ -70,6 +77,8 @@ impl State {
                 self.restore_cursor();
             }
         }
+        self.screen_mut().scroll_top = scroll_top;
+        self.screen_mut().scroll_bottom = scroll_bottom;
         self.last_print = None;
     }
 

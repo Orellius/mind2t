@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 124
+declared_cases = 125
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -1103,13 +1103,21 @@ note = "The disable arm calls restoreCursor whether or not the screen changed (T
 
 [[case]]
 name = "scroll-region-is-shared-with-the-alternate-screen"
-expect = "diff"
-diff_paths = ["cell[1,0].text", "cell[2,0].text", "cell[3,0].text", "cursor.y"]
+expect = "match"
 cols = 10
 rows = 5
 after = "a\r\nb\r\nc\r\nd"
 bytes = "\u001B[2;3r\u001B[?1049h"
-note = "Ghostty keeps one Terminal.scrolling_region for both screens and switchScreenMode never resets it. Here it is per-Screen and entering the alternate screen resets it, so upstream scrolls inside rows 2-3 and this core leaves all four rows untouched."
+note = "Ghostty keeps one Terminal.scrolling_region for both screens and switchScreenMode never touches it (Terminal.zig:67). Promoted by the S2 wave: the region is carried across the switch, so DECSTBM set on the primary governs the alternate too."
+
+[[case]]
+name = "scroll-region-set-in-the-alternate-survives-the-exit"
+expect = "match"
+cols = 10
+rows = 5
+after = "a\r\nb\r\nc\r\nd"
+bytes = "\u001B[?1049h\u001B[2;3r\u001B[?1049l"
+note = "The other direction of the shared scrolling_region: DECSTBM issued while in the alternate screen still governs the primary after mode 1049 exits, because upstream's region lives on the Terminal, not the screen. Added as diff by the S2 wave and promoted by the same fix that carried the region across the switch."
 
 [[case]]
 name = "semantic-fresh-line-at-the-last-row-scrolls"

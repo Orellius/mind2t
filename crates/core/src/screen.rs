@@ -34,6 +34,9 @@ pub struct Screen {
     /// until the next printable character. Any cursor movement cancels it.
     pub pending_wrap: bool,
     /// Inclusive scroll margins. Default is the whole screen.
+    /// Kitty graphics placements anchored to this screen's rows. They scroll with
+    /// the content and drop once fully above the region top.
+    pub placements: Vec<crate::graphics::Placement>,
     pub scroll_top: u16,
     pub scroll_bottom: u16,
     pub saved: Option<SavedCursor>,
@@ -58,6 +61,7 @@ impl Screen {
             x: 0,
             y: 0,
             pending_wrap: false,
+            placements: Vec::new(),
             scroll_top: 0,
             scroll_bottom: rows.saturating_sub(1),
             saved: None,
@@ -277,6 +281,7 @@ impl Screen {
         }
         self.grid
             .scroll_up(self.scroll_top, self.scroll_bottom, count, blank);
+        self.scroll_placements_up(count);
     }
 
     /// Scrolls everything written into scrollback, so a clear at a prompt keeps history.
@@ -308,6 +313,7 @@ impl Screen {
         }
         let last = self.last_row();
         self.grid.scroll_up(0, last, count, blank);
+        self.scroll_placements_up(count);
 
         // `Screen.scrollClear` then calls `cursorReload` (`Screen.zig:844`), which derives the
         // cursor from its tracked pin: the pin follows its row up, and only when that row has
@@ -324,6 +330,28 @@ impl Screen {
     pub fn scroll_down(&mut self, count: u16, blank: Cell) {
         self.grid
             .scroll_down(self.scroll_top, self.scroll_bottom, count, blank);
+        let (top, bottom) = (self.scroll_top, self.scroll_bottom);
+        for placement in &mut self.placements {
+            if placement.row >= top && placement.row <= bottom {
+                placement.row = placement.row.saturating_add(count).min(bottom);
+            }
+        }
+    }
+
+    /// Rows moved up by `count` inside the region; a placement whose anchor left the
+    /// region top is gone -- the content it decorated is gone too.
+    fn scroll_placements_up(&mut self, count: u16) {
+        let (top, bottom) = (self.scroll_top, self.scroll_bottom);
+        self.placements.retain_mut(|placement| {
+            if placement.row < top || placement.row > bottom {
+                return true;
+            }
+            if placement.row < top.saturating_add(count) {
+                return false;
+            }
+            placement.row -= count;
+            true
+        });
     }
 
     fn in_region(&self) -> bool {

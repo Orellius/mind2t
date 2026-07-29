@@ -75,6 +75,11 @@ struct Shared {
     /// read is garbage text wearing an invalid generation, never a fault.
     links: Box<[AtomicU64]>,
     link_len: AtomicU64,
+    /// Kitty graphics placements visible this frame: image id + cell anchor + span.
+    /// Two words each; the pixels themselves never ride the seqlock (they live in the
+    /// shared image store the pump maintains).
+    placements: Box<[AtomicU64]>,
+    placement_len: AtomicU64,
     capacity: (u16, u16),
     style_capacity: usize,
 }
@@ -85,6 +90,9 @@ const STYLE_WORDS: usize = 2;
 /// Link slots per frame and words per slot (word 0 = byte length, then the URI bytes).
 /// 64 visible links x 248 bytes is 16KB of fixed payload -- small next to the cells.
 pub const LINK_SLOTS: usize = 64;
+/// Visible kitty placements per frame; past this the newest are dropped for the frame.
+pub const PLACEMENT_SLOTS: usize = 16;
+const PLACEMENT_WORDS: usize = 2;
 const LINK_WORDS: usize = 32;
 /// The longest URI a slot can carry; longer ones are truncated at a char boundary by
 /// the publisher (a click target, not an archive).
@@ -116,6 +124,8 @@ pub fn channel(cols: u16, rows: u16) -> (FrameWriter, FrameReader) {
         style_len: AtomicU64::new(0),
         links: zeroed(LINK_SLOTS * LINK_WORDS),
         link_len: AtomicU64::new(0),
+        placements: zeroed(PLACEMENT_SLOTS * PLACEMENT_WORDS),
+        placement_len: AtomicU64::new(0),
         capacity: (cols, rows),
         style_capacity,
     });
@@ -274,6 +284,21 @@ impl Publish<'_> {
         }
     }
 
+    /// Writes the frame's kitty placements: (image, col, row, cols, rows) per slot.
+    pub fn placements(&mut self, table: impl ExactSizeIterator<Item = (u32, u16, u16, u16, u16)>) {
+        let len = table.len().min(PLACEMENT_SLOTS);
+        self.shared.placement_len.store(len as u64, Ordering::Relaxed);
+        for (slot, (image, col, row, cols, rows)) in table.take(len).enumerate() {
+            let base = slot * PLACEMENT_WORDS;
+            self.shared.placements[base].store(
+                u64::from(image) | (u64::from(col) << 32) | (u64::from(row) << 48),
+                Ordering::Relaxed,
+            );
+            self.shared.placements[base + 1]
+                .store(u64::from(cols) | (u64::from(rows) << 16), Ordering::Relaxed);
+        }
+    }
+
     /// Writes the interned style table. Entries past the buffer are dropped, which the
     /// channel's sizing makes unreachable for a table the core produced.
     pub fn styles(&mut self, table: impl ExactSizeIterator<Item = [u64; 2]>) {
@@ -394,6 +419,22 @@ impl FrameReader {
             frame
                 .links
                 .push(String::from_utf8_lossy(&bytes).into_owned());
+        }
+
+        let placement_len =
+            (shared.placement_len.load(Ordering::Relaxed) as usize).min(PLACEMENT_SLOTS);
+        frame.placements.clear();
+        for slot in 0..placement_len {
+            let base = slot * PLACEMENT_WORDS;
+            let a = shared.placements[base].load(Ordering::Relaxed);
+            let b = shared.placements[base + 1].load(Ordering::Relaxed);
+            frame.placements.push(crate::frame::FramePlacement {
+                image: a as u32,
+                col: (a >> 32) as u16,
+                row: (a >> 48) as u16,
+                cols: b as u16,
+                rows: (b >> 16) as u16,
+            });
         }
 
         frame.full_generation = shared.full.load(Ordering::Relaxed);

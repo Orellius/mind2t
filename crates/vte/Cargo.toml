@@ -1,0 +1,20 @@
+# Vendored fork of vte 0.15.0 (MIT/Apache-2.0, Joe Wilm & Christian Duerr; both
+# licenses kept alongside). ONE addition: a real ApcString state with
+# apc_start/apc_put/apc_end on Perform (default no-ops), because upstream lumps
+# SOS/PM/APC into one swallow-everything state and the kitty graphics protocol rides
+# APC. Diff deliberately minimal so upstream releases can be re-vendored by re-applying
+# it; if upstream ever grows APC dispatch, this fork retires (see README.md).
+[package]
+name = "vte"
+version = "0.15.0"
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+description = "Parser for implementing terminal emulators (ruuah-vt APC fork)"
+
+[dependencies]
+arrayvec = { version = "0.7.2", default-features = false }
+memchr = "2.7.4"
+
+[features]
+default = ["std"]
+std = ["arrayvec/std"]

@@ -8,4 +8,7 @@ publish.workspace = true
 [dependencies]
 ruuah-vt-snapshot.workspace = true
 unicode-width = "0.2"
-vte = "0.15"
+vte = { path = "../vte" }
+# Kitty graphics f=100: icat's default wire format is PNG. Weighed under GATE 01 --
+# decode is pure/deterministic and the protocol is unusable without it.
+png = "0.17"

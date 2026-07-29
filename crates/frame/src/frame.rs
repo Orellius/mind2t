@@ -119,6 +119,20 @@ pub struct Frame {
     pub(crate) styles: Vec<[u64; 2]>,
     /// OSC 8 URIs for this frame, in slot order; cells point at slots 1-based.
     pub(crate) links: Vec<String>,
+    /// Kitty graphics placements visible this frame. Pixels live in the shared image
+    /// store; this is only where they anchor.
+    pub placements: Vec<FramePlacement>,
+}
+
+/// One kitty placement as it crosses the thread boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FramePlacement {
+    pub image: u32,
+    pub col: u16,
+    pub row: u16,
+    /// 0 = native pixel size; the renderer resolves the cell box.
+    pub cols: u16,
+    pub rows: u16,
 }
 
 impl Frame {
@@ -360,6 +374,7 @@ mod tests {
             row_flags: vec![(false, false)],
             styles,
             links: Vec::new(),
+            placements: Vec::new(),
         }
     }
 

@@ -92,7 +92,7 @@ fn join_fields(fields: &[&[u8]]) -> String {
 /// Strict RFC 4648 base64: standard alphabet, optional trailing `=` padding, no
 /// whitespace. ~20 lines is cheaper than a dependency (GATE 01), and strictness is the
 /// point -- a decoder that guesses is how garbage lands on a clipboard.
-fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
     fn value(byte: u8) -> Option<u32> {
         match byte {
             b'A'..=b'Z' => Some(u32::from(byte - b'A')),

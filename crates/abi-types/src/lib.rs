@@ -52,6 +52,12 @@ pub type GhosttyTerminalScreen = i32;
 pub const GHOSTTY_TERMINAL_SCREEN_PRIMARY: GhosttyTerminalScreen = 0;
 pub const GHOSTTY_TERMINAL_SCREEN_ALTERNATE: GhosttyTerminalScreen = 1;
 
+/// A packed terminal mode (`modes.h`): bits 0-14 carry the mode number, bit 15 set means
+/// ANSI, clear means DEC private. A DEC private mode below 32768 is therefore its own
+/// packed form -- bracketed paste is the literal 2004.
+pub type GhosttyMode = u16;
+pub const GHOSTTY_MODE_BRACKETED_PASTE: GhosttyMode = 2004;
+
 pub type GhosttyPointTag = i32;
 pub const GHOSTTY_POINT_TAG_ACTIVE: GhosttyPointTag = 0;
 pub const GHOSTTY_POINT_TAG_VIEWPORT: GhosttyPointTag = 1;

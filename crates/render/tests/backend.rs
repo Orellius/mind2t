@@ -35,6 +35,7 @@ const SCRIPT: &[&[u8]] = &[
     b"\r\n\x1b[31mred\x1b[0m \x1b[7mreverse\x1b[0m",
     "\r\nשלום עולם".as_bytes(),
     b"\r\n\x1b[4munderlined\x1b[0m tail",
+    b"\r\n\x1b[4:3m\x1b[58;2;255;80;80mcurly\x1b[59m \x1b[4:4mdots\x1b[4:2m dbl\x1b[0m",
     "\r\nmixed ab \x1b[32mגד\x1b[0m 42".as_bytes(),
     "\r\nemoji \u{1F9E0} and \u{1F3A8} end".as_bytes(),
 ];

@@ -15,10 +15,10 @@ use ruuah_vt_frame::{Frame, PackedCell, cell_width};
 
 use crate::atlas::Atlas;
 use crate::canvas::Canvas;
-use crate::surface::Surface;
 use crate::color::{Palette, Rgba};
 use crate::font::FontStack;
 use crate::shape::{PositionedGlyph, Shaper, needs_shaping};
+use crate::surface::Surface;
 
 /// Paints frames into a surface.
 ///

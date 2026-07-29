@@ -98,8 +98,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
 
-        // For screenshots: `screencapture -l` takes this id.
-        print("RUUAH_HOST_WINDOW=\(window.windowNumber)")
+        // For screenshots: `screencapture -l` takes this id. Written unbuffered, because a
+        // scripted capture reads it while the app is still running.
+        FileHandle.standardOutput.write(Data("RUUAH_HOST_WINDOW=\(window.windowNumber)\n".utf8))
 
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             self?.poll()

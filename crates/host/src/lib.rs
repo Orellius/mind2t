@@ -111,6 +111,10 @@ pub struct RuuahHost {
     /// The theme, kept because resize rebuilds the renderer -- a rebuild that forgot it
     /// would silently revert to the built-in scheme (pinned by the host_abi resize test).
     palette: Palette,
+    /// The kitty image store the pump maintains; placements in the frame point at it.
+    images: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<u32, (u32, u32, std::sync::Arc<Vec<u8>>)>>,
+    >,
     /// Events not yet handed to the embedder; refilled from the pump's queue whenever
     /// `ruuah_host_next_event` finds it empty. One event per call, oldest first.
     pending_events: std::collections::VecDeque<ruuah_vt_core::events::Event>,
@@ -168,6 +172,22 @@ fn poll_impl(host: &mut RuuahHost, mode: DrawMode) -> RuuahHostFrame {
             DrawMode::SkipRow(skip) => {
                 host.renderer.draw_skipping_for_testing(&host.frame, skip);
             }
+        }
+        // Kitty placements blit over the drawn grid; the store lock is held only for
+        // the Arc clones, never across the blend.
+        if !host.frame.placements.is_empty() {
+            let resolved: Vec<_> = {
+                let store = host.images.lock().expect("image store");
+                host.frame
+                    .placements
+                    .iter()
+                    .map(|placement| store.get(&placement.image).cloned())
+                    .collect()
+            };
+            let placements = host.frame.placements.clone();
+            let mut cursor = resolved.into_iter();
+            host.renderer
+                .draw_images(&placements, move |_| cursor.next().flatten());
         }
         host.drawn_generation = host.frame.generation;
         host.pixels = host.renderer.pixels();
@@ -294,6 +314,7 @@ pub unsafe extern "C" fn ruuah_host_spawn(
         frame.base_direction = BaseDirection::Auto;
     }
 
+    let images = host.image_store();
     let handle = Box::new(RuuahHost {
         host,
         reader,
@@ -304,6 +325,7 @@ pub unsafe extern "C" fn ruuah_host_spawn(
         font_size,
         palette,
         row_semantics: Vec::new(),
+        images,
         pending_events: std::collections::VecDeque::new(),
         exited: false,
     });

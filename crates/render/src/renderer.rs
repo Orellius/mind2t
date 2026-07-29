@@ -42,6 +42,8 @@ pub struct Renderer<S = Canvas> {
     rows: u16,
     /// The last generation fully painted. Rows stamped above it are what is owed.
     drawn: u64,
+    /// Scaled kitty placements, keyed (image, box) -- see `images.rs`.
+    image_cache: crate::images::ScaledCache,
 }
 
 impl Renderer<Canvas> {
@@ -68,6 +70,7 @@ impl<S: Surface> Renderer<S> {
             cols,
             rows,
             drawn: 0,
+            image_cache: crate::images::ScaledCache::default(),
         }
     }
 
@@ -344,6 +347,51 @@ impl<S: Surface> Renderer<S> {
             let y = top + metrics.baseline - (metrics.baseline / 3);
             self.canvas.fill(left, y, span, 1, drawn.foreground);
         }
+    }
+
+    /// Blits kitty placements over the drawn grid, through the same `blend_image` op
+    /// emoji use -- CPU==GPU holds because both backends receive identical pre-scaled
+    /// bytes (the P0.2 rule). `lookup` resolves an image id to (width, height, pixels);
+    /// a placement whose image is gone draws nothing. A `cols`/`rows` of 0 means the
+    /// image's native pixel size (the core is cell-pixel-ignorant by design).
+    pub fn draw_images<F>(&mut self, placements: &[ruuah_vt_frame::FramePlacement], mut lookup: F)
+    where
+        F: FnMut(u32) -> Option<(u32, u32, std::sync::Arc<Vec<u8>>)>,
+    {
+        let metrics = self.fonts.metrics();
+        for placement in placements {
+            let Some((width, height, rgba)) = lookup(placement.image) else {
+                continue;
+            };
+            let (target_width, target_height) = if placement.cols > 0 && placement.rows > 0 {
+                (
+                    u32::from(placement.cols) * metrics.width,
+                    u32::from(placement.rows) * metrics.height,
+                )
+            } else {
+                (width, height)
+            };
+            if target_width == 0 || target_height == 0 || width == 0 || height == 0 {
+                continue;
+            }
+            let scaled = self.image_cache.get_or_scale(
+                placement.image,
+                width,
+                height,
+                &rgba,
+                target_width,
+                target_height,
+            );
+            let x = i32::from(placement.col) * metrics.width as i32;
+            let y = i32::from(placement.row) * metrics.height as i32;
+            self.canvas
+                .blend_image(x, y, target_width, target_height, &scaled);
+        }
+    }
+
+    /// Drops cached scaled boxes for an image whose pixels changed or vanished.
+    pub fn evict_image(&mut self, id: u32) {
+        self.image_cache.evict(id);
     }
 
     /// Draws the cursor, if it is on this row.

@@ -67,12 +67,13 @@ Three things worth keeping from it, because each cost a wrong first attempt:
   with the floor in place still exited 0. The fix is a count re-derived from the raw file text
   in `tests/corpus.rs`, which shares no code with the loader.
 
-**The S2 wave is in progress on branch `audit-fixes-s2`** (2026-07-29). Findings 8-20 are
-fixed and committed -- plus 22, which folded into 14 -- each with a control seen to fail
-first; gates green after every one (265 tests, corpus 125 cases 105 match / 20 diff
-125/125, 13/13 exports). **Miri is now in the toolbox** (nightly + miri installed
-2026-07-29): `cargo +nightly miri test -p ruuah-vt-abi --test soundness` is the oracle for
-UB-class defects, where a native run passing proves nothing.
+**The 2026-07-28 audit is fully closed: all 31 findings fixed**, on branch `audit-fixes-s2`
+(2026-07-29), tagged `v0.7.2` after merge. Each fix carries a control run against the broken
+version and seen to fail; gates green after every one (271 tests, corpus 125 cases
+114 match / 11 diff 125/125, 13/13 exports). **Miri is now in the toolbox** (nightly + miri
+installed 2026-07-29): `cargo +nightly miri test -p ruuah-vt-abi --test soundness` is the
+oracle for UB-class defects, where a native run passing proves nothing -- run it whenever
+the ABI handle model changes. **Next: slice 8, the minimal Swift host.**
 
 - 8 `ed5c115` DECRC with nothing saved restores the synthetic default cursor, not nothing.
 - 9 `58378d1` HT no longer clears `pending_wrap`; upstream's horizontalTab never touches it.
@@ -115,7 +116,31 @@ UB-class defects, where a native run passing proves nothing.
   it EXCEPT a 1049 exit (`restoreCursor` restores everything but `semantic_content`), so a
   `C` issued on the alt screen no longer leaks back.
 
-Findings 21 and 23-31 (S3/S4) remain open in the audit's order, then slice 8.
+- 21 `1d54493` a rows-only resize keeps custom HTS stops; the rebuild is guarded on the
+  column count, exactly as upstream guards it (`Terminal.zig:3766`).
+- 23 `6fdc023` a NULL out-param on the four grid-ref readers validates instead of failing --
+  the headers say "(may be NULL)" and the oracle skips only the write. An out-of-bounds
+  point and a dead ref stay errors, so it is not always-success.
+- 24 `aa2f6fb` the alignment parity assertion read `"alignment"` where the report says
+  `"align"` and silently skipped every struct; now required, not if-let. Deadness proven by
+  mutation both ways.
+- 25 `17b55db` `screen`, `cursor.visible` and `cursor.style` comparisons have unit controls;
+  the audit's mutations M2/M4/M5 now each kill exactly their control.
+- 26 `91cd1f9` the 47/1047/1049 mode split is explicit: 47/1047 never erase and copy the
+  cursor in BOTH directions; a second `1049h` still saves and re-clears; `1049l` on the
+  primary is still a DECRC. Three probes flipped and promoted.
+- 27 `3dbb50f` the spacer head is written through the ordinary cell path -- pen style and
+  cursor semantic -- not the erase blank.
+- 28 `4d6181a` `ROW_DATA_DIRTY` answers from the view's damage (bit 6 of the packed row)
+  instead of returning INVALID_VALUE.
+- 29 `a0420c4` the OSC 133 parser matches upstream's strictness: action letter alone, `L`
+  takes no options, `k=` value exactly one byte.
+- 30 `dbbabe8` all 13 exports document their real caller contract; clippy's
+  missing_safety_doc count went 13 to 0.
+- 31 the docs sweep: README carried 195 tests and stopped at slice 5.5b; both docs now
+  state the wave and the current gate numbers.
+
+The audit backlog is empty. Next: **slice 8, the minimal Swift host**.
 
 Slice 5.6, `[tested]`: **OSC 133 and the visual caret.** The core tracks prompt / input /
 output regions (`crates/core/src/semantic.rs`), and the renderer draws the caret at

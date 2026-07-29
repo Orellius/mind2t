@@ -94,6 +94,13 @@ impl Palette {
         self.colors[usize::from(index)]
     }
 
+    /// Replaces one table entry. Themes override the sixteen system colours this way and
+    /// leave the cube and the grey ramp alone -- programs that ask for palette 196 expect
+    /// xterm's bright red no matter what the theme did to the named sixteen.
+    pub fn set_indexed(&mut self, index: u8, color: Rgba) {
+        self.colors[usize::from(index)] = color;
+    }
+
     fn resolve(&self, color: Color, fallback: Rgba) -> Rgba {
         match color {
             Color::Default => fallback,

@@ -88,6 +88,13 @@ impl<S: Surface> Renderer<S> {
         &self.palette
     }
 
+    /// Replaces the palette wholesale. Callers apply a theme before the first draw (or
+    /// re-apply it after rebuilding the renderer on resize); pixels already painted are
+    /// not repainted, so a mid-life swap shows only on rows drawn after it.
+    pub fn set_palette(&mut self, palette: Palette) {
+        self.palette = palette;
+    }
+
     /// Turns off font-driven mark placement, so every glyph of a cluster stacks at the pen.
     ///
     /// A control, not a feature. `tests/shaping.rs` requires this to put a niqqud somewhere

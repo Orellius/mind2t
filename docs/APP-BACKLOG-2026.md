@@ -50,15 +50,24 @@ Swift reads the TOML. Oracle: a theme file with a distinct background must
 recolor grid AND margin in a window capture; a bad file must fall back loudly.
 *Prereq for S2+ (keybinds live in the settings).*
 
-**S2 — Blocks v1.** Warp's signature, on the OSC 133 rails we already own.
-Frame exposes per-row semantic (`RowSemantic` is already in the snapshot; the
-frame needs to carry it — same pattern as the mode-bits word). Swift draws a
-block gutter: command+output grouped, click selects a block, actions = copy
-command / copy output / rerun command. Requires shell integration (a shipped
-`ruuah-integration.zsh` emitting OSC 133 — ours, trivial, Ghostty ships the
-same). Oracle: corpus already pins the zones; the app half is proven by a
-scripted child emitting two commands and asserting the gutter boundaries in a
-capture. *V2 later: sticky command header, block search, collapse.*
+**S2 — Blocks v1. LANDED 2026-07-29, one compat gap open.** The C surface
+carries per-row OSC 133 classes (`RuuahHostFrame.row_semantics`) and filtered
+row text (`ruuah_host_row_text` — the input filter is what makes copy-command
+return `ls -la` out of `$ ls -la`; both pinned in host_abi with a no-marks
+control). Swift: gutter bars per block in the left margin, click pops copy
+command / copy output / run again; `shell/ruuah-integration.zsh` +
+`shell/zdotdir/.zshenv` bootstrap wired via ZDOTDIR env in the .app. Proven:
+scripted two-command child shows two bars with the boundary at the block seam
+(`docs/images/blocks-gutter-20260729.png`, pixel-scanned), and a PRISTINE zsh
+through the real integration shows the live prompt bar.
+**OPEN — real-config compat:** in Orel's own shell (starship transient prompt
++ iTerm2 shell integration) no rows classify. Suspects, measured 2026-07-29:
+starship's precmd regenerates PROMPT after ours (wipes the B mark);
+iTerm2's integration interleaves `133;C;`/`133;D;0` (marks WITH options) whose
+interplay with our strict parser is unmeasured. Next round: instrument
+(log unparsed OSC 133 forms), measure upstream's exact option tolerance, and
+decide mark precedence. Until then blocks light up only without those
+frameworks. *V2 later: sticky command header, block search, collapse.*
 
 **S3 — Command palette + workflows.** cmd+K palette (Swift, pure UI): actions
 (new session, switch, copy block, theme switch) + **workflows** = parameterized

@@ -55,6 +55,7 @@ EXPECTED=(
   ruuah_host_send
   ruuah_host_paste
   ruuah_host_resize
+  ruuah_host_row_text
   ruuah_host_free
   ruuah_config_load
   ruuah_config_font_size

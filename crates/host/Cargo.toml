@@ -17,5 +17,6 @@ ruuah-vt-core = { path = "../core" }
 ruuah-vt-frame = { path = "../frame" }
 ruuah-vt-pty = { path = "../pty" }
 ruuah-vt-render = { path = "../render" }
+ruuah-vt-snapshot = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }

@@ -923,6 +923,7 @@ dependencies = [
  "ruuah-vt-frame",
  "ruuah-vt-pty",
  "ruuah-vt-render",
+ "ruuah-vt-snapshot",
  "serde",
  "toml",
 ]

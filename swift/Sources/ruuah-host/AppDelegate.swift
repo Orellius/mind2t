@@ -105,6 +105,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             guard let self, self.activeIndex >= 0 else { return }
             self.closeSession(index: self.activeIndex)
         }
+        view.onBlockClick = { [weak self] block, event in
+            self?.showBlockMenu(block, with: event)
+        }
 
         newSession()
         guard !sessions.isEmpty else {
@@ -202,6 +205,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         if let image = session.poll() {
             view.contentLayer.contents = image
             applyBackground(of: session)
+            view.updateGutter(
+                blocks: computeBlocks(session.rowClasses),
+                cellHeightDevice: session.cellHeight)
         }
         if !windowSized && session.cellWidth != 0 {
             windowSized = true
@@ -285,6 +291,76 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             session.close()
         }
         sessions.removeAll()
+    }
+
+    // MARK: blocks (S2)
+
+    /// The clicked block's actions. The menu is built per click -- blocks move as the
+    /// grid scrolls, so caching one would act on stale rows.
+    private func showBlockMenu(_ block: Block, with event: NSEvent) {
+        guard let session = activeSession else { return }
+        let command = session.command(of: block)
+
+        let menu = NSMenu()
+        // Explicit enablement: auto-enablement re-validates through the responder chain
+        // and silently turns the flags below back on.
+        menu.autoenablesItems = false
+        // The command as a disabled header, so the menu names what it acts on.
+        let header = NSMenuItem(
+            title: command.isEmpty ? "Block" : "$ \(command)", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+        menu.addItem(.separator())
+
+        let copyCommand = NSMenuItem(
+            title: "Copy Command", action: #selector(blockCopyCommand(_:)), keyEquivalent: "")
+        let copyOutput = NSMenuItem(
+            title: "Copy Output", action: #selector(blockCopyOutput(_:)), keyEquivalent: "")
+        let rerun = NSMenuItem(
+            title: "Run Again", action: #selector(blockRerun(_:)), keyEquivalent: "")
+        for item in [copyCommand, copyOutput, rerun] {
+            item.target = self
+            item.representedObject = BlockRef(block: block)
+            menu.addItem(item)
+        }
+        copyCommand.isEnabled = !command.isEmpty
+        rerun.isEnabled = !command.isEmpty
+        NSMenu.popUpContextMenu(menu, with: event, for: view)
+    }
+
+    /// NSMenuItem.representedObject wants a class; Block is a value.
+    private final class BlockRef: NSObject {
+        let block: Block
+        init(block: Block) { self.block = block }
+    }
+
+    private func clip(_ text: String) {
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    @objc private func blockCopyCommand(_ sender: NSMenuItem) {
+        guard let reference = sender.representedObject as? BlockRef,
+            let session = activeSession
+        else { return }
+        clip(session.command(of: reference.block))
+    }
+
+    @objc private func blockCopyOutput(_ sender: NSMenuItem) {
+        guard let reference = sender.representedObject as? BlockRef,
+            let session = activeSession
+        else { return }
+        clip(session.output(of: reference.block))
+    }
+
+    @objc private func blockRerun(_ sender: NSMenuItem) {
+        guard let reference = sender.representedObject as? BlockRef,
+            let session = activeSession
+        else { return }
+        let command = session.command(of: reference.block)
+        guard !command.isEmpty else { return }
+        session.send(Array(command.utf8) + [0x0d])
     }
 
     // MARK: SessionListDelegate

@@ -128,6 +128,24 @@ if arguments.contains("--auto-direction") {
 let configFontSize = ruuah_config_font_size(config)
 let baseFontSize: Float = configFontSize > 0 ? configFontSize : 16
 
+// Shell integration (S2): spawned shells inherit this process's environment, so pointing
+// ZDOTDIR at the bundled bootstrap is all the wiring blocks need. zsh-only by nature (the
+// variable means nothing to other shells), .app-only in practice (the bare CLI binary has
+// no resource bundle, and an externally-set ZDOTDIR chain is left alone there).
+if let resources = Bundle.main.resourcePath {
+    let zdotdir = resources + "/shell/zdotdir"
+    let integration = resources + "/shell/ruuah-integration.zsh"
+    if FileManager.default.fileExists(atPath: zdotdir + "/.zshenv"),
+        FileManager.default.fileExists(atPath: integration)
+    {
+        setenv("RUUAH_INTEGRATION", integration, 1)
+        if let original = getenv("ZDOTDIR") {
+            setenv("RUUAH_USER_ZDOTDIR", String(cString: original), 1)
+        }
+        setenv("ZDOTDIR", zdotdir, 1)
+    }
+}
+
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
 let delegate = HostAppDelegate(

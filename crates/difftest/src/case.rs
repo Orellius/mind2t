@@ -40,6 +40,16 @@ pub enum CorpusError {
         declared: usize,
         found: usize,
     },
+
+    #[error(
+        "case '{case}' expects diff but pins no diff_paths; an unpinned diff case stays \
+         green whatever the divergence is -- measure with the print_measured_diff_paths \
+         authoring test"
+    )]
+    UnpinnedDiff { case: String },
+
+    #[error("case '{case}' expects match but carries diff_paths, which can never apply")]
+    PinnedMatch { case: String },
 }
 
 /// What a case is expected to prove.
@@ -101,6 +111,15 @@ pub struct Case {
     /// Why this case exists, in one line. Shown in the report.
     #[serde(default)]
     pub note: String,
+    /// The exact set of difference paths an `expect = "diff"` case is asserted to produce.
+    ///
+    /// Without this a diff case pins nothing: it stays green whether the divergence is the
+    /// one its note describes or something else entirely, and a fix that lands wrong reads
+    /// as "still the known divergence" (finding 18 -- and finding 11 walked into exactly
+    /// that trap: difftest exited 0 while the fix was wrong). The loader refuses a diff
+    /// case without this field and a match case with it.
+    #[serde(default)]
+    pub diff_paths: Option<Vec<String>>,
 }
 
 fn default_cols() -> u16 {
@@ -148,6 +167,26 @@ pub fn load(path: &str) -> Result<Vec<Case>, CorpusError> {
             declared: corpus.declared_cases,
             found: corpus.cases.len(),
         });
+    }
+    for case in &corpus.cases {
+        match (case.expect, &case.diff_paths) {
+            (Expectation::Diff, None) => {
+                return Err(CorpusError::UnpinnedDiff {
+                    case: case.name.clone(),
+                });
+            }
+            (Expectation::Diff, Some(paths)) if paths.is_empty() => {
+                return Err(CorpusError::UnpinnedDiff {
+                    case: case.name.clone(),
+                });
+            }
+            (Expectation::Match, Some(_)) => {
+                return Err(CorpusError::PinnedMatch {
+                    case: case.name.clone(),
+                });
+            }
+            _ => {}
+        }
     }
     Ok(corpus.cases)
 }
@@ -202,6 +241,35 @@ mod tests {
         assert!(matches!(
             load(&path).expect_err("an undeclared case must not load"),
             CorpusError::CountMismatch { declared: 2, found: 3, .. }
+        ));
+    }
+
+    #[test]
+    fn a_diff_case_without_pinned_paths_is_refused() {
+        let path = std::env::temp_dir().join("ruuah-vt-unpinned-diff.toml");
+        std::fs::write(
+            &path,
+            "declared_cases = 1\n\n[[case]]\nname = \"d\"\nexpect = \"diff\"\nbytes = \"x\"\n",
+        )
+        .expect("write the fixture");
+        assert!(matches!(
+            load(&path.to_string_lossy()).expect_err("an unpinned diff case must not load"),
+            CorpusError::UnpinnedDiff { .. }
+        ));
+    }
+
+    #[test]
+    fn a_match_case_with_pinned_paths_is_refused() {
+        let path = std::env::temp_dir().join("ruuah-vt-pinned-match.toml");
+        std::fs::write(
+            &path,
+            "declared_cases = 1\n\n[[case]]\nname = \"m\"\nexpect = \"match\"\nbytes = \"x\"\n\
+             diff_paths = [\"cursor.x\"]\n",
+        )
+        .expect("write the fixture");
+        assert!(matches!(
+            load(&path.to_string_lossy()).expect_err("a pinned match case must not load"),
+            CorpusError::PinnedMatch { .. }
         ));
     }
 

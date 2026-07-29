@@ -174,3 +174,33 @@ fn both_sides_receive_the_identical_byte_stream() {
         "a changed stream must change the candidate grid too"
     );
 }
+
+/// Authoring tool, not a gate: prints the measured `diff_paths` line for every diff case,
+/// ready to paste into `cases.toml`. Run it when the oracle moves and a pinned set needs
+/// re-measuring:
+///
+///     cargo test -p ruuah-vt-difftest --test corpus -- --ignored print_measured --no-capture
+#[test]
+#[ignore = "authoring tool; prints rather than asserts"]
+fn print_measured_diff_paths() {
+    let cases = load(DEFAULT_CORPUS).expect("corpus");
+    for case in &cases {
+        if case.expect != Expectation::Diff {
+            continue;
+        }
+        let outcome = run(case).expect("oracle");
+        let mut paths: Vec<&str> = outcome
+            .differences
+            .iter()
+            .map(|d| d.path.as_str())
+            .collect();
+        paths.sort_unstable();
+        paths.dedup();
+        let list = paths
+            .iter()
+            .map(|p| format!("\"{p}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("# {}\ndiff_paths = [{list}]", case.name);
+    }
+}

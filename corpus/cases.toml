@@ -176,36 +176,42 @@ note = "Verified 2026-07-28: DEC mode 2027 (grapheme cluster) is off by default,
 [[case]]
 name = "decaln-alignment-test"
 expect = "diff"
+diff_paths = ["cell[0,0].text", "cell[0,10].text", "cell[0,11].text", "cell[0,12].text", "cell[0,13].text", "cell[0,14].text", "cell[0,15].text", "cell[0,16].text", "cell[0,17].text", "cell[0,18].text", "cell[0,19].text", "cell[0,1].text", "cell[0,2].text", "cell[0,3].text", "cell[0,4].text", "cell[0,5].text", "cell[0,6].text", "cell[0,7].text", "cell[0,8].text", "cell[0,9].text", "cell[1,0].text", "cell[1,10].text", "cell[1,11].text", "cell[1,12].text", "cell[1,13].text", "cell[1,14].text", "cell[1,15].text", "cell[1,16].text", "cell[1,17].text", "cell[1,18].text", "cell[1,19].text", "cell[1,1].text", "cell[1,2].text", "cell[1,3].text", "cell[1,4].text", "cell[1,5].text", "cell[1,6].text", "cell[1,7].text", "cell[1,8].text", "cell[1,9].text", "cell[2,0].text", "cell[2,10].text", "cell[2,11].text", "cell[2,12].text", "cell[2,13].text", "cell[2,14].text", "cell[2,15].text", "cell[2,16].text", "cell[2,17].text", "cell[2,18].text", "cell[2,19].text", "cell[2,1].text", "cell[2,2].text", "cell[2,3].text", "cell[2,4].text", "cell[2,5].text", "cell[2,6].text", "cell[2,7].text", "cell[2,8].text", "cell[2,9].text", "cell[3,0].text", "cell[3,10].text", "cell[3,11].text", "cell[3,12].text", "cell[3,13].text", "cell[3,14].text", "cell[3,15].text", "cell[3,16].text", "cell[3,17].text", "cell[3,18].text", "cell[3,19].text", "cell[3,1].text", "cell[3,2].text", "cell[3,3].text", "cell[3,4].text", "cell[3,5].text", "cell[3,6].text", "cell[3,7].text", "cell[3,8].text", "cell[3,9].text", "cell[4,0].text", "cell[4,10].text", "cell[4,11].text", "cell[4,12].text", "cell[4,13].text", "cell[4,14].text", "cell[4,15].text", "cell[4,16].text", "cell[4,17].text", "cell[4,18].text", "cell[4,19].text", "cell[4,1].text", "cell[4,2].text", "cell[4,3].text", "cell[4,4].text", "cell[4,5].text", "cell[4,6].text", "cell[4,7].text", "cell[4,8].text", "cell[4,9].text"]
 bytes = "\u001B#8"
 note = "DECALN fills the screen with E. Sequences carrying a # intermediate are not dispatched."
 
 [[case]]
 name = "selective-erase"
 expect = "diff"
+diff_paths = ["cell[0,0].text", "cell[0,1].text", "cell[0,2].text", "cell[0,3].text", "cell[0,4].text", "cell[0,5].text"]
 bytes = "abcdef\u001B[?1K"
 note = "DECSED/DECSEL respect the protection attribute. Private erase variants are not dispatched."
 
 [[case]]
 name = "repeat-character"
 expect = "diff"
+diff_paths = ["cell[0,1].text", "cell[0,2].text", "cell[0,3].text", "cell[0,4].text", "cursor.x"]
 bytes = "x\u001B[4b"
 note = "REP repeats the last graphic character. Not implemented."
 
 [[case]]
 name = "insert-replace-mode"
 expect = "diff"
+diff_paths = ["cell[0,2].text", "cell[0,3].text", "cell[0,4].text", "cell[0,5].text", "cell[0,6].text", "cell[0,7].text"]
 bytes = "abcdef\u001B[1G\u001B[4hXY"
 note = "IRM makes printing insert rather than overwrite. Not implemented."
 
 [[case]]
 name = "grapheme-cluster-mode-2027"
 expect = "diff"
+diff_paths = ["cell[0,0].text", "cell[0,2].text", "cell[0,2].wide", "cell[0,3].wide", "cell[0,4].text", "cell[0,4].wide", "cell[0,5].wide", "cell[0,6].text", "cursor.x"]
 bytes = "\u001B[?2027h\U0001F468\u200D\U0001F469\u200D\U0001F467!"
 note = "With mode 2027 on, a ZWJ sequence is one cluster in one cell. The zero-width heuristic cannot do this; it needs real UAX #29 incremental segmentation."
 
 [[case]]
 name = "reverse-wraparound"
 expect = "diff"
+diff_paths = ["cursor.x", "cursor.y"]
 cols = 6
 rows = 3
 bytes = "\u001B[?45habcdefgh\u001B[1G\u0008"
@@ -551,6 +557,7 @@ note = "Its row did not survive the reflow, so the saved cursor falls back to th
 [[case]]
 name = "reflow-saved-cursor-in-trailing-blanks"
 expect = "diff"
+diff_paths = ["cell[1,2].text", "cell[1,4].text", "cursor.pending_wrap", "cursor.x"]
 cols = 10
 rows = 3
 bytes = "ab\r\ncdef\u001B7\u001B[3;1Hz"
@@ -877,6 +884,7 @@ note = "Two source rows re-split into three. This is the case the simple last-so
 [[case]]
 name = "osc133-trailing-garbage-invalidates-the-command"
 expect = "diff"
+diff_paths = ["cell[0,2].semantic", "cell[0,3].semantic"]
 cols = 12
 rows = 3
 bytes = "\u001B]133;A\u0007$ \u001B]133;Cextra\u0007ok"
@@ -885,6 +893,7 @@ note = "Upstream's OSC 133 parser requires the byte after the action letter to b
 [[case]]
 name = "osc133-prompt-kind-must-be-one-byte"
 expect = "diff"
+diff_paths = ["row[0].semantic_prompt"]
 cols = 12
 rows = 3
 bytes = "\u001B]133;A;k=cc\u0007$ "
@@ -893,6 +902,7 @@ note = "readOption(.prompt_kind) takes the value only when its length is 1 (sema
 [[case]]
 name = "osc133-fresh-line-takes-no-options"
 expect = "diff"
+diff_paths = ["cell[0,2].text", "cell[1,0].text", "cursor.x", "cursor.y"]
 cols = 12
 rows = 3
 bytes = "xy\u001B]133;L;1\u0007Z"
@@ -901,6 +911,7 @@ note = "L is the one action upstream rejects outright when anything follows it (
 [[case]]
 name = "osc133-redraw-opt-in-clears-the-prompt-on-resize"
 expect = "diff"
+diff_paths = ["cell[1,0].semantic", "cell[1,0].text", "cell[1,1].semantic", "cell[1,1].text", "cell[1,2].semantic", "cell[1,2].text", "cell[1,3].semantic", "cell[1,3].text"]
 cols = 20
 rows = 3
 resize = { cols = 8, rows = 3 }
@@ -910,6 +921,7 @@ note = "The C ABI builds terminals with shell_redraws_prompt = .false (c/termina
 [[case]]
 name = "osc133-state-does-not-follow-back-out-of-the-alt-screen"
 expect = "diff"
+diff_paths = ["cell[0,2].semantic", "cell[0,3].semantic"]
 cols = 12
 rows = 2
 after = "ls"
@@ -919,6 +931,7 @@ note = "semantic_content lives on Screen.cursor upstream. 1049-enter copies the 
 [[case]]
 name = "osc133-spacer-head-carries-the-cursor-semantic"
 expect = "diff"
+diff_paths = ["cell[0,3].semantic"]
 cols = 4
 rows = 3
 bytes = "\u001B]133;A\u0007$ \u001B]133;B\u0007a\u4E16"
@@ -927,6 +940,7 @@ note = "A wide cell that cannot fit leaves a spacer head, and upstream writes it
 [[case]]
 name = "spacer-head-carries-the-pen-not-the-erase-blank"
 expect = "diff"
+diff_paths = ["cell[0,3].style"]
 cols = 4
 rows = 2
 bytes = "\u001B[1;31mabc\u4E16"
@@ -971,6 +985,7 @@ note = "Terminal.resize passes reflow = modes.get(.wraparound) (Terminal.zig:378
 [[case]]
 name = "reflow-blank-prompt-row-is-content"
 expect = "diff"
+diff_paths = ["row[0].semantic_prompt"]
 cols = 10
 rows = 4
 resize = { cols = 5, rows = 4 }
@@ -980,6 +995,7 @@ note = "PageList.zig:1573 keeps a blank row alive when it carries a semantic mar
 [[case]]
 name = "reflow-saved-cursor-resolves-its-pending-wrap"
 expect = "diff"
+diff_paths = ["cell[0,10].text", "cell[1,0].text", "cursor.x", "cursor.y"]
 cols = 10
 rows = 3
 resize = { cols = 20, rows = 3 }
@@ -990,6 +1006,7 @@ note = "Screen.zig:2094 resolves a saved cursor's deferred wrap after the reflow
 [[case]]
 name = "resize-rows-only-keeps-custom-tab-stops"
 expect = "diff"
+diff_paths = ["cell[0,3].text", "cell[0,8].text", "cursor.x"]
 cols = 20
 rows = 4
 resize = { cols = 20, rows = 2 }
@@ -1048,6 +1065,7 @@ note = "restoreCursor falls back to a synthetic default cursor when nothing was 
 [[case]]
 name = "decrc-restores-origin-mode"
 expect = "diff"
+diff_paths = ["cell[0,0].text", "cell[1,0].text", "cursor.y"]
 cols = 10
 rows = 6
 bytes = "\u001B[2;4r\u001B[?6h\u001B7\u001B[?6l\u001B8\u001B[1;1HX"
@@ -1056,6 +1074,7 @@ note = "saveCursor stores the origin mode (Terminal.zig:1856) and restoreCursor 
 [[case]]
 name = "alt-screen-47-neither-clears-nor-strands-the-cursor"
 expect = "diff"
+diff_paths = ["cell[0,0].text", "cell[0,1].text", "cell[0,2].text", "cell[0,3].text", "cursor.x"]
 cols = 10
 rows = 3
 after = "Z"
@@ -1065,6 +1084,7 @@ note = "switchScreenMode never erases for 47, and 47 and 1047 copy the cursor in
 [[case]]
 name = "alt-screen-1049h-twice-clears-again"
 expect = "diff"
+diff_paths = ["cell[0,0].text", "cell[0,1].text", "cell[0,2].text"]
 cols = 10
 rows = 3
 after = "Z"
@@ -1074,6 +1094,7 @@ note = "1049 saves the cursor unconditionally on enable and its eraseDisplay sit
 [[case]]
 name = "alt-screen-1049l-on-the-primary-still-restores"
 expect = "diff"
+diff_paths = ["cell[0,0].text", "cell[1,4].text", "cursor.x", "cursor.y"]
 cols = 10
 rows = 3
 after = "X"
@@ -1083,6 +1104,7 @@ note = "The disable arm calls restoreCursor whether or not the screen changed (T
 [[case]]
 name = "scroll-region-is-shared-with-the-alternate-screen"
 expect = "diff"
+diff_paths = ["cell[1,0].text", "cell[2,0].text", "cell[3,0].text", "cursor.y"]
 cols = 10
 rows = 5
 after = "a\r\nb\r\nc\r\nd"

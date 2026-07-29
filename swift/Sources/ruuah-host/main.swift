@@ -84,11 +84,12 @@ if let index = arguments.firstIndex(of: "--command"), index + 1 < arguments.coun
     command = arguments[index + 1]
 }
 
-// When the binary runs from an assembled .app (scripts/build-app.sh), the bundle carries
-// the RUUAH splash and the app is Hebrew-first: auto base direction unless --ltr. The
-// bare CLI binary has no such resource and keeps the flag-driven defaults unchanged.
+// When the binary runs from an assembled .app (scripts/build-app.sh), the app is
+// Hebrew-first: auto base direction unless --ltr. The bare CLI binary keeps the
+// flag-driven defaults unchanged. A window opens straight into the login shell --
+// no splash, like Ghostty; the bundled banner remains available via --splash.
 let bundledBanner = Bundle.main.path(forResource: "banner", ofType: "sh")
-if command == nil, let bundledBanner {
+if command == nil, arguments.contains("--splash"), let bundledBanner {
     command = "sh '\(bundledBanner)'"
 }
 let autoDirection =

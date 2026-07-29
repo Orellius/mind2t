@@ -13,6 +13,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 "$ROOT/scripts/build-host.sh" release
 
 cd "$ROOT/swift"
+# SwiftPM does not track the external Rust archive as a link input: a Rust-only change
+# rebuilds libruuah-vt-host.a and leaves the previously linked binary in place (caught
+# 2026-07-29 -- the braille font fix built, the shipped app didn't have it). Deleting
+# the product forces the relink; everything else stays incremental.
+rm -f .build/release/ruuah-host
 swift build -c release
 
 if [ "${1:-}" = "--no-smoke" ]; then

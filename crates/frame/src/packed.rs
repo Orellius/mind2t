@@ -29,6 +29,9 @@ pub struct PackedCell {
 const WIDE_SHIFT: u32 = 16;
 const SEMANTIC_SHIFT: u32 = 18;
 const TRUNCATED_BIT: u64 = 1 << 24;
+/// OSC 8: which slot of the frame's link table this cell points at, 1-based; 0 = none.
+/// Eight spare attribute bits -- the table itself crosses in its own region.
+const LINK_SHIFT: u32 = 32;
 
 impl PackedCell {
     pub const BLANK: PackedCell = PackedCell {
@@ -64,6 +67,17 @@ impl PackedCell {
             ],
             attrs,
         }
+    }
+
+    /// Points this cell at a link-table slot (1-based; 0 clears nothing -- BLANK is 0).
+    pub fn with_link(mut self, link: u8) -> PackedCell {
+        self.attrs = (self.attrs & !(0xFF << LINK_SHIFT)) | (u64::from(link) << LINK_SHIFT);
+        self
+    }
+
+    /// The frame link-table slot this cell points at, 1-based; 0 = no link.
+    pub fn link(self) -> u8 {
+        (self.attrs >> LINK_SHIFT) as u8
     }
 
     pub fn style_id(self) -> u16 {

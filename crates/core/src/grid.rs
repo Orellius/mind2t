@@ -42,6 +42,12 @@ pub struct Grid {
     /// Continuation codepoints only; the first codepoint of a cluster lives in the cell.
     /// Keyed by flat cell index, and only present when the cell's `has_grapheme` bit is set.
     graphemes: HashMap<usize, Vec<char>>,
+    /// OSC 8: which link-table entry a cell belongs to, keyed by flat index like the
+    /// grapheme map and moved by the same relocation. The table itself lives on the
+    /// terminal state -- the grid only knows the id. Active grid only: rows that scroll
+    /// into history drop their links (documented v1 boundary; the click target is the
+    /// visible screen).
+    links: HashMap<usize, u16>,
     styles: StyleTable,
 }
 
@@ -54,6 +60,7 @@ impl Grid {
             row_meta: vec![RowMeta::default(); usize::from(rows)],
             dirty: vec![false; usize::from(rows)],
             graphemes: HashMap::new(),
+            links: HashMap::new(),
             styles: StyleTable::new(),
         }
     }
@@ -102,6 +109,9 @@ impl Grid {
         if self.cells[index].flags.has_grapheme() {
             self.graphemes.remove(&index);
         }
+        // Unconditional, unlike the grapheme removal: links have no flag bit, and a
+        // remove on an absent key is one hash -- print is not hot enough to earn a bit.
+        self.links.remove(&index);
         self.cells[index] = cell;
         if self.cols > 0 {
             let y = index / usize::from(self.cols);
@@ -109,6 +119,19 @@ impl Grid {
                 *flag = true;
             }
         }
+    }
+
+    /// Stamps a cell as belonging to a link-table entry. Call AFTER `write` -- write
+    /// clears the stamp along with the old cell.
+    pub fn set_link(&mut self, index: usize, link: u16) {
+        if index < self.cells.len() {
+            self.links.insert(index, link);
+        }
+    }
+
+    /// The link-table entry this cell belongs to, if any.
+    pub fn link_id(&self, index: usize) -> Option<u16> {
+        self.links.get(&index).copied()
     }
 
     /// Appends a zero-width codepoint to an existing cell's cluster.
@@ -321,6 +344,10 @@ impl Grid {
         self.graphemes.remove(&target);
         if let Some(continuations) = self.graphemes.remove(&source) {
             self.graphemes.insert(target, continuations);
+        }
+        self.links.remove(&target);
+        if let Some(link) = self.links.remove(&source) {
+            self.links.insert(target, link);
         }
         self.cells[target] = self.cells[source];
     }

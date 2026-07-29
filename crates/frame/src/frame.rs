@@ -117,6 +117,8 @@ pub struct Frame {
     pub(crate) row_generation: Vec<u64>,
     pub(crate) row_flags: Vec<(bool, bool)>,
     pub(crate) styles: Vec<[u64; 2]>,
+    /// OSC 8 URIs for this frame, in slot order; cells point at slots 1-based.
+    pub(crate) links: Vec<String>,
 }
 
 impl Frame {
@@ -139,6 +141,15 @@ impl Frame {
         self.cells.resize(cells, PackedCell::BLANK);
         self.row_generation.resize(usize::from(rows), 0);
         self.row_flags.resize(usize::from(rows), (false, false));
+    }
+
+    /// The OSC 8 URI under a cell, if the cell was printed inside a hyperlink.
+    pub fn link(&self, x: u16, y: u16) -> Option<&str> {
+        let id = self.cell(x, y).link();
+        if id == 0 {
+            return None;
+        }
+        self.links.get(usize::from(id) - 1).map(String::as_str)
     }
 
     pub fn cell(&self, x: u16, y: u16) -> PackedCell {
@@ -348,6 +359,7 @@ mod tests {
             row_generation: vec![1],
             row_flags: vec![(false, false)],
             styles,
+            links: Vec::new(),
         }
     }
 

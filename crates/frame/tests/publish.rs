@@ -208,3 +208,28 @@ fn a_soft_wrap_flag_reaches_the_frame() {
     assert!(frame.wraps(0), "row 0 wrapped into row 1");
     assert!(!frame.wraps(1));
 }
+
+/// OSC 8 crosses the boundary: the URI a cell was printed under comes back from the
+/// read frame, cells outside the link come back bare, and the frame's table is dense
+/// (one slot for one link, however many cells wear it).
+#[test]
+fn hyperlinks_cross_the_channel_with_their_cells() {
+    let mut terminal = Terminal::new(12, 1);
+    terminal.write(b"a\x1b]8;;https://x.il/p;q=1\x07bc\x1b]8;;\x07d");
+
+    let (writer, reader) = channel(12, 1);
+    let mut publisher = Publisher::new(writer);
+    publisher.publish(&mut terminal).expect("fits");
+    let mut frame = Frame::new();
+    reader.read_into(&mut frame);
+
+    assert_eq!(frame.link(0, 0), None, "before the link");
+    assert_eq!(frame.link(1, 0), Some("https://x.il/p;q=1"), "inside, semicolons intact");
+    assert_eq!(frame.link(2, 0), Some("https://x.il/p;q=1"));
+    assert_eq!(frame.link(3, 0), None, "after the close");
+    assert_eq!(
+        frame.cell(1, 0).link(),
+        frame.cell(2, 0).link(),
+        "two cells, one slot"
+    );
+}

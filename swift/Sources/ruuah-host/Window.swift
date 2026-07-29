@@ -25,6 +25,9 @@ final class TerminalView: NSView {
     var onZoomReset: (() -> Void)?
     /// A click on a block's gutter bar. The receiver owns the menu and the actions.
     var onBlockClick: ((Block, NSEvent) -> Void)?
+    /// cmd+click anywhere on the grid; the receiver resolves the cell and its OSC 8
+    /// link, because only it knows the active session's cell metrics.
+    var onCommandClick: ((NSPoint) -> Void)?
 
     /// The gutter (S2): one thin bar per block in the left margin, drawn from the
     /// shell's OSC 133 marks. Empty without shell integration -- the margin stays bare
@@ -90,6 +93,10 @@ final class TerminalView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        if event.modifierFlags.contains(.command) {
+            onCommandClick?(point)
+            return
+        }
         guard let block = block(at: point) else {
             super.mouseDown(with: event)
             return

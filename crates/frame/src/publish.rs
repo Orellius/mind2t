@@ -47,6 +47,22 @@ impl Publisher {
         let bracketed_paste = terminal.bracketed_paste();
         let cluster = &mut self.cluster;
 
+        // OSC 8: the core's link ids are table-wide; the frame carries only the links
+        // VISIBLE this publish, densely remapped so 64 slots is a per-frame budget and
+        // not a per-session one. Links beyond the budget publish as unlinked cells for
+        // this frame -- a bounded, documented degradation, never a fault.
+        let mut link_slots: Vec<u16> = Vec::new();
+        fn frame_link(slots: &mut Vec<u16>, core_id: u16) -> u8 {
+            if let Some(slot) = slots.iter().position(|&id| id == core_id) {
+                return (slot + 1) as u8;
+            }
+            if slots.len() >= crate::seqlock::LINK_SLOTS {
+                return 0;
+            }
+            slots.push(core_id);
+            slots.len() as u8
+        }
+
         let generation = self.writer.publish(cols, rows, |frame| {
             frame.styles(grid.styles().as_slice().iter().map(pack_style));
 
@@ -55,11 +71,16 @@ impl Publisher {
                     let index = grid.index(x, y);
                     let cell = grid.cell(index);
                     grid.cluster_into(index, cluster);
-                    frame.cell(
-                        x,
-                        y,
-                        PackedCell::new(cluster, cell.style_id, cell.wide.into(), cell.flags.semantic()),
+                    let mut packed = PackedCell::new(
+                        cluster,
+                        cell.style_id,
+                        cell.wide.into(),
+                        cell.flags.semantic(),
                     );
+                    if let Some(core_id) = grid.link_id(index) {
+                        packed = packed.with_link(frame_link(&mut link_slots, core_id));
+                    }
+                    frame.cell(x, y, packed);
                 }
 
                 let meta = grid.row_meta(y);
@@ -86,6 +107,14 @@ impl Publisher {
                 cursor.pending_wrap,
                 cursor.visible,
                 pack_style(&cursor.style),
+            );
+
+            frame.links(
+                link_slots
+                    .iter()
+                    .map(|&id| terminal.link_uri(id).unwrap_or(""))
+                    .collect::<Vec<_>>()
+                    .into_iter(),
             );
         })?;
 

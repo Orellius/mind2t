@@ -110,6 +110,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         view.onBlockClick = { [weak self] block, event in
             self?.showBlockMenu(block, with: event)
         }
+        view.onCommandClick = { [weak self] point in self?.openLink(at: point) }
         view.onZoomIn = { [weak self] in self?.zoom(by: 1.1) }
         view.onZoomOut = { [weak self] in self?.zoom(by: 1 / 1.1) }
         view.onZoomReset = { [weak self] in self?.zoom(to: 1.0) }
@@ -280,6 +281,21 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             width: CGFloat(session.cellWidth) / scale,
             height: CGFloat(session.cellHeight) / scale)
         split.setPosition(SessionListController.width, ofDividerAt: 0)
+    }
+
+    /// cmd+click: resolve the cell under the point and open its OSC 8 link, if any.
+    private func openLink(at point: NSPoint) {
+        guard let session = activeSession, session.cellWidth > 0 else { return }
+        let scale = window.backingScaleFactor
+        let x = (point.x - TerminalView.padding) * scale
+        // AppKit grows upward; grid rows grow downward from the top padding edge.
+        let yTop = (view.bounds.height - point.y - TerminalView.padding) * scale
+        guard x >= 0, yTop >= 0 else { return }
+        let col = UInt16(clamping: Int(x) / session.cellWidth)
+        let row = UInt16(clamping: Int(yTop) / session.cellHeight)
+        guard let uri = session.linkAt(col: col, row: row), let url = URL(string: uri)
+        else { return }
+        NSWorkspace.shared.open(url)
     }
 
     // MARK: zoom

@@ -13,4 +13,4 @@
 
 pub mod host;
 
-pub use host::{Geometry, Host, Options, SpawnError};
+pub use host::{Geometry, Host, Options, ResizeError, SpawnError};

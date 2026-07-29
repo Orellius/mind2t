@@ -79,6 +79,25 @@ pub enum SpawnError {
     Slave(#[source] Errno),
     #[error("spawning the child failed: {0}")]
     Child(#[source] io::Error),
+    #[error("initial size {size:?} exceeds the frame channel's capacity {capacity:?}")]
+    Capacity { size: Geometry, capacity: Geometry },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ResizeError {
+    #[error("{requested:?} exceeds the frame channel's capacity {capacity:?}")]
+    ExceedsCapacity {
+        requested: Geometry,
+        capacity: Geometry,
+    },
+    #[error("resizing the pty failed: {0}")]
+    Pty(#[source] Errno),
+}
+
+impl Geometry {
+    fn fits(self, capacity: Geometry) -> bool {
+        self.cols <= capacity.cols && self.rows <= capacity.rows
+    }
 }
 
 /// A running child on a pseudoterminal, publishing frames as it produces output.
@@ -96,6 +115,8 @@ pub struct Host {
     stop: Arc<AtomicBool>,
     /// A geometry the pump has not applied to the terminal yet. Zero means none.
     pending: Arc<AtomicU64>,
+    /// The frame channel's fixed geometry ceiling; `resize` refuses anything past it.
+    capacity: Geometry,
 }
 
 /// Sets a pty's window size, which is what raises SIGWINCH in the child.
@@ -116,6 +137,14 @@ impl Host {
         mut command: Command,
         options: Options,
     ) -> Result<(Host, FrameReader), SpawnError> {
+        // `Options::new` cannot produce this, but the fields are public. Gating here is what
+        // lets the pump treat a failed publish as a bug rather than a swallowed possibility.
+        if !options.size.fits(options.capacity) {
+            return Err(SpawnError::Capacity {
+                size: options.size,
+                capacity: options.capacity,
+            });
+        }
         let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY).map_err(SpawnError::Pty)?;
         grantpt(&master).map_err(SpawnError::Pty)?;
         unlockpt(&master).map_err(SpawnError::Pty)?;
@@ -182,6 +211,7 @@ impl Host {
                 pump: Some(pump),
                 stop,
                 pending,
+                capacity: options.capacity,
             },
             reader,
         ))
@@ -204,8 +234,18 @@ impl Host {
     /// Resizes the pty, which is what raises SIGWINCH in the child.
     ///
     /// The terminal's own geometry follows on the pump thread, since that is where it lives.
-    pub fn resize(&self, size: Geometry) -> Result<(), Errno> {
-        set_winsize(&self.pts, size)?;
+    /// A geometry past the channel's capacity is refused BEFORE the pty sees it -- the child
+    /// never learns of a size no frame could carry, the renderer's frame stays valid, and the
+    /// caller gets the report `Options` promises instead of a permanently frozen display
+    /// (finding 16: three publishes failing into `let _ =`).
+    pub fn resize(&self, size: Geometry) -> Result<(), ResizeError> {
+        if !size.fits(self.capacity) {
+            return Err(ResizeError::ExceedsCapacity {
+                requested: size,
+                capacity: self.capacity,
+            });
+        }
+        set_winsize(&self.pts, size).map_err(ResizeError::Pty)?;
         self.pending.store(
             u64::from(size.cols) | (u64::from(size.rows) << 16) | (1 << 32),
             Ordering::Relaxed,
@@ -258,15 +298,20 @@ fn pump(
         Terminal::with_scrollback(options.size.cols, options.size.rows, options.scrollback);
     let mut buffer = vec![0u8; 64 * 1024];
 
+    // Every geometry the terminal can wear is gated against the channel's capacity at spawn
+    // and at resize, so a failed publish is a bug in that gating -- swallowing it here is how
+    // finding 16 froze the display permanently. The expect makes the bug loud instead.
+    const GATED: &str = "geometry is gated at spawn and resize, so every frame fits the channel";
+
     // The child may have been given a geometry it has not printed anything for yet; publish
     // once so a renderer attaching immediately has a frame rather than nothing.
-    let _ = publisher.publish(&mut terminal);
+    publisher.publish(&mut terminal).expect(GATED);
 
     while !stop.load(Ordering::Relaxed) {
         let requested = pending.swap(0, Ordering::Relaxed);
         if requested & (1 << 32) != 0 {
             terminal.resize(requested as u16, (requested >> 16) as u16);
-            let _ = publisher.publish(&mut terminal);
+            publisher.publish(&mut terminal).expect(GATED);
         }
 
         let mut fds = [PollFd::new(&*master, PollFlags::IN)];
@@ -283,7 +328,7 @@ fn pump(
             Ok(0) | Err(Errno::IO) => break,
             Ok(read) => {
                 terminal.write(&buffer[..read]);
-                let _ = publisher.publish(&mut terminal);
+                publisher.publish(&mut terminal).expect(GATED);
             }
             Err(Errno::INTR) | Err(Errno::AGAIN) => continue,
             Err(_) => break,

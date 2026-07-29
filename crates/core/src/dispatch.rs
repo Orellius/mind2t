@@ -43,6 +43,7 @@ impl State {
                 }
             }
             1049 => self.switch_screen(on, AltMode::M1049),
+            2004 => self.bracketed_paste = on,
             _ => {}
         }
     }

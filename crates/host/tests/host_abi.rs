@@ -22,8 +22,8 @@ use ruuah_vt_core::Terminal;
 use ruuah_vt_frame::{BaseDirection, Frame, Publisher, channel};
 use ruuah_vt_host::{
     DEFAULT_FONT_SIZE, RuuahHost, RuuahHostFrame, RuuahHostOptions, RuuahHostResult,
-    ruuah_host_free, ruuah_host_poll, ruuah_host_poll_skipping_row_for_testing, ruuah_host_send,
-    ruuah_host_spawn,
+    ruuah_host_free, ruuah_host_paste, ruuah_host_poll, ruuah_host_poll_skipping_row_for_testing,
+    ruuah_host_send, ruuah_host_spawn,
 };
 use ruuah_vt_render::{FontStack, Renderer};
 
@@ -348,4 +348,115 @@ fn auto_direction_reorders_a_hebrew_row_through_the_c_boundary() {
         matched,
         "a host spawned with auto_direction never produced the Auto-base layout"
     );
+}
+
+/// Waits until the host's polled pixels byte-match `want`, or the patience runs out.
+fn poll_until_pixels(host: *mut RuuahHost, want: &[u8]) -> bool {
+    let deadline = Instant::now() + PATIENCE;
+    while Instant::now() < deadline {
+        let mut polled = RuuahHostFrame {
+            pixels: ptr::null(),
+            width: 0,
+            height: 0,
+            generation: 0,
+            drew: false,
+            child_exited: false,
+        };
+        assert_eq!(
+            unsafe { ruuah_host_poll(host, &mut polled) },
+            RuuahHostResult::Success
+        );
+        if !polled.pixels.is_null() {
+            let len = polled.width as usize * polled.height as usize * 4;
+            let got = unsafe { std::slice::from_raw_parts(polled.pixels, len) };
+            if got == want {
+                return true;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    false
+}
+
+/// The paste seam under bracketed paste, end to end. The child enables mode 2004 and
+/// prints READY; polling until READY is visible guarantees a frame carrying the mode bit
+/// was polled (the mode is set in the same write). The paste then arrives at the pty
+/// wrapped in ESC[200~ / ESC[201~, and the proof needs no cooperating child at all: the
+/// pty's default ECHOCTL renders the pasted ESC as the two printables `^[`, so the
+/// fenceposts come back as visible grid text. A paste that ignored the mode would echo
+/// bare `hi` and match nothing here -- the control below pins the opposite direction.
+#[test]
+fn a_paste_is_fenced_when_the_child_enabled_2004() {
+    let enable_2004 = b"\x1b[?2004hREADY\r\n";
+    let (ready, ..) = reference_pixels_for(enable_2004, BaseDirection::LeftToRight);
+    let after_paste = b"\x1b[?2004hREADY\r\n^[[200~hi^[[201~";
+    let (want, ..) = reference_pixels_for(after_paste, BaseDirection::LeftToRight);
+
+    let command = CString::new("printf '\\033[?2004hREADY\\n'; exec cat").expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+
+    let saw_ready = poll_until_pixels(host, &ready);
+    if !saw_ready {
+        unsafe { ruuah_host_free(host) };
+        panic!("the child's READY line never appeared, so the mode bit was never polled");
+    }
+
+    let paste = b"hi";
+    assert_eq!(
+        unsafe { ruuah_host_paste(host, paste.as_ptr(), paste.len()) },
+        RuuahHostResult::Success
+    );
+    let matched = poll_until_pixels(host, &want);
+    unsafe { ruuah_host_free(host) };
+    assert!(matched, "the fenced paste never echoed back as pixels");
+}
+
+/// The control for the test above: without mode 2004 the same paste must arrive bare.
+/// A paste path that fences unconditionally echoes `^[[200~hi^[[201~` here and never
+/// matches; together the pair proves the fence is governed by the mode rather than
+/// hardcoded in either direction.
+#[test]
+fn a_paste_is_bare_when_the_child_did_not_enable_2004() {
+    let (ready, ..) = reference_pixels_for(b"READY\r\n", BaseDirection::LeftToRight);
+    let (want, ..) = reference_pixels_for(b"READY\r\nhi", BaseDirection::LeftToRight);
+
+    let command = CString::new("printf 'READY\\n'; exec cat").expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+
+    let saw_ready = poll_until_pixels(host, &ready);
+    if !saw_ready {
+        unsafe { ruuah_host_free(host) };
+        panic!("the child's READY line never appeared");
+    }
+
+    let paste = b"hi";
+    assert_eq!(
+        unsafe { ruuah_host_paste(host, paste.as_ptr(), paste.len()) },
+        RuuahHostResult::Success
+    );
+    let matched = poll_until_pixels(host, &want);
+    unsafe { ruuah_host_free(host) };
+    assert!(matched, "the bare paste never echoed back as pixels");
 }

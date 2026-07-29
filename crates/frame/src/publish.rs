@@ -44,6 +44,7 @@ impl Publisher {
         let (cols, rows) = (grid.cols(), grid.rows());
         let wholly_damaged = terminal.is_wholly_damaged();
         let cursor = terminal.cursor();
+        let bracketed_paste = terminal.bracketed_paste();
         let cluster = &mut self.cluster;
 
         let generation = self.writer.publish(cols, rows, |frame| {
@@ -72,6 +73,12 @@ impl Publisher {
             if wholly_damaged {
                 frame.whole_frame_changed();
             }
+
+            frame.modes(if bracketed_paste {
+                crate::frame::Frame::MODE_BRACKETED_PASTE
+            } else {
+                0
+            });
 
             frame.cursor(
                 cursor.x,

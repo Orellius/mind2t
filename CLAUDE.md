@@ -34,8 +34,19 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 ## Status / current slice
 
 **Slices 0 through 8 are done**; the audit waves on 0-7 are tagged `v0.7.1`/`v0.7.2` and
-slice 8 is tagged `v0.8.0`. 276 tests green; corpus 125 cases, 114 match / 11 diff, 125/125
-met expectation; `libruuah-vt.a` at 13/13 exports, `libruuah-vt-host.a` at 18/18.
+slice 8 is tagged `v0.8.0`. 300 tests green; corpus 129 cases, 118 match / 11 diff, 129/129
+met expectation; `libruuah-vt.a` at 14/14 exports, `libruuah-vt-host.a` at 20/20.
+
+**Backlog P0.1 landed 2026-07-29 (`paste-2004`): bracketed paste + cmd+V.** The core
+tracks mode 2004 (terminal-global, corpus-pinned in both directions including the
+alt-screen and RIS edges), `Frame` carries a mode-bits word across the thread boundary,
+`ruuah_host_paste` applies the oracle-measured paste transform (differential test against
+`ghostty_paste_encode`, byte-for-byte), and the window's cmd+V hands raw clipboard bytes
+to the host. New ABI export `ghostty_terminal_mode_get` mirrors the oracle's own -- it
+answers for 2004 and returns INVALID_VALUE for untracked modes rather than a guessed
+"off". End-to-end proof in `host_abi.rs` uses the pty's ECHOCTL to make the fenceposts
+visible as pixels; the fence appears exactly when the child enabled 2004. The cmd+V tap
+in the installed app still needs live eyes.
 **The full open backlog lives in `docs/BACKLOG-2026.md`** (written 2026-07-29 after
 RUUAH VT.app shipped and ran Claude Code live): P0 = paste + bracketed paste (mode
 2004, absent from core) and color emoji (renderer feature, not a font line); P1 =

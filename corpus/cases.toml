@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 125
+declared_cases = 129
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -1126,3 +1126,27 @@ rows = 5
 scrollback = 50
 bytes = "\u001B[2;4r\u001B[4;1Hxy\u001B]133;A\u0007$ \u001B]133;B\u0007ls"
 note = "The fresh line is taken at the bottom margin of a region that does not start at row 0, so the row pushed out never leaves the screen and must not become history, while the prompt mark still lands on the new bottom row of the region. Two rules crossing that no existing case crosses."
+
+[[case]]
+name = "mode-2004-bracketed-paste"
+expect = "match"
+bytes = "\u001B[?2004h"
+note = "Bracketed paste leaves no trace on the grid; the mode itself is the observable, read from the oracle via ghostty_terminal_mode_get. Went in as diff before the core tracked the mode and was promoted by the implementation."
+
+[[case]]
+name = "mode-2004-set-then-reset"
+expect = "match"
+bytes = "\u001B[?2004h\u001B[?2004l"
+note = "Set and reset cancel: both sides report the mode off. Trivially green before the core tracks 2004; afterwards it pins the reset path."
+
+[[case]]
+name = "mode-2004-survives-the-alt-screen"
+expect = "match"
+bytes = "\u001B[?2004h\u001B[?1049h"
+note = "The mode is terminal-global: entering the alternate screen does not clear it. Measured as a diff first; the promotion pins that the state lives on the terminal, not the screen."
+
+[[case]]
+name = "mode-2004-reset-by-ris"
+expect = "match"
+bytes = "\u001B[?2004h\u001Bc"
+note = "RIS resets the mode with everything else. Trivially green before the core tracks 2004; afterwards it guards full_reset."

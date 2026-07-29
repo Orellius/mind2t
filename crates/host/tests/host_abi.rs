@@ -984,3 +984,66 @@ fn host_events_cross_in_order_and_exactly_once() {
     assert_eq!(kind, 0, "drained: exactly once means nothing repeats");
     unsafe { ruuah_host_free(host) };
 }
+
+/// Slice 9's seam end to end: a DSR from the child produces reply bytes that travel
+/// back down the pty. The child's line discipline (canonical, ECHOCTL) echoes them as
+/// printable ^[[0n -- the same fencepost trick the paste test measured -- so the reply
+/// is visible as cells without any od. Seen red with the pump's drain skipped.
+#[test]
+fn a_dsr_reply_travels_back_down_the_pty() {
+    let command = CString::new("printf 'Q\\033[5n\\n'; sleep 8").expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+        config: ptr::null(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+
+    let text_of = |host, row: u16| -> String {
+        let mut len = 0usize;
+        if unsafe { ruuah_host_row_text(host, row, 255, ptr::null_mut(), 0, &mut len) }
+            != RuuahHostResult::Success
+        {
+            return String::new();
+        }
+        let mut buffer = vec![0u8; len];
+        if unsafe { ruuah_host_row_text(host, row, 255, buffer.as_mut_ptr(), len, &mut len) }
+            != RuuahHostResult::Success
+        {
+            return String::new();
+        }
+        String::from_utf8_lossy(&buffer).into_owned()
+    };
+
+    let deadline = Instant::now() + PATIENCE;
+    let mut seen = String::new();
+    while Instant::now() < deadline {
+        let mut polled = empty_frame();
+        assert_eq!(
+            unsafe { ruuah_host_poll(host, &mut polled) },
+            RuuahHostResult::Success
+        );
+        let mut all = String::new();
+        for row in 0..4 {
+            all.push_str(&text_of(host, row));
+            all.push('\n');
+        }
+        if all.contains("^[[0n") {
+            seen = all;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        seen.contains("^[[0n"),
+        "the DSR 5 reply never echoed back through the pty"
+    );
+    unsafe { ruuah_host_free(host) };
+}

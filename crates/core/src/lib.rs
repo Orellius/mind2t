@@ -21,6 +21,7 @@ pub mod history;
 mod hyperlink;
 pub mod page;
 pub mod reflow;
+mod replies;
 pub mod resize;
 pub mod screen;
 mod semantic;

@@ -23,6 +23,9 @@ final class Session {
     /// wear it. When theme support arrives, the margin follows automatically -- nothing
     /// app-side hardcodes a color.
     private(set) var background: CGColor?
+    /// One OSC 133 class byte per grid row (RUUAH_ROW_*), from the last drawn frame.
+    /// Empty until a shell with integration has marked something. The gutter's input.
+    private(set) var rowClasses: [UInt8] = []
     private(set) var exited = false
 
     init?(
@@ -65,8 +68,28 @@ final class Session {
                 cellHeight = Int(frame.height) / Int(rows)
             }
         }
+        if let semantics = frame.row_semantics, frame.row_count > 0 {
+            rowClasses = Array(UnsafeBufferPointer(start: semantics, count: Int(frame.row_count)))
+        }
         if frame.child_exited { exited = true }
         return fresh
+    }
+
+    /// One row's text, filtered by OSC 133 mark (RUUAH_TEXT_ALL for every cell). Empty
+    /// when the row is out of range or nothing has been polled yet.
+    func rowText(_ row: UInt16, semantic: UInt8) -> String {
+        guard let host else { return "" }
+        var length = 0
+        guard ruuah_host_row_text(host, row, semantic, nil, 0, &length) == RUUAH_HOST_SUCCESS,
+            length > 0
+        else { return "" }
+        var buffer = [UInt8](repeating: 0, count: length)
+        guard
+            buffer.withUnsafeMutableBufferPointer({ pointer in
+                ruuah_host_row_text(host, row, semantic, pointer.baseAddress, length, &length)
+            }) == RUUAH_HOST_SUCCESS
+        else { return "" }
+        return String(decoding: buffer, as: UTF8.self)
     }
 
     func send(_ bytes: [UInt8]) {

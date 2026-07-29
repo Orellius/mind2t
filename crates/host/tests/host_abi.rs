@@ -23,8 +23,8 @@ use ruuah_vt_frame::{BaseDirection, Frame, Publisher, channel};
 use ruuah_vt_host::{
     DEFAULT_FONT_SIZE, RuuahConfig, RuuahHost, RuuahHostFrame, RuuahHostOptions, RuuahHostResult,
     ruuah_config_error, ruuah_config_free, ruuah_config_load, ruuah_host_free, ruuah_host_paste,
-    ruuah_host_poll, ruuah_host_poll_skipping_row_for_testing, ruuah_host_resize, ruuah_host_send,
-    ruuah_host_spawn,
+    ruuah_host_poll, ruuah_host_poll_skipping_row_for_testing, ruuah_host_resize,
+    ruuah_host_row_text, ruuah_host_send, ruuah_host_spawn,
 };
 use ruuah_vt_render::{FontStack, Renderer};
 
@@ -92,15 +92,7 @@ fn host_pixels_match_a_reference_renderer_fed_the_same_bytes() {
     let mut last: Option<RuuahHostFrame> = None;
     let deadline = Instant::now() + PATIENCE;
     while Instant::now() < deadline {
-        let mut polled = RuuahHostFrame {
-            pixels: ptr::null(),
-            width: 0,
-            height: 0,
-            generation: 0,
-            drew: false,
-            child_exited: false,
-            background: [0; 4],
-        };
+        let mut polled = empty_frame();
         let result = unsafe { ruuah_host_poll(host, &mut polled) };
         assert_eq!(result, RuuahHostResult::Success, "poll failed: {result:?}");
 
@@ -186,15 +178,7 @@ fn a_host_that_skips_a_row_is_caught() {
     let deadline = Instant::now() + PATIENCE;
     let mut frame = None;
     while Instant::now() < deadline {
-        let mut polled = RuuahHostFrame {
-            pixels: ptr::null(),
-            width: 0,
-            height: 0,
-            generation: 0,
-            drew: false,
-            child_exited: false,
-            background: [0; 4],
-        };
+        let mut polled = empty_frame();
         let result = unsafe { ruuah_host_poll_skipping_row_for_testing(host, 0, &mut polled) };
         assert_eq!(result, RuuahHostResult::Success);
         if polled.child_exited && !polled.pixels.is_null() && !polled.drew {
@@ -267,15 +251,7 @@ fn send_reaches_the_child_and_comes_back_as_pixels() {
     let deadline = Instant::now() + PATIENCE;
     let mut matched = false;
     while Instant::now() < deadline {
-        let mut polled = RuuahHostFrame {
-            pixels: ptr::null(),
-            width: 0,
-            height: 0,
-            generation: 0,
-            drew: false,
-            child_exited: false,
-            background: [0; 4],
-        };
+        let mut polled = empty_frame();
         assert_eq!(
             unsafe { ruuah_host_poll(host, &mut polled) },
             RuuahHostResult::Success
@@ -329,15 +305,7 @@ fn auto_direction_reorders_a_hebrew_row_through_the_c_boundary() {
     let mut matched = false;
     let deadline = Instant::now() + PATIENCE;
     while Instant::now() < deadline {
-        let mut polled = RuuahHostFrame {
-            pixels: ptr::null(),
-            width: 0,
-            height: 0,
-            generation: 0,
-            drew: false,
-            child_exited: false,
-            background: [0; 4],
-        };
+        let mut polled = empty_frame();
         assert_eq!(
             unsafe { ruuah_host_poll(host, &mut polled) },
             RuuahHostResult::Success
@@ -364,15 +332,7 @@ fn auto_direction_reorders_a_hebrew_row_through_the_c_boundary() {
 fn poll_until_pixels(host: *mut RuuahHost, want: &[u8]) -> bool {
     let deadline = Instant::now() + PATIENCE;
     while Instant::now() < deadline {
-        let mut polled = RuuahHostFrame {
-            pixels: ptr::null(),
-            width: 0,
-            height: 0,
-            generation: 0,
-            drew: false,
-            child_exited: false,
-            background: [0; 4],
-        };
+        let mut polled = empty_frame();
         assert_eq!(
             unsafe { ruuah_host_poll(host, &mut polled) },
             RuuahHostResult::Success
@@ -571,15 +531,7 @@ fn poll_until_background(
     let deadline = Instant::now() + PATIENCE;
     let mut last = [0; 4];
     while Instant::now() < deadline {
-        let mut polled = RuuahHostFrame {
-            pixels: ptr::null(),
-            width: 0,
-            height: 0,
-            generation: 0,
-            drew: false,
-            child_exited: false,
-            background: [0; 4],
-        };
+        let mut polled = empty_frame();
         let result = unsafe { ruuah_host_poll(host, &mut polled) };
         assert_eq!(result, RuuahHostResult::Success, "poll failed: {result:?}");
         if !polled.pixels.is_null() {
@@ -609,6 +561,157 @@ fn assert_corner_pixel(frame: &RuuahHostFrame, want: [u8; 4], when: &str) {
 fn die(host: *mut RuuahHost, message: String) -> ! {
     unsafe { ruuah_host_free(host) };
     panic!("{message}");
+}
+
+/// A zeroed out-param for polls, matching the C caller's `RuuahHostFrame frame = {0}`.
+fn empty_frame() -> RuuahHostFrame {
+    RuuahHostFrame {
+        pixels: ptr::null(),
+        width: 0,
+        height: 0,
+        generation: 0,
+        drew: false,
+        child_exited: false,
+        background: [0; 4],
+        row_semantics: ptr::null(),
+        row_count: 0,
+    }
+}
+
+/// S2a: the OSC 133 marks the core tracks must cross the C surface as per-row classes,
+/// and the text of those rows must be readable back -- the gutter and the copy actions
+/// are built entirely on these two. The child emits the marks itself (printf, no shell
+/// integration involved), so the test isolates the seam.
+///
+/// The control is `rows_without_osc133_all_read_as_output` below: same child shape, no
+/// marks, all zeros -- together they prove the classes come from OSC 133 and not from a
+/// hardcoded pattern.
+#[test]
+fn osc133_rows_cross_the_c_surface_with_their_text() {
+    // Row 0: a prompt mark, the prompt text, an input mark, the typed command.
+    // Row 1: an output mark, then output text.
+    let command = CString::new(
+        "printf '\\033]133;A\\007$ \\033]133;B\\007ls -la\\n\\033]133;C\\007total 42\\n'; sleep 8",
+    )
+    .expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+        config: ptr::null(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+
+    // Poll until the prompt row classifies -- the child's output arrives when it arrives.
+    let deadline = Instant::now() + PATIENCE;
+    let mut classes: Vec<u8> = Vec::new();
+    while Instant::now() < deadline {
+        let mut polled = empty_frame();
+        assert_eq!(
+            unsafe { ruuah_host_poll(host, &mut polled) },
+            RuuahHostResult::Success
+        );
+        if !polled.row_semantics.is_null() {
+            let all = unsafe {
+                std::slice::from_raw_parts(polled.row_semantics, polled.row_count as usize)
+            };
+            if all.first() == Some(&1) {
+                classes = all.to_vec();
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if classes.is_empty() {
+        die(host, "the prompt row never classified as RUUAH_ROW_PROMPT".into());
+    }
+    assert_eq!(classes.len(), ROWS as usize, "one class per grid row");
+    assert_eq!(classes[0], 1, "row 0 starts a prompt (and holds the input)");
+    assert_eq!(classes[1], 0, "row 1 is command output");
+
+    let text_of = |row: u16, semantic: u8| -> String {
+        let mut len = 0usize;
+        assert_eq!(
+            unsafe { ruuah_host_row_text(host, row, semantic, ptr::null_mut(), 0, &mut len) },
+            RuuahHostResult::Success
+        );
+        let mut buffer = vec![0u8; len];
+        assert_eq!(
+            unsafe {
+                ruuah_host_row_text(host, row, semantic, buffer.as_mut_ptr(), len, &mut len)
+            },
+            RuuahHostResult::Success
+        );
+        String::from_utf8(buffer).expect("row text is UTF-8")
+    };
+    assert_eq!(text_of(0, 255), "$ ls -la", "prompt + typed command, blanks trimmed");
+    assert_eq!(text_of(1, 255), "total 42", "the output row's text");
+    // The filter is what makes "copy command" exact -- and it discriminates: a filter
+    // that ignored the marks would return the whole line here.
+    assert_eq!(text_of(0, 2), "ls -la", "the input filter drops the prompt itself");
+    assert_eq!(text_of(0, 1), "$", "the prompt filter keeps only the shell's own cells");
+
+    let mut len = 0usize;
+    assert_eq!(
+        unsafe { ruuah_host_row_text(host, ROWS + 5, 255, ptr::null_mut(), 0, &mut len) },
+        RuuahHostResult::InvalidValue,
+        "an out-of-range row is refused, not clamped"
+    );
+    unsafe { ruuah_host_free(host) };
+}
+
+/// The pair's control: the same shape of child with NO marks must classify every row as
+/// output. A classifier keying on the '$ ' text instead of OSC 133 fails here.
+#[test]
+fn rows_without_osc133_all_read_as_output() {
+    let command = CString::new("printf '$ ls -la\\ntotal 42\\n'; sleep 8").expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+        config: ptr::null(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+
+    let deadline = Instant::now() + PATIENCE;
+    let mut seen_text = false;
+    while Instant::now() < deadline {
+        let mut polled = empty_frame();
+        assert_eq!(
+            unsafe { ruuah_host_poll(host, &mut polled) },
+            RuuahHostResult::Success
+        );
+        if !polled.row_semantics.is_null() {
+            let classes = unsafe {
+                std::slice::from_raw_parts(polled.row_semantics, polled.row_count as usize)
+            };
+            assert!(
+                classes.iter().all(|class| *class == 0),
+                "unmarked rows must all be RUUAH_ROW_OUTPUT, got {classes:?}"
+            );
+            let mut len = 0usize;
+            let ok = unsafe { ruuah_host_row_text(host, 1, 255, ptr::null_mut(), 0, &mut len) };
+            if ok == RuuahHostResult::Success && len > 0 {
+                seen_text = true;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    unsafe { ruuah_host_free(host) };
+    assert!(seen_text, "the child's second line never arrived");
 }
 
 /// A per-test unique directory under the OS tmp dir; leaked on purpose so a failing

@@ -46,6 +46,10 @@ PLIST
 
 cp swift/.build/release/ruuah-host "$BUILD/Contents/MacOS/ruuah-host"
 cp swift/Resources/banner.sh "$BUILD/Contents/Resources/banner.sh"
+# Shell integration (S2): the ZDOTDIR bootstrap + the OSC 133 hooks the blocks read.
+mkdir -p "$BUILD/Contents/Resources/shell/zdotdir"
+cp shell/ruuah-integration.zsh "$BUILD/Contents/Resources/shell/ruuah-integration.zsh"
+cp shell/zdotdir/.zshenv "$BUILD/Contents/Resources/shell/zdotdir/.zshenv"
 
 # Icon: the RUUAH ghost from the fork's own icon artwork, when the fork is
 # present. Skipped silently otherwise -- the app runs fine without it.

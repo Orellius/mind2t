@@ -21,9 +21,20 @@ impl State {
         if params.first().copied() != Some(b"133".as_slice()) {
             return;
         }
-        let Some(action) = params.get(1).and_then(|field| field.first().copied()) else {
+        let Some(field) = params.get(1) else {
             return;
         };
+        // The action field is the letter ALONE. Upstream demands the byte after the letter
+        // be a semicolon or the end (semantic_prompt.zig:352) and drops the whole command
+        // otherwise; vte has already split on semicolons, so any longer field here is that
+        // trailing garbage (finding 29).
+        let &[action] = *field else {
+            return;
+        };
+        // L is the one action that rejects options outright (semantic_prompt.zig:367).
+        if action == b'L' && params.len() > 2 {
+            return;
+        }
 
         match action {
             // A is fresh-line-then-new-prompt. N may terminate a previous command first, but
@@ -150,8 +161,10 @@ impl State {
 fn prompt_mark(params: &[&[u8]]) -> RowSemantic {
     for option in params.iter().skip(2) {
         if let Some(value) = option.strip_prefix(b"k=") {
-            return match value.first() {
-                Some(b'c') | Some(b's') => RowSemantic::PromptContinuation,
+            // The value is taken only when it is exactly one byte (semantic_prompt.zig:203);
+            // anything longer falls back to the initial kind, a plain prompt (finding 29).
+            return match value {
+                b"c" | b"s" => RowSemantic::PromptContinuation,
                 _ => RowSemantic::Prompt,
             };
         }

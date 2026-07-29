@@ -883,30 +883,27 @@ note = "Two source rows re-split into three. This is the case the simple last-so
 
 [[case]]
 name = "osc133-trailing-garbage-invalidates-the-command"
-expect = "diff"
-diff_paths = ["cell[0,2].semantic", "cell[0,3].semantic"]
+expect = "match"
 cols = 12
 rows = 3
 bytes = "\u001B]133;A\u0007$ \u001B]133;Cextra\u0007ok"
-note = "Upstream's OSC 133 parser requires the byte after the action letter to be a semicolon or nothing (osc/parsers/semantic_prompt.zig:352); anything else sets parser.state = .invalid and drops the whole command. This core reads params[1][0] and fires on the letter, so ok is Output here and Prompt upstream."
+note = "Upstream's OSC 133 parser requires the byte after the action letter to be a semicolon or nothing (osc/parsers/semantic_prompt.zig:352); anything else sets parser.state = .invalid and drops the whole command. Promoted by the S2 wave: the action field must be the letter alone here too."
 
 [[case]]
 name = "osc133-prompt-kind-must-be-one-byte"
-expect = "diff"
-diff_paths = ["row[0].semantic_prompt"]
+expect = "match"
 cols = 12
 rows = 3
 bytes = "\u001B]133;A;k=cc\u0007$ "
-note = "readOption(.prompt_kind) takes the value only when its length is 1 (semantic_prompt.zig:203), and the null falls back to .initial, so the row is a plain prompt upstream. prompt_mark() here reads the first byte and marks a continuation."
+note = "readOption(.prompt_kind) takes the value only when its length is 1 (semantic_prompt.zig:203), and the null falls back to .initial, so the row is a plain prompt upstream. Promoted by the S2 wave: the value is taken only at exactly one byte here too."
 
 [[case]]
 name = "osc133-fresh-line-takes-no-options"
-expect = "diff"
-diff_paths = ["cell[0,2].text", "cell[1,0].text", "cursor.x", "cursor.y"]
+expect = "match"
 cols = 12
 rows = 3
 bytes = "xy\u001B]133;L;1\u0007Z"
-note = "L is the one action upstream rejects outright when anything follows it (semantic_prompt.zig:367), so no fresh line happens and Z lands at column 2 of row 0. This core dispatches on the letter and moves down."
+note = "L is the one action upstream rejects outright when anything follows it (semantic_prompt.zig:367), so no fresh line happens and Z lands at column 2 of row 0. Promoted by the S2 wave: L with options is dropped here too."
 
 [[case]]
 name = "osc133-redraw-opt-in-clears-the-prompt-on-resize"

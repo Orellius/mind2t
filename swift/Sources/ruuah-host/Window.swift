@@ -137,7 +137,11 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 bitsPerComponent: 8,
                 bitsPerPixel: 32,
                 bytesPerRow: width * 4,
-                space: CGColorSpaceCreateDeviceRGB(),
+                // The core's palette bytes are sRGB values and the render crate deliberately
+                // does no gamma work ("any gamma decision belongs to whoever puts these
+                // pixels on a screen" — gpu.rs). DeviceRGB would hand those numbers to the
+                // panel's native gamut, oversaturating every colour on a P3 display.
+                space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
                 provider: provider,
                 decode: nil,

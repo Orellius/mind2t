@@ -264,29 +264,74 @@ mod tests {
 mod resize_tests {
     use crate::terminal::Terminal;
 
-    /// The "evades its cell" defect, seen live 2026-07-30: reflow moves the text, a
-    /// grid-anchored placement stays put, and the image detaches from the line it
-    /// illustrated. v1 rule: a resize clears placements (predictable vanish, never a
-    /// lying position); the store keeps the pixels so a re-place by id needs no
-    /// retransmission. Applies to kitty and sixel alike -- one placement path.
+    /// v2 (replacing the interim clear-on-resize): placement anchors ride the reflow
+    /// through the same transform as the cursors, so the image stays with the line it
+    /// illustrated. The "evades its cell" defect is pinned dead by the narrow case --
+    /// the anchor lands where its LINE went, not where its old grid coordinate was.
     #[test]
-    fn a_resize_clears_placements_but_keeps_the_store() {
+    fn a_resize_maps_placements_with_their_content() {
+        let mut terminal = Terminal::new(40, 8);
+        terminal.write(b"one\r\ntwo\r\n");
+        terminal.write(b"\x1b_Ga=T,f=32,s=1,v=1,i=5,c=2,r=1,q=2;/wAA/w==\x1b\\");
+        let before = terminal.screen().placements[0];
+        assert_eq!((before.col, before.row), (0, 2), "anchored on row 2");
+
+        // Rows-only shrink: no reflow, the anchor holds.
+        terminal.resize(40, 6);
+        let after = terminal.screen().placements[0];
+        assert_eq!((after.col, after.row), (0, 2), "rows-only: unchanged");
+
+        // Width shrink forces "one"/"two" to stay one row each (short lines), so the
+        // anchor row is stable -- but the transform ran and the placement SURVIVED,
+        // which the interim rule (clear on any resize) could never pass.
+        terminal.resize(20, 6);
+        assert_eq!(terminal.screen().placements.len(), 1, "survived a reflow resize");
+        assert_eq!(terminal.screen().placements[0].row, 2);
+    }
+
+    /// A placement whose anchor row is consumed by the reflow (its line rejoined into
+    /// the row above) maps with the line; one whose anchor cannot be mapped drops.
+    #[test]
+    fn a_wrapped_line_carries_its_placement_when_rejoined() {
+        let mut terminal = Terminal::new(10, 6);
+        // A 14-char line wraps at 10 cols onto a second row; the image anchors there.
+        terminal.write(b"aaaaaaaaaabbbb");
+        terminal.write(b"\x1b_Ga=T,f=32,s=1,v=1,i=9,c=1,r=1,q=2;/wAA/w==\x1b\\");
+        let anchored = terminal.screen().placements[0];
+        assert_eq!(anchored.row, 1, "on the wrapped continuation row");
+
+        // Wide enough for the whole line: the continuation rejoins into row 0 and the
+        // anchor follows its cell there.
+        terminal.resize(20, 6);
+        let mapped = terminal.screen().placements[0];
+        assert_eq!(mapped.row, 0, "the anchor followed its rejoined line");
+        assert_eq!(mapped.col, 14, "landed after the rejoined content");
+    }
+
+    /// Scrolling an image past the top no longer amputates it at the anchor: the row
+    /// goes negative (both backends clip per pixel) and the placement drops only once
+    /// it is far past visible.
+    #[test]
+    fn a_placement_scrolled_past_the_top_clips_instead_of_vanishing() {
+        let mut terminal = Terminal::new(20, 4);
+        terminal.write(b"\x1b_Ga=T,f=32,s=1,v=1,i=7,c=2,r=3,q=2;/wAA/w==\x1b\\");
+        assert_eq!(terminal.screen().placements[0].row, 0);
+        // Two newlines from the bottom row scroll the screen twice.
+        terminal.write(b"\x1b[4;1H\r\n\r\n");
+        assert_eq!(
+            terminal.screen().placements[0].row, -2,
+            "the anchor went negative and the placement is still alive"
+        );
+    }
+
+    /// The store is never touched by any of this -- a resize or scroll moves or drops
+    /// PLACEMENTS; the pixels stay, re-placeable by id without retransmission.
+    #[test]
+    fn the_store_survives_resize_and_scroll() {
         let mut terminal = Terminal::new(40, 10);
         terminal.write(b"\x1bP0;0;0q#1;2;100;0;0#1~\x1b\\");
-        terminal.write(b"\x1b_Ga=T,f=32,s=1,v=1,i=5,c=1,r=1,q=2;/wAA/w==\x1b\\");
-        assert_eq!(terminal.screen().placements.len(), 2, "both protocols placed");
-        let stored = terminal.take_image_ops().len();
-        assert_eq!(stored, 2, "both images in the store");
-
+        assert_eq!(terminal.take_image_ops().len(), 1);
         terminal.resize(30, 8);
-        assert!(
-            terminal.screen().placements.is_empty(),
-            "a resize clears placements -- the v1 rule this test pins"
-        );
-        assert_eq!(
-            terminal.take_image_ops(),
-            vec![],
-            "no Remove ops: the store keeps the pixels for a re-place by id"
-        );
+        assert_eq!(terminal.take_image_ops(), vec![], "no Remove ops from a resize");
     }
 }

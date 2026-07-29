@@ -33,6 +33,22 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
+**2026-07-30 append-all wave (one session):** twelve features landed, each on its own
+`--no-ff` branch, gates green at every merge, all pushed. New since v0.8.0+S2: proper
+ad-hoc bundle signing (TCC), S2 starship compat (integration on the oracle's zsh
+pattern; `crates/host/tests/shell_integration.rs`), live cmd+=/-/0 zoom
+(`ruuah_host_set_font_size` + `ruuah_host_cell_metrics`), styled underlines, OSC 8
+hyperlinks (`ruuah_host_link_at`, cmd+click), the event seam (`ruuah_host_next_event`:
+OSC 52 write / notifications / bell, exactly-once), DSR/DA replies (slice 9's seam;
+esctest2 wiring still open), kitty graphics v1 (vendored `crates/vte` APC fork -- the
+ONE workspace fork, re-vendor note in its Cargo.toml; `png` dependency), sixel v1
+(same image pipeline, no oracle -- unit-gated), ligatures + font-family/font-ligatures
+config (substitution-guard keeps Menlo byte-identical), VS16 emoji presentation (width
+stays oracle-narrow), top tab bar 1:1 to the operator's reference (sidebar deleted),
+spawn retry under fork pressure. Gates: **392 tests / difftest 132 cases 132/132 / 32
+exports / Swift smoke**. Host archive exports grew 20 -> 32.
+
+
 **Slices 0 through 8 are done**; the audit waves on 0-7 are tagged `v0.7.1`/`v0.7.2` and
 slice 8 is tagged `v0.8.0`. 300 tests green; corpus 129 cases, 118 match / 11 diff, 129/129
 met expectation; `libruuah-vt.a` at 14/14 exports, `libruuah-vt-host.a` at 20/20.

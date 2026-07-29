@@ -1,5 +1,17 @@
 # RUUAH app slices — the homegrown map from Warp OSS and Superset
 
+> **2026-07-30 append-all wave:** S2 compat CLOSED (integration rewritten on the
+> oracle's own zsh pattern -- deferred init, stay-last, re-mark the theme's PS1;
+> proven against a starship-shaped hostile rc through the C surface; the operator's
+> real .zshrc was the measured cause). The left sidebar is REPLACED by a top tab strip
+> 1:1 to the operator's Warp reference (docs/images/top-tabs-20260730.png; avatars
+> omitted -- no collaborators exist). Default window now 1120x700. App bundle is now
+> properly ad-hoc signed (TCC can attribute it -- Desktop/Documents prompts work; an
+> unsigned bundle was silently denied with no prompt). Config grew font-family,
+> font-ligatures. REMAINING QUEUE: S3 cmd+K palette + workflows, S4 autosuggestions,
+> S5+ as written below.
+
+
 Written 2026-07-29 (IDT), researched live the same day. `BACKLOG-2026.md` is the
 *protocol* backlog (what the VT layer owes any terminal); this file is the *app*
 backlog — what makes RUUAH a product rather than a viewport. Sources, verified

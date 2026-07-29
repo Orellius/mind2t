@@ -33,6 +33,10 @@ pub struct HistoryCell {
     pub style: Style,
     pub semantic: Semantic,
     pub graphemes: Vec<char>,
+    /// OSC 8 stamp, carried so a resize's drain-reflow-write round trip keeps links on
+    /// their cells (found live 2026-07-30: a resized window silently lost every link).
+    /// Page STORAGE drops it -- scrollback stays link-free, the documented v1 line.
+    pub link: Option<u16>,
 }
 
 /// One row on its way into history.
@@ -143,6 +147,7 @@ impl Page {
             .iter()
             .enumerate()
             .map(|(x, cell)| HistoryCell {
+                link: None,
                 codepoint: cell.codepoint,
                 wide: cell.wide,
                 style: self.styles.get(cell.style_id),
@@ -202,6 +207,7 @@ mod tests {
         let mut cells: Vec<HistoryCell> = text
             .chars()
             .map(|c| HistoryCell {
+                link: None,
                 codepoint: c as u32,
                 wide: Wide::Narrow,
                 style: Style::DEFAULT,
@@ -211,6 +217,7 @@ mod tests {
             .collect();
         while cells.len() < cols {
             cells.push(HistoryCell {
+                link: None,
                 codepoint: 0,
                 wide: Wide::Narrow,
                 style: Style::DEFAULT,

@@ -1,0 +1,19 @@
+[package]
+name = "ruuah-vt-host"
+version = "0.1.0"
+edition.workspace = true
+
+# One archive, both surfaces: depending on ruuah-vt-abi as an rlib carries its 13
+# `ghostty_*` #[no_mangle] exports into this staticlib alongside `ruuah_host_*`. A second
+# independent Rust staticlib is not an option -- two of them in one link duplicate the Rust
+# runtime's symbols. The pure drop-in `libruuah-vt.a` remains its own slim artifact.
+[lib]
+name = "ruuah_vt_host"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+ruuah-vt-abi = { path = "../abi" }
+ruuah-vt-core = { path = "../core" }
+ruuah-vt-frame = { path = "../frame" }
+ruuah-vt-pty = { path = "../pty" }
+ruuah-vt-render = { path = "../render" }

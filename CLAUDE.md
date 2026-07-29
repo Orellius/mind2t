@@ -36,6 +36,13 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 **Slices 0 through 8 are done**; the audit waves on 0-7 are tagged `v0.7.1`/`v0.7.2` and
 slice 8 is tagged `v0.8.0`. 276 tests green; corpus 125 cases, 114 match / 11 diff, 125/125
 met expectation; `libruuah-vt.a` at 13/13 exports, `libruuah-vt-host.a` at 18/18.
+**The full open backlog lives in `docs/BACKLOG-2026.md`** (written 2026-07-29 after
+RUUAH VT.app shipped and ran Claude Code live): P0 = paste + bracketed paste (mode
+2004, absent from core) and color emoji (renderer feature, not a font line); P1 =
+synchronized output (mode 2026, absent), DSR/DA replies (= slice 9), SGR mouse,
+scrollback viewport, kitty keyboard; P2 polish items and their boundaries are in
+the file. Read it before picking the next slice.
+
 **Next: slice 9 (esctest2)** -- its blocker is gone: the DSR/DA reply path's seam,
 `Host::send`, is now exercised end to end through the C surface.
 

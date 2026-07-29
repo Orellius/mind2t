@@ -92,6 +92,49 @@ final class Session {
         return String(decoding: buffer, as: UTF8.self)
     }
 
+    enum HostEvent {
+        case clipboard(String)
+        case notify(title: String, body: String)
+        case bell
+    }
+
+    /// Drains every pending host-facing event, oldest first. The C contract consumes an
+    /// event only when the buffer held it, so size-then-fetch loses nothing.
+    func drainEvents() -> [HostEvent] {
+        guard let host else { return [] }
+        var drained: [HostEvent] = []
+        while true {
+            var kind: UInt32 = 0
+            var length = 0
+            guard ruuah_host_next_event(host, &kind, nil, 0, &length) == RUUAH_HOST_SUCCESS,
+                kind != 0
+            else { break }
+            var payload = [UInt8](repeating: 0, count: length)
+            if length > 0 {
+                var fetched: UInt32 = 0
+                guard
+                    payload.withUnsafeMutableBufferPointer({ pointer in
+                        ruuah_host_next_event(
+                            host, &fetched, pointer.baseAddress, length, &length)
+                    }) == RUUAH_HOST_SUCCESS, fetched == kind
+                else { break }
+            }
+            let text = String(decoding: payload, as: UTF8.self)
+            switch kind {
+            case 1: drained.append(.clipboard(text))
+            case 2:
+                let parts = text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+                drained.append(
+                    .notify(
+                        title: parts.first.map(String.init) ?? "",
+                        body: parts.count > 1 ? String(parts[1]) : ""))
+            case 3: drained.append(.bell)
+            default: break
+            }
+        }
+        return drained
+    }
+
     /// The OSC 8 URI under a cell, if any (last polled frame).
     func linkAt(col: UInt16, row: UInt16) -> String? {
         guard let host else { return nil }

@@ -15,6 +15,7 @@
 
 pub mod cell;
 pub mod dispatch;
+pub mod events;
 pub mod grid;
 pub mod history;
 mod hyperlink;

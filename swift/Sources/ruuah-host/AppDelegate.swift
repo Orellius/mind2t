@@ -7,6 +7,7 @@
 
 import AppKit
 import CRuuahHost
+import UserNotifications
 
 final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     SessionListDelegate
@@ -224,8 +225,44 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             closeSession(index: activeIndex)
             return
         }
+        apply(events: session.drainEvents())
         if tick % HostAppDelegate.backgroundEvery == 0 {
             reapBackgroundSessions()
+        }
+    }
+
+    /// What the child asked its terminal to do. Policy lives here, not in the core:
+    /// OSC 52 writes the system clipboard (write-only -- reads are refused core-side),
+    /// notifications post through the user-notification center when we are a real
+    /// bundle (the bare CLI has no identity to post as), BEL beeps.
+    private func apply(events: [Session.HostEvent]) {
+        for event in events {
+            switch event {
+            case .clipboard(let text):
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+            case .notify(let title, let body):
+                postNotification(title: title.isEmpty ? "RUUAH VT" : title, body: body)
+            case .bell:
+                NSSound.beep()
+            }
+        }
+    }
+
+    private func postNotification(title: String, body: String) {
+        guard Bundle.main.bundleIdentifier != nil else {
+            FileHandle.standardError.write(Data("notify: \(title): \(body)\n".utf8))
+            return
+        }
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            center.add(
+                UNNotificationRequest(
+                    identifier: UUID().uuidString, content: content, trigger: nil))
         }
     }
 
@@ -236,6 +273,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         where index != activeIndex {
             let session = sessions[index]
             session.poll()
+            // Background sessions still ring, notify and set the clipboard -- the
+            // program asked; being off-screen is not a veto.
+            apply(events: session.drainEvents())
             if session.exited {
                 sessions[index].close()
                 sessions.remove(at: index)

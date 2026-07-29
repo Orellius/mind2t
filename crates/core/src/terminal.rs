@@ -69,6 +69,11 @@ impl Terminal {
     ///
     /// `snapshot` allocates a `String` per cell, which is right for a corpus case and wrong
     /// for a renderer reading every frame. This is the same state without the convenience.
+    /// Drains the host-facing event queue (OSC 52, notifications, BEL), in order.
+    pub fn take_events(&mut self) -> Vec<crate::events::Event> {
+        std::mem::take(&mut self.state.events)
+    }
+
     /// The URI behind a grid cell's link stamp (`Grid::link_id`). The stamp is a table
     /// index; the table is terminal-global so one link keeps one identity everywhere.
     pub fn link_uri(&self, id: u16) -> Option<&str> {
@@ -136,6 +141,9 @@ pub(crate) struct State {
     /// Flat index of the last printed cell, so a following zero-width codepoint knows which
     /// cluster it belongs to. Cleared by anything that moves the cursor.
     pub(crate) last_print: Option<usize>,
+    /// Host-facing requests (OSC 52, notifications, BEL), drained by the pump. See
+    /// `events.rs` for the bounds.
+    pub(crate) events: Vec<crate::events::Event>,
     /// OSC 8: interned (explicit id, uri) pairs the grids' cell stamps point into.
     /// Terminal-global so a link spanning a screen switch keeps one identity.
     pub(crate) link_table: Vec<(String, String)>,
@@ -165,6 +173,7 @@ impl State {
             cursor_visible: true,
             bracketed_paste: false,
             last_print: None,
+            events: Vec::new(),
             link_table: Vec::new(),
             cursor_link: None,
             max_scrollback,
@@ -506,6 +515,7 @@ impl Perform for State {
 
     fn execute(&mut self, byte: u8) {
         match byte {
+            0x07 => self.push_event(crate::events::Event::Bell),
             0x08 => {
                 let x = self.screen().x.saturating_sub(1);
                 self.screen_mut().x = x;
@@ -528,12 +538,16 @@ impl Perform for State {
     }
 
     fn osc_dispatch(&mut self, params: &[&[u8]], _bell_terminated: bool) {
-        if params.first().copied() == Some(b"8".as_slice()) {
-            self.osc_hyperlink(params);
-            return;
+        match params.first().copied() {
+            Some(b"8") => self.osc_hyperlink(params),
+            Some(b"52") => self.osc_clipboard(params),
+            Some(b"9") => self.osc_notify_9(params),
+            Some(b"777") => self.osc_notify_777(params),
+            _ => {
+                let blank = self.blank();
+                self.osc(params, blank);
+            }
         }
-        let blank = self.blank();
-        self.osc(params, blank);
     }
 
     fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], ignore: bool, action: char) {

@@ -152,3 +152,49 @@ mod tests {
         assert_eq!(link_at(&terminal, 1, 0), Some("https://x.il".into()), "spacer tail too");
     }
 }
+
+#[cfg(test)]
+mod resize_tests {
+    use crate::terminal::Terminal;
+
+    fn link_at(terminal: &Terminal, x: u16, y: u16) -> Option<String> {
+        let grid = &terminal.screen().grid;
+        let id = grid.link_id(grid.index(x, y))?;
+        terminal.link_uri(id).map(str::to_owned)
+    }
+
+    /// Found live 2026-07-30: a resized window silently lost every link stamp, so
+    /// cmd+click died exactly when a human drove the window (SCAR-014's shape). The
+    /// stamps now ride HistoryCell through the drain-reflow-write round trip the same
+    /// way grapheme continuations do.
+    #[test]
+    fn links_survive_a_resize_in_both_directions() {
+        let mut terminal = Terminal::new(20, 3);
+        terminal.write(b"pre \x1b]8;;https://x.il\x07LINK\x1b]8;;\x07 post");
+        assert_eq!(link_at(&terminal, 4, 0), Some("https://x.il".into()));
+
+        terminal.resize(30, 3);
+        assert_eq!(
+            link_at(&terminal, 4, 0),
+            Some("https://x.il".into()),
+            "wider: the row did not move and the stamp must still be there"
+        );
+        assert_eq!(link_at(&terminal, 0, 0), None, "unlinked cells stay unlinked");
+
+        // Narrow enough to force a reflow split through the linked span.
+        terminal.resize(6, 4);
+        let grid = &terminal.screen().grid;
+        let mut found = 0;
+        for y in 0..4u16 {
+            for x in 0..6u16 {
+                if grid.link_id(grid.index(x, y)).is_some() {
+                    found += 1;
+                }
+            }
+        }
+        assert_eq!(
+            found, 4,
+            "narrower: all four LINK cells wear the stamp wherever reflow put them"
+        );
+    }
+}

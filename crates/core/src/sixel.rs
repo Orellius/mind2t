@@ -259,3 +259,34 @@ mod tests {
         assert_eq!(terminal.take_image_ops(), vec![], "past the cap, dropped");
     }
 }
+
+#[cfg(test)]
+mod resize_tests {
+    use crate::terminal::Terminal;
+
+    /// The "evades its cell" defect, seen live 2026-07-30: reflow moves the text, a
+    /// grid-anchored placement stays put, and the image detaches from the line it
+    /// illustrated. v1 rule: a resize clears placements (predictable vanish, never a
+    /// lying position); the store keeps the pixels so a re-place by id needs no
+    /// retransmission. Applies to kitty and sixel alike -- one placement path.
+    #[test]
+    fn a_resize_clears_placements_but_keeps_the_store() {
+        let mut terminal = Terminal::new(40, 10);
+        terminal.write(b"\x1bP0;0;0q#1;2;100;0;0#1~\x1b\\");
+        terminal.write(b"\x1b_Ga=T,f=32,s=1,v=1,i=5,c=1,r=1,q=2;/wAA/w==\x1b\\");
+        assert_eq!(terminal.screen().placements.len(), 2, "both protocols placed");
+        let stored = terminal.take_image_ops().len();
+        assert_eq!(stored, 2, "both images in the store");
+
+        terminal.resize(30, 8);
+        assert!(
+            terminal.screen().placements.is_empty(),
+            "a resize clears placements -- the v1 rule this test pins"
+        );
+        assert_eq!(
+            terminal.take_image_ops(),
+            vec![],
+            "no Remove ops: the store keeps the pixels for a re-place by id"
+        );
+    }
+}

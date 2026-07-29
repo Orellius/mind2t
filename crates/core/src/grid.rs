@@ -322,6 +322,9 @@ impl Grid {
                     if !cell.graphemes.is_empty() {
                         self.graphemes.insert(index, cell.graphemes.clone());
                     }
+                    if let Some(link) = cell.link {
+                        self.links.insert(index, link);
+                    }
                 }
                 None => self.write(index, Cell::BLANK),
             }
@@ -397,6 +400,7 @@ impl Grid {
                 let index = self.index(x, y);
                 let cell = self.cell(index);
                 HistoryCell {
+                    link: self.links.get(&index).copied(),
                     codepoint: cell.codepoint,
                     wide: cell.wide,
                     style: self.style(cell.style_id),

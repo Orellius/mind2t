@@ -75,6 +75,7 @@ impl Publisher {
         let wholly_damaged = terminal.is_wholly_damaged() || offset > 0 || window_moved;
         let cursor = terminal.cursor();
         let bracketed_paste = terminal.bracketed_paste();
+        let synchronized_output = terminal.synchronized_output();
         let cluster = &mut self.cluster;
 
         // OSC 8: the core's link ids are table-wide; the frame carries only the links
@@ -168,11 +169,14 @@ impl Publisher {
                 frame.whole_frame_changed();
             }
 
-            frame.modes(if bracketed_paste {
-                crate::frame::Frame::MODE_BRACKETED_PASTE
-            } else {
-                0
-            });
+            let mut modes = 0;
+            if bracketed_paste {
+                modes |= crate::frame::Frame::MODE_BRACKETED_PASTE;
+            }
+            if synchronized_output {
+                modes |= crate::frame::Frame::MODE_SYNCHRONIZED_OUTPUT;
+            }
+            frame.modes(modes);
 
             frame.viewport(offset as u32);
 

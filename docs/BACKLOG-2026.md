@@ -51,10 +51,15 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
 
 ## P1 — the modern-TUI contract
 
-3. **Synchronized output (DEC private mode 2026).** The 2026 pun is free but the
-   mode is real: TUIs batch redraws with `ESC[?2026h/l` and expect no tearing
-   between them. Core-side gate on publish; differential corpus case against the
-   oracle (libghostty-vt implements it).
+3. **Synchronized output (DEC private mode 2026). DONE 2026-07-30**
+   (`sync-output-2026`). Core tracks the mode (terminal-global; ANY resize clears
+   it -- the oracle's measured rule, corpus-pinned with alt-screen survival,
+   136/136); the PUMP gates publishes while a batch is open, releasing on close
+   with a 150ms anti-stuck budget (forced frames carry MODE_SYNCHRONIZED_OUTPUT);
+   DECRQM answers so TUIs can detect it (1/2 for genuinely tracked modes, 0
+   otherwise -- reply grammar mirrored from oracle source);
+   `ghostty_terminal_mode_get` answers 2026. Gate-removed mutant seen red 3/3 on
+   the split-batch pty test.
 4. **DSR / DA query replies — slice 9's seam.** Programs probe the terminal
    (`ESC[6n`, `ESC[c`) and hang or degrade without answers. The reply path is
    `Host::send`, proven end-to-end in slice 8; esctest2 is the oracle and was

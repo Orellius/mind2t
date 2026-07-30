@@ -122,6 +122,13 @@ impl Terminal {
         self.state.reports_enabled = on;
     }
 
+    /// Whether the child enabled synchronized output (DEC mode 2026). The pump reads
+    /// this to hold frames back until the batch closes (or its anti-stuck budget runs
+    /// out); the core itself renders nothing and gates nothing.
+    pub fn synchronized_output(&self) -> bool {
+        self.state.synchronized_output
+    }
+
     /// Whether the child enabled bracketed paste (DEC mode 2004).
     ///
     /// The host consults this before writing a paste: wrapped in `ESC[200~`/`ESC[201~`
@@ -157,6 +164,12 @@ pub(crate) struct State {
     /// The core only TRACKS it -- wrapping paste bytes is the host's job, because the
     /// core does no I/O.
     pub(crate) bracketed_paste: bool,
+    /// Synchronized output (mode 2026). Terminal-global like 2004. The core only TRACKS
+    /// it -- the batching itself is the pump's job (publish gating), because rendering
+    /// cadence is I/O-adjacent policy the core must not own. Cleared by RIS and by ANY
+    /// resize: measured on the oracle, whose resize clears synchronized output even at
+    /// unchanged cell dimensions (stream_terminal.zig test, v1.3.2).
+    pub(crate) synchronized_output: bool,
     /// Flat index of the last printed cell, so a following zero-width codepoint knows which
     /// cluster it belongs to. Cleared by anything that moves the cursor.
     pub(crate) last_print: Option<usize>,
@@ -208,6 +221,7 @@ impl State {
             origin: false,
             cursor_visible: true,
             bracketed_paste: false,
+            synchronized_output: false,
             last_print: None,
             events: Vec::new(),
             replies: Vec::new(),
@@ -293,6 +307,7 @@ impl State {
             },
             modes: ruuah_vt_snapshot::Modes {
                 bracketed_paste: self.bracketed_paste,
+                synchronized_output: self.synchronized_output,
             },
             cursor: Cursor {
                 x: screen.x,
@@ -509,6 +524,11 @@ impl State {
         if cols == 0 || rows == 0 {
             return;
         }
+        // ANY resize ends a synchronized batch -- the oracle clears 2026 even when the
+        // cell dimensions did not change (its own test pins that), because a program
+        // holding the gate across a resize would freeze the redraw the user just asked
+        // for. Corpus-pinned in both the changed and unchanged directions.
+        self.synchronized_output = false;
         // The primary rejoins soft-wrapped lines only while DECAWM is on -- upstream passes
         // reflow = modes.get(.wraparound) (Terminal.zig:3783). The alternate is documented
         // by the ABI as not reflowing, so its rows only gain or lose columns.

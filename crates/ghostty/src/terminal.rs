@@ -120,6 +120,7 @@ impl Terminal {
             cursor: self.cursor()?,
             modes: Modes {
                 bracketed_paste: self.dec_mode(2004)?,
+                synchronized_output: self.dec_mode(2026)?,
             },
             grid,
             history,

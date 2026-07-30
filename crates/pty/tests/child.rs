@@ -298,3 +298,44 @@ fn a_scrolled_view_stays_pinned_to_its_content_while_the_child_prints() {
     );
     drop(host);
 }
+
+#[test]
+fn a_synchronized_batch_never_shows_half_drawn() {
+    // The batch is split across two writes 60ms apart -- separate pty reads, so an
+    // ungated pump publishes the partial "hid" frame in between (the mutant with the
+    // gate removed was seen to fail exactly there). Gated, the first frame that shows
+    // any of the batch shows all of it.
+    let (host, reader) = Host::spawn(
+        sh("printf 'ready\\n'; printf '\\033[?2026hhid'; sleep 0.06; printf 'den\\033[?2026l'; sleep 5"),
+        Options::new(40, 6),
+    )
+    .expect("spawn");
+
+    wait_for(&reader, |frame| text(frame).contains("ready"));
+    let first_of_batch = wait_for(&reader, |frame| text(frame).contains("hid"));
+    assert!(
+        text(&first_of_batch).contains("hidden"),
+        "the first frame showing the batch must show the WHOLE batch:\n{}",
+        text(&first_of_batch)
+    );
+    drop(host);
+}
+
+#[test]
+fn a_batch_the_child_never_closes_is_forced_out_by_the_budget() {
+    // The anti-stuck bound: a child that opens 2026 and walks away cannot freeze the
+    // display. The forced frame carries the mode bit, which is how a reader can tell
+    // it is looking at a budget-expired batch rather than a closed one.
+    let (host, reader) = Host::spawn(
+        sh("printf '\\033[?2026hstuck'; sleep 10"),
+        Options::new(40, 6),
+    )
+    .expect("spawn");
+
+    let frame = wait_for(&reader, |frame| text(frame).contains("stuck"));
+    assert!(
+        frame.synchronized_output(),
+        "a budget-forced frame still reports the open batch"
+    );
+    drop(host);
+}

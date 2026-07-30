@@ -150,6 +150,6 @@ let app = NSApplication.shared
 app.setActivationPolicy(.regular)
 let delegate = HostAppDelegate(
     command: command, autoDirection: autoDirection, config: config,
-    baseFontSize: baseFontSize, configError: configError)
+    baseFontSize: baseFontSize, configError: configError, configDir: configDir)
 app.delegate = delegate
 app.run()

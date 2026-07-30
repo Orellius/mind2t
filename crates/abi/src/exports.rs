@@ -247,12 +247,14 @@ pub unsafe extern "C" fn ghostty_terminal_get(
 /// may run concurrently with other reads. `out_value`, if non-null, must be valid for
 /// writing one `bool`.
 ///
-/// The modes this core tracks as queryable state are DEC 2004 (bracketed paste -- what
-/// a GUI host consults before every paste) and DEC 2026 (synchronized output -- what
-/// the pump's publish gate reads). Anything else answers `GHOSTTY_INVALID_VALUE`
-/// rather than a guessed `false`: a wrong "off" for a mode like 1006 would make a
-/// consumer silently drop mouse encoding, which is worse than an error it can see.
-/// Extend per mode, each with its own corpus pin, as consumers need them.
+/// The modes this core tracks as queryable state: DEC 2004 (bracketed paste -- what a
+/// GUI host consults before every paste), DEC 2026 (synchronized output -- what the
+/// pump's publish gate reads), and the mouse family 9/1000/1002/1003 (event kinds),
+/// 1005/1006/1015/1016 (report formats) and 1007 (alternate scroll, default ON) --
+/// raw bits as set/reset last left them, matching the oracle's own table. Anything
+/// else answers `GHOSTTY_INVALID_VALUE` rather than a guessed `false`: a wrong "off"
+/// would make a consumer silently drop a feature, which is worse than an error it can
+/// see. Extend per mode, each with its own corpus pin, as consumers need them.
 pub unsafe extern "C" fn ghostty_terminal_mode_get(
     handle: GhosttyTerminal,
     mode: GhosttyMode,
@@ -278,6 +280,46 @@ pub unsafe extern "C" fn ghostty_terminal_mode_get(
         }
         2026 => {
             unsafe { *out_value = view.modes.synchronized_output };
+            GHOSTTY_SUCCESS
+        }
+        // The mouse family: raw bits, the same table DECRQM answers from. A GUI host
+        // reads 1000/1002/1003 to decide whether a pointer event becomes bytes at all,
+        // 1005/1006/1015/1016 to pick the encoding, and 1007 to route the wheel on the
+        // alternate screen.
+        9 => {
+            unsafe { *out_value = view.modes.mouse_event_x10 };
+            GHOSTTY_SUCCESS
+        }
+        1000 => {
+            unsafe { *out_value = view.modes.mouse_event_normal };
+            GHOSTTY_SUCCESS
+        }
+        1002 => {
+            unsafe { *out_value = view.modes.mouse_event_button };
+            GHOSTTY_SUCCESS
+        }
+        1003 => {
+            unsafe { *out_value = view.modes.mouse_event_any };
+            GHOSTTY_SUCCESS
+        }
+        1005 => {
+            unsafe { *out_value = view.modes.mouse_format_utf8 };
+            GHOSTTY_SUCCESS
+        }
+        1006 => {
+            unsafe { *out_value = view.modes.mouse_format_sgr };
+            GHOSTTY_SUCCESS
+        }
+        1015 => {
+            unsafe { *out_value = view.modes.mouse_format_urxvt };
+            GHOSTTY_SUCCESS
+        }
+        1016 => {
+            unsafe { *out_value = view.modes.mouse_format_sgr_pixels };
+            GHOSTTY_SUCCESS
+        }
+        1007 => {
+            unsafe { *out_value = view.modes.mouse_alternate_scroll };
             GHOSTTY_SUCCESS
         }
         _ => GHOSTTY_INVALID_VALUE,

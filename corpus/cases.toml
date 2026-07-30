@@ -1184,73 +1184,63 @@ note = "DECSTR (CSI ! p). The oracle has no ! intermediate dispatch at all (v1.3
 
 [[case]]
 name = "mouse-9-x10-tracking"
-expect = "diff"
-diff_paths = ["modes.mouse_event_x10"]
+expect = "match"
 bytes = "\u001B[?9h"
-note = "X10 mouse reporting. The raw bit is the observable (ghostty_terminal_mode_get); reports themselves are host output the differential cannot see. In as diff until the core routes the mouse family."
+note = "X10 mouse reporting. The raw bit is the observable (ghostty_terminal_mode_get); reports themselves are host output the differential cannot see. Went in as diff before the core routed the family and was promoted by the implementation."
 
 [[case]]
 name = "mouse-1000-normal-tracking"
-expect = "diff"
-diff_paths = ["modes.mouse_event_normal"]
+expect = "match"
 bytes = "\u001B[?1000h"
-note = "Normal tracking (press+release). In as diff until the core routes the mouse family."
+note = "Normal tracking (press+release). Went in as diff before the core routed the family and was promoted by the implementation."
 
 [[case]]
 name = "mouse-1002-button-tracking"
-expect = "diff"
-diff_paths = ["modes.mouse_event_button"]
+expect = "match"
 bytes = "\u001B[?1002h"
-note = "Button-event tracking (adds drag motion). In as diff until the core routes the mouse family."
+note = "Button-event tracking (adds drag motion). Went in as diff before the core routed the family and was promoted by the implementation."
 
 [[case]]
 name = "mouse-1003-any-tracking"
-expect = "diff"
-diff_paths = ["modes.mouse_event_any"]
+expect = "match"
 bytes = "\u001B[?1003h"
-note = "Any-event tracking (motion without buttons). In as diff until the core routes the mouse family."
+note = "Any-event tracking (motion without buttons). Went in as diff before the core routed the family and was promoted by the implementation."
 
 [[case]]
 name = "mouse-1005-utf8-format"
-expect = "diff"
-diff_paths = ["modes.mouse_format_utf8"]
+expect = "match"
 bytes = "\u001B[?1005h"
-note = "UTF-8 coordinate format. In as diff until the core routes the mouse family."
+note = "UTF-8 coordinate format. Went in as diff before the core routed the family and was promoted by the implementation."
 
 [[case]]
 name = "mouse-1006-sgr-format"
-expect = "diff"
-diff_paths = ["modes.mouse_format_sgr"]
+expect = "match"
 bytes = "\u001B[?1006h"
-note = "SGR format, the one every modern TUI asks for. In as diff until the core routes the mouse family."
+note = "SGR format, the one every modern TUI asks for. Went in as diff before the core routed the family and was promoted by the implementation."
 
 [[case]]
 name = "mouse-1015-urxvt-format"
-expect = "diff"
-diff_paths = ["modes.mouse_format_urxvt"]
+expect = "match"
 bytes = "\u001B[?1015h"
-note = "urxvt decimal format. In as diff until the core routes the mouse family."
+note = "urxvt decimal format. Went in as diff before the core routed the family and was promoted by the implementation."
 
 [[case]]
 name = "mouse-1016-sgr-pixels-format"
-expect = "diff"
-diff_paths = ["modes.mouse_format_sgr_pixels"]
+expect = "match"
 bytes = "\u001B[?1016h"
-note = "SGR-Pixels format. In as diff until the core routes the mouse family."
+note = "SGR-Pixels format. Went in as diff before the core routed the family and was promoted by the implementation."
 
 [[case]]
 name = "mouse-raw-bits-are-independent"
-expect = "diff"
-diff_paths = ["modes.mouse_event_normal"]
+expect = "match"
 bytes = "\u001B[?1000h\u001B[?1002h\u001B[?1002l"
-note = "The trap this family carries: the oracle records every mode's RAW bit before deriving its last-writer event kind (stream_terminal.zig setMode), so after 1000h 1002h 1002l the 1000 bit is STILL SET (DECRQM answers 1) even though the derived kind dropped to none and reporting is off. A core that stores only 'the current mode' answers this wrong."
+note = "The trap this family carries: the oracle records every mode's RAW bit before deriving its last-writer event kind (stream_terminal.zig setMode), so after 1000h 1002h 1002l the 1000 bit is STILL SET (DECRQM answers 1) even though the derived kind dropped to none and reporting is off. A core that stores only the-current-mode answers this wrong; went in as diff, promoted by the raw-bit implementation."
 
 [[case]]
 name = "mouse-1007-alternate-scroll-default-on"
-expect = "diff"
-diff_paths = ["modes.mouse_alternate_scroll"]
+expect = "match"
 bytes = "\u001B[?1007l"
-note = "Alternate scroll is the one mouse mode that DEFAULTS ON (modes.zig marks it .default = true). The 1007l pins BOTH halves at once: the shared on-default (a wrong candidate default would add a second path on every other mouse case) and the reset direction, which the unrouted core cannot follow yet -- measured 2026-07-30, oracle=false candidate=true. Promotion flips this when the core routes 1007."
+note = "Alternate scroll is the one mouse mode that DEFAULTS ON (modes.zig marks it .default = true). The 1007l pins BOTH halves at once: the shared on-default (a wrong candidate default would add a second path on every other mouse case) and the reset direction, measured 2026-07-30 as oracle=false candidate=true before the core routed 1007, then promoted by the implementation."
 
 [[case]]
 name = "mouse-1007-restored-by-ris"
@@ -1260,10 +1250,9 @@ note = "RIS returns modes to their DEFAULTS, not to false: 1007 comes back ON af
 
 [[case]]
 name = "mouse-modes-survive-the-alt-screen"
-expect = "diff"
-diff_paths = ["modes.mouse_event_normal", "modes.mouse_format_sgr"]
+expect = "match"
 bytes = "\u001B[?1000h\u001B[?1006h\u001B[?1049h"
-note = "Mouse modes are terminal-global like 2004: entering the alternate screen keeps them. vim enables 1000/1006 and then 1049h -- clearing on the switch would kill its mouse support exactly when it starts."
+note = "Mouse modes are terminal-global like 2004: entering the alternate screen keeps them. vim enables 1000/1006 and then 1049h -- clearing on the switch would kill its mouse support exactly when it starts. Went in as diff, promoted by the implementation."
 
 [[case]]
 name = "sync-2026-tracked"

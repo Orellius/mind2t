@@ -72,7 +72,9 @@ impl Terminal {
     }
 
     /// The raw handle, for the render state to read from.
-    pub(crate) fn raw(&self) -> sys::GhosttyTerminal {
+    /// The raw handle, for tests that drive oracle ABI surfaces this wrapper does not
+    /// cover (the mouse encoder's `setopt_from_terminal`). Reads only.
+    pub fn raw(&self) -> sys::GhosttyTerminal {
         self.raw
     }
 

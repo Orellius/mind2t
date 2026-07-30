@@ -24,7 +24,7 @@ use ruuah_vt_host::{
     DEFAULT_FONT_SIZE, RuuahConfig, RuuahHost, RuuahHostFrame, RuuahHostOptions, RuuahHostResult,
     ruuah_config_error, ruuah_config_free, ruuah_config_load, ruuah_host_free, ruuah_host_paste,
     ruuah_host_poll, ruuah_host_poll_skipping_row_for_testing, ruuah_host_resize,
-    ruuah_host_row_text, ruuah_host_send, ruuah_host_spawn,
+    ruuah_host_row_text, ruuah_host_scroll, ruuah_host_send, ruuah_host_spawn,
 };
 use ruuah_vt_render::{FontStack, Renderer};
 
@@ -575,6 +575,7 @@ fn empty_frame() -> RuuahHostFrame {
         background: [0; 4],
         row_semantics: ptr::null(),
         row_count: 0,
+        viewport_offset: 0,
     }
 }
 
@@ -1110,5 +1111,103 @@ fn a_kitty_image_lands_as_pixels_through_the_c_surface() {
         [255, 0, 0, 255],
         "a cell outside the placement stays background"
     );
+    unsafe { ruuah_host_free(host) };
+}
+
+/// The viewport through the C boundary, both directions. The reference for the scrolled
+/// view is built with the pump's own `Publisher` (publish_scrolled) and drawn on the CPU
+/// backend, so equality re-asserts CPU == GPU through the scrolled path as well. The
+/// sensitivity control is the two references themselves: scrolled and bottom must differ,
+/// or matching either proves nothing. There is no oracle for any of this -- libghostty-vt
+/// exports no viewport surface -- so this test and the frame/pty suites ARE the gate.
+#[test]
+fn scrolling_through_the_c_surface_shows_scrollback_pixels() {
+    const LINES: usize = 40;
+    const OFFSET: u32 = 12;
+
+    // What the child's loop produces on the wire (ONLCR: \n becomes \r\n).
+    let mut wire = Vec::new();
+    for i in 0..LINES {
+        wire.extend_from_slice(format!("scroll-{i}\r\n").as_bytes());
+    }
+
+    let reference = |offset: u32| -> (Vec<u8>, u32) {
+        let mut terminal = Terminal::with_scrollback(COLS, ROWS, 10_000);
+        terminal.write(&wire);
+        let (writer, reader) = channel(COLS, ROWS);
+        let mut publisher = Publisher::new(writer);
+        publisher
+            .publish_scrolled(&mut terminal, offset)
+            .expect("publish reference");
+        let mut frame = Frame::new();
+        reader.read_into(&mut frame);
+        assert!(frame.is_valid(), "single-threaded read cannot tear");
+        let fonts = FontStack::system(DEFAULT_FONT_SIZE).expect("system fonts");
+        let mut renderer = Renderer::new(fonts, COLS, ROWS);
+        renderer.draw_all(&frame);
+        (renderer.pixels(), frame.viewport)
+    };
+
+    let (bottom_want, bottom_viewport) = reference(0);
+    let (scrolled_want, scrolled_viewport) = reference(OFFSET);
+    assert_eq!(bottom_viewport, 0);
+    assert_eq!(scrolled_viewport, OFFSET, "the offset survives the reference publish");
+    assert_ne!(
+        bottom_want, scrolled_want,
+        "the control: a comparison that cannot tell the two views apart proves nothing"
+    );
+
+    // `cat` keeps the child alive: a pump that lost its child stops publishing, and a
+    // scroll after that would silently test nothing.
+    let command = CString::new(format!(
+        "i=0; while [ $i -lt {LINES} ]; do echo scroll-$i; i=$((i+1)); done; cat"
+    ))
+    .expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+        config: ptr::null(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+
+    if !poll_until_pixels(host, &bottom_want) {
+        die(host, "the live bottom never matched its reference".to_string());
+    }
+
+    assert_eq!(
+        unsafe { ruuah_host_scroll(host, OFFSET as i32) },
+        RuuahHostResult::Success
+    );
+    if !poll_until_pixels(host, &scrolled_want) {
+        die(
+            host,
+            format!("scrolling {OFFSET} rows never produced the scrolled reference's pixels"),
+        );
+    }
+
+    // The polled frame reports where the view landed, for scroll indicators.
+    let mut polled = empty_frame();
+    assert_eq!(
+        unsafe { ruuah_host_poll(host, &mut polled) },
+        RuuahHostResult::Success
+    );
+    assert_eq!(polled.viewport_offset, OFFSET);
+
+    // INT32_MIN snaps back to the live bottom.
+    assert_eq!(
+        unsafe { ruuah_host_scroll(host, i32::MIN) },
+        RuuahHostResult::Success
+    );
+    if !poll_until_pixels(host, &bottom_want) {
+        die(host, "snapping to the bottom never restored the live view".to_string());
+    }
+
     unsafe { ruuah_host_free(host) };
 }

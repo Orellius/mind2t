@@ -84,6 +84,10 @@ typedef struct {
    * poll, resize, or free. NULL before the first drawn frame. */
   const uint8_t *row_semantics;
   uint32_t row_count;
+  /* Rows the displayed view is scrolled up into history; 0 is the live bottom. Set by
+   * the pump after clamping, so it reports where the view actually IS -- draw scroll
+   * indicators from this, never from accumulated deltas. */
+  uint32_t viewport_offset;
 } RuuahHostFrame;
 
 /* RuuahHostFrame.row_semantics values, and ruuah_host_row_text filters. */
@@ -118,6 +122,13 @@ RuuahHostResult ruuah_host_send(RuuahHost *host, const uint8_t *bytes, size_t le
  *
  * bytes may be NULL only when len is 0. */
 RuuahHostResult ruuah_host_paste(RuuahHost *host, const uint8_t *bytes, size_t len);
+
+/* Scrolls the displayed view through scrollback: positive rows climbs into history,
+ * negative returns toward the live bottom, INT32_MIN snaps straight to it. Deltas
+ * accumulate on the pump thread and are clamped against what history actually holds;
+ * the landed position comes back in the next polled frame's viewport_offset. Typing
+ * does not snap the view -- apply that policy in the embedder, via INT32_MIN. */
+RuuahHostResult ruuah_host_scroll(RuuahHost *host, int32_t rows);
 
 /* Resizes the pty, the terminal and the render target. Refused (with no state change)
  * when the geometry exceeds the frame channel's capacity or either dimension is 0. */

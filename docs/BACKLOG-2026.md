@@ -99,9 +99,22 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
    slice, images-v2's class); the whole frame repaints while scrolled; on the
    alt screen the wheel does nothing yet (alternate scroll mode 1007 = future,
    pairs with item 5's mouse work).
-7. **Kitty keyboard protocol (progressive enhancement).** 2026 CLIs (Claude Code
-   included) request it for shift+enter and friends; without it they fall back
-   silently. Mode negotiation in core, encoding host-side.
+7. **Kitty keyboard protocol. DONE 2026-07-30** (`kitty-keyboard`) -- and it grew
+   into the WHOLE key path. Core: per-screen flag stack (oracle's exact ring/pop
+   semantics), the full CSI u family, the `CSI ? u` detection reply, modes
+   66/1035/1036 + modifyOtherKeys tracked (corpus 155/155, esctest 120 with
+   DECNKM promoted). Encoder: `pty/src/key.rs` ports key_encode.zig entirely --
+   legacy tables, ctrl mapping, modifyOtherKeys, all five kitty flags, alternates,
+   event types, associated text -- BYTE-COMPARED against the oracle's key-encoder
+   ABI over 135,216 cases (zero divergent) plus a terminal-derived-state layer.
+   Host: `ruuah_host_key` (37 exports) encodes against the polled frame's modes.
+   Swift: the hand-rolled byte encoder is gone; keyDown/keyUp/flagsChanged forward
+   events built by Ghostty's own macOS recipe, with the keycode map GENERATED from
+   the oracle's table (`scripts/gen-keymap.ts`). Live tap: `ok^[[27u^[[A` -- text,
+   kitty-form escape, legacy arrow under disambiguate, one window
+   (docs/images/kitty-keyboard-tap-20260730.png). Not done, named: IME composition
+   (composing always false, the same boundary the byte path had); option-as-alt
+   config (encoder supports it, no config surface); DECBKM (mode 67) untracked.
 
 ## P2 — polish that reads as craft
 

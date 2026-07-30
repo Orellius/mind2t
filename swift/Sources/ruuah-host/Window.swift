@@ -16,7 +16,10 @@ final class TerminalView: NSView {
     /// holds only the background color, so the margin matches the terminal's own black.
     let contentLayer = CALayer()
 
-    var onKeyBytes: (([UInt8]) -> Void)?
+    /// One keyboard event for the host's key encoder: (action, key, mods,
+    /// consumedMods, utf8, unshiftedCodepoint) in the ruuah_host_key vocabulary.
+    /// Returns whether the terminal produced bytes.
+    var onKey: ((UInt32, UInt32, UInt32, UInt32, [UInt8], UInt32) -> Bool)?
     var onPaste: (([UInt8]) -> Void)?
     var onNewSession: (() -> Void)?
     var onCloseSession: (() -> Void)?
@@ -357,33 +360,95 @@ final class TerminalView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
-        guard let bytes = encode(event) else { return }
-        onKeyBytes?(bytes)
+        forwardKey(event, action: event.isARepeat ? 2 : 1)
     }
 
-    /// The minimal key encoder: printables and control characters pass through as the
-    /// UTF-8 AppKit already produced; arrows become their CSI sequences. This lives in the
-    /// GUI on purpose -- outside an input region the cursor is the running program's to
-    /// place, so the core never encodes keys (slice 5.6's rule).
-    private func encode(_ event: NSEvent) -> [UInt8]? {
-        if let special = event.specialKey {
-            switch special {
-            case .upArrow: return [0x1b, 0x5b, 0x41]
-            case .downArrow: return [0x1b, 0x5b, 0x42]
-            case .rightArrow: return [0x1b, 0x5b, 0x43]
-            case .leftArrow: return [0x1b, 0x5b, 0x44]
-            case .delete, .backspace, .deleteForward: return [0x7f]
-            case .carriageReturn, .enter: return [0x0d]
-            case .tab: return [0x09]
-            default: break
-            }
+    /// Releases matter now: kitty's report-events flag asks for them, and the host
+    /// answers Ignored under every legacy mode, so forwarding is free.
+    override func keyUp(with event: NSEvent) {
+        forwardKey(event, action: 0)
+    }
+
+    /// A modifier's own press and release arrive as flagsChanged, not keyDown; the
+    /// keyCode names the modifier and its flag's presence gives the direction. Kitty
+    /// mode with report-all is the consumer. NEVER read characters here -- AppKit
+    /// raises on flagsChanged events -- hence the empty text override.
+    override func flagsChanged(with event: NSEvent) {
+        guard let flag = TerminalView.modifierFlag(for: event.keyCode) else {
+            super.flagsChanged(with: event)
+            return
         }
-        guard let characters = event.characters, !characters.isEmpty else { return nil }
-        // Function-key scalars (U+F700...) are AppKit's own encoding, not bytes a child
-        // understands; anything not handled above is dropped rather than leaked.
-        if characters.unicodeScalars.contains(where: { $0.value >= 0xF700 && $0.value <= 0xF8FF }) {
-            return nil
+        let action: UInt32 = event.modifierFlags.contains(flag) ? 1 : 0
+        forwardKey(event, action: action, textOverride: [])
+    }
+
+    /// Which modifier a flagsChanged keyCode names (left/right pairs share a flag).
+    private static func modifierFlag(for keyCode: UInt16) -> NSEvent.ModifierFlags? {
+        switch keyCode {
+        case 56, 60: return .shift
+        case 59, 62: return .control
+        case 58, 61: return .option
+        case 54, 55: return .command
+        case 57: return .capsLock
+        default: return nil
+        }
+    }
+
+    /// NSEvent modifiers to the GhosttyMods bitmask the encoder speaks. macOS has no
+    /// numlock flag; the bit stays clear and mode 1035's default covers the keypad.
+    private static func keyMods(_ flags: NSEvent.ModifierFlags) -> UInt32 {
+        var mods: UInt32 = 0
+        if flags.contains(.shift) { mods |= 1 }
+        if flags.contains(.control) { mods |= 2 }
+        if flags.contains(.option) { mods |= 4 }
+        if flags.contains(.command) { mods |= 8 }
+        if flags.contains(.capsLock) { mods |= 16 }
+        return mods
+    }
+
+    /// The event's translated text, Ghostty's own macOS rules (NSEvent+Extension.swift):
+    /// a lone control character is re-translated without control -- the encoder owns
+    /// control mapping -- and AppKit's private-use function-key scalars (U+F700...)
+    /// never reach the child. Releases carry no text; kitty's associated text is a
+    /// press/repeat concept.
+    private static func eventText(_ event: NSEvent) -> [UInt8] {
+        guard event.type == .keyDown, let characters = event.characters, !characters.isEmpty
+        else { return [] }
+        if characters.count == 1, let scalar = characters.unicodeScalars.first,
+            scalar.value < 0x20
+        {
+            let plain = event.characters(
+                byApplyingModifiers: event.modifierFlags.subtracting(.control))
+            return Array((plain ?? "").utf8)
+        }
+        if characters.unicodeScalars.contains(where: { $0.value >= 0xF700 && $0.value <= 0xF8FF })
+        {
+            return []
         }
         return Array(characters.utf8)
+    }
+
+    /// Builds the host key event: the generated keycode map for identity, mods minus
+    /// control and command as consumed (Ghostty's years-old heuristic -- those two
+    /// never contribute to text translation on macOS), and the unmodified codepoint
+    /// via byApplyingModifiers rather than charactersIgnoringModifiers, whose
+    /// behavior shifts under ctrl.
+    @discardableResult
+    private func forwardKey(
+        _ event: NSEvent, action: UInt32, textOverride: [UInt8]? = nil
+    ) -> Bool {
+        let key = KeyMap.keyByCode[event.keyCode] ?? 0
+        let mods = TerminalView.keyMods(event.modifierFlags)
+        let consumed = TerminalView.keyMods(
+            event.modifierFlags.subtracting([.control, .command]))
+        let text = textOverride ?? TerminalView.eventText(event)
+        var unshifted: UInt32 = 0
+        if event.type == .keyDown || event.type == .keyUp,
+            let chars = event.characters(byApplyingModifiers: []),
+            let scalar = chars.unicodeScalars.first
+        {
+            unshifted = scalar.value
+        }
+        return onKey?(action, key, mods, consumed, text, unshifted) ?? false
     }
 }

@@ -109,10 +109,16 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         // Typing and pasting snap the view to the live bottom first -- the standard
         // terminal policy, applied here because the C surface deliberately leaves it
         // to the embedder. A no-op when already at the bottom.
-        view.onKeyBytes = { [weak self] bytes in
-            guard let session = self?.activeSession else { return }
-            session.scroll(Int32.min)
-            session.send(bytes)
+        view.onKey = { [weak self] action, key, mods, consumed, text, unshifted in
+            guard let session = self?.activeSession else { return false }
+            // Typing snaps to the live bottom, the policy the C surface leaves to the
+            // embedder -- presses only, so a held modifier's release doesn't snap.
+            if action != 0 {
+                session.scroll(Int32.min)
+            }
+            return session.key(
+                action: action, key: key, mods: mods, consumedMods: consumed,
+                text: text, unshiftedCodepoint: unshifted)
         }
         view.onPaste = { [weak self] bytes in
             guard let session = self?.activeSession else { return }

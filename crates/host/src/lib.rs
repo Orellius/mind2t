@@ -90,6 +90,10 @@ pub struct RuuahHostFrame {
     /// valid until the next poll, resize, or free. NULL before the first drawn frame.
     pub row_semantics: *const u8,
     pub row_count: u32,
+    /// Rows the displayed view is scrolled up into history; 0 is the live bottom. Set by
+    /// the pump after clamping, so it reports where the view actually IS -- a GUI drawing
+    /// a scroll indicator reads this, never its own accumulated deltas.
+    pub viewport_offset: u32,
 }
 
 pub const RUUAH_ROW_OUTPUT: u8 = 0;
@@ -245,6 +249,7 @@ fn poll_impl(host: &mut RuuahHost, mode: DrawMode) -> RuuahHostFrame {
             host.row_semantics.as_ptr()
         },
         row_count: host.row_semantics.len() as u32,
+        viewport_offset: host.frame.viewport,
     }
 }
 
@@ -485,6 +490,29 @@ pub unsafe extern "C" fn ruuah_host_paste(
         Ok(()) => RuuahHostResult::Success,
         Err(_) => RuuahHostResult::SendFailed,
     }
+}
+
+/// Scrolls the displayed view through scrollback: positive `rows` climbs into history,
+/// negative returns toward the live bottom, and `INT32_MIN` snaps straight to it.
+/// Deltas accumulate on the pump thread and are clamped against what history actually
+/// holds; the landed position comes back in the next polled frame's `viewport_offset`.
+/// Typing does NOT snap the view -- that is the embedder's policy to apply, via
+/// `INT32_MIN`, at whatever input seam it owns.
+///
+/// # Safety
+/// `host` must be a live handle from `ruuah_host_spawn`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_host_scroll(host: *mut RuuahHost, rows: i32) -> RuuahHostResult {
+    if host.is_null() {
+        return RuuahHostResult::InvalidValue;
+    }
+    let host = unsafe { &mut *host };
+    if rows == i32::MIN {
+        host.host.scroll_to_bottom();
+    } else {
+        host.host.scroll(rows);
+    }
+    RuuahHostResult::Success
 }
 
 /// Resizes the pty, the terminal and the render target.

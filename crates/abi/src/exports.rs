@@ -275,6 +275,10 @@ pub unsafe extern "C" fn ghostty_terminal_mode_get(
             unsafe { *out_value = view.modes.bracketed_paste };
             GHOSTTY_SUCCESS
         }
+        2026 => {
+            unsafe { *out_value = view.modes.synchronized_output };
+            GHOSTTY_SUCCESS
+        }
         _ => GHOSTTY_INVALID_VALUE,
     }
 }

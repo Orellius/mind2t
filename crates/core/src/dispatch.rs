@@ -44,6 +44,7 @@ impl State {
             }
             1049 => self.switch_screen(on, AltMode::M1049),
             2004 => self.bracketed_paste = on,
+            2026 => self.synchronized_output = on,
             _ => {}
         }
     }
@@ -145,6 +146,14 @@ impl State {
     pub(crate) fn csi(&mut self, params: &Params, intermediates: &[u8], ignore: bool, action: char) {
         if ignore {
             return;
+        }
+
+        // DECRQM (CSI Pm $ p / CSI ? Pd $ p) must precede the private-mode branch: the
+        // DEC form's intermediates START with `?`, and the h/l matcher below would
+        // otherwise swallow it silently.
+        if action == 'p' && (intermediates == [b'$'] || intermediates == [b'?', b'$']) {
+            let ansi = intermediates.len() == 1;
+            return self.mode_report(arg_or_zero(params, 0), ansi);
         }
 
         if intermediates.first() == Some(&b'?') {

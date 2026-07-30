@@ -48,6 +48,40 @@ impl State {
         self.replies.extend_from_slice(b"\x1bP!|00000000\x1b\\");
     }
 
+    /// DECRQM (CSI Pm $ p, or CSI ? Pd $ p) -> DECRPM `CSI [?]{mode};{state}$y`.
+    ///
+    /// The oracle's contract, mirrored from source (modes.zig `getReport` + `encode`):
+    /// state 1 = set, 2 = reset, 0 = not recognized; 3/4 (permanently set/reset) are
+    /// never produced. This core answers 1/2 ONLY for modes it genuinely tracks --
+    /// claiming an answer for a mode that has no behavior here would tell a program
+    /// (this is how 2026-era TUIs detect synchronized output) that a feature exists
+    /// when it does not. Everything else, and every ANSI-form mode, answers 0. Not
+    /// gated behind the reports grant: mode state is protocol, not screen content,
+    /// and the oracle answers unconditionally.
+    pub(crate) fn mode_report(&mut self, mode: u16, ansi: bool) {
+        let state: u8 = if ansi {
+            0
+        } else {
+            let tracked = match mode {
+                6 => Some(self.origin),
+                7 => Some(self.autowrap),
+                25 => Some(self.cursor_visible),
+                47 | 1047 | 1049 => Some(matches!(self.active, crate::terminal::Active::Alternate)),
+                2004 => Some(self.bracketed_paste),
+                2026 => Some(self.synchronized_output),
+                _ => None,
+            };
+            match tracked {
+                Some(true) => 1,
+                Some(false) => 2,
+                None => 0,
+            }
+        };
+        let prefix = if ansi { "" } else { "?" };
+        let reply = format!("\x1b[{prefix}{mode};{state}$y");
+        self.replies.extend_from_slice(reply.as_bytes());
+    }
+
     /// DECRQCRA (CSI Pid;Pp;Pt;Pl;Pb;Pr * y) -> DCS Pid ! ~ XXXX ST.
     ///
     /// Modern xterm semantics, which is what esctest2 asserts against: the checksum of a
@@ -197,6 +231,34 @@ mod tests {
         // 2 = iconify, 3 = move: a child steering the operator's window is not a
         // feature. 14/16 (pixel reports) wait for a consumer.
         assert_eq!(reporting_terminal(b"\x1b[2t\x1b[3;0;0t\x1b[14t\x1b[16t"), b"");
+    }
+
+    #[test]
+    fn decrqm_answers_only_for_modes_this_core_actually_tracks() {
+        // The detection handshake for synchronized output: reset -> set -> reset again
+        // after the mode drops. A wrong 0 here and every 2026-era TUI falls back.
+        assert_eq!(replies_for(b"\x1b[?2026$p"), b"\x1b[?2026;2$y");
+        assert_eq!(replies_for(b"\x1b[?2026h\x1b[?2026$p"), b"\x1b[?2026;1$y");
+        assert_eq!(replies_for(b"\x1b[?25l\x1b[?25$p"), b"\x1b[?25;2$y");
+        assert_eq!(replies_for(b"\x1b[?1049h\x1b[?1049$p"), b"\x1b[?1049;1$y");
+        // Untracked DEC mode and every ANSI-form mode: not recognized, honestly.
+        assert_eq!(replies_for(b"\x1b[?2027$p"), b"\x1b[?2027;0$y");
+        assert_eq!(replies_for(b"\x1b[4$p"), b"\x1b[4;0$y");
+    }
+
+    #[test]
+    fn a_resize_ends_a_synchronized_batch_even_at_the_same_size() {
+        // The oracle's own rule, measured: its resize clears 2026 even when the cell
+        // dimensions did not change.
+        let mut terminal = Terminal::new(20, 10);
+        terminal.write(b"\x1b[?2026h");
+        assert!(terminal.synchronized_output());
+        terminal.resize(20, 10);
+        assert!(!terminal.synchronized_output(), "unchanged dimensions still clear it");
+
+        terminal.write(b"\x1b[?2026h");
+        terminal.resize(30, 10);
+        assert!(!terminal.synchronized_output());
     }
 
     #[test]

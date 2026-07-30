@@ -372,6 +372,14 @@ fn pump(
     terminal.enable_reports(options.reports);
     let mut buffer = vec![0u8; 64 * 1024];
 
+    // Synchronized output (mode 2026): while the child holds the gate, reads parse but
+    // do not publish, so a renderer never shows a half-drawn batch. The budget is the
+    // anti-stuck bound -- a child that never closes its batch (crashed mid-escape, or
+    // simply hostile) gets force-published at this cadence rather than freezing the
+    // display. 150ms is the ecosystem's working norm for the gate.
+    const SYNC_BUDGET: std::time::Duration = std::time::Duration::from_millis(150);
+    let mut sync_since: Option<std::time::Instant> = None;
+
     // The viewport: how many rows the published view is scrolled up into history. Lives
     // here because the pump owns the terminal -- the GUI thread only ever sends deltas.
     let mut offset: usize = 0;
@@ -417,7 +425,19 @@ fn pump(
 
         let mut fds = [PollFd::new(&*master, PollFlags::IN)];
         match rustix::event::poll(&mut fds, Some(&TICK)) {
-            Ok(0) => continue,
+            Ok(0) => {
+                // A held batch whose budget ran out publishes even though the child went
+                // quiet -- the quiet child is exactly the stuck case the budget exists for.
+                if let Some(since) = sync_since {
+                    if since.elapsed() >= SYNC_BUDGET {
+                        sync_since = Some(std::time::Instant::now());
+                        publisher
+                            .publish_scrolled(&mut terminal, offset as u32)
+                            .expect(GATED);
+                    }
+                }
+                continue;
+            }
             Ok(_) => {}
             Err(Errno::INTR) => continue,
             Err(_) => break,
@@ -483,9 +503,25 @@ fn pump(
                         .min(terminal.screen().history.len());
                 }
                 anchored_pushed = pushed;
-                publisher
-                    .publish_scrolled(&mut terminal, offset as u32)
-                    .expect(GATED);
+                // The synchronized-output gate: hold the frame while the batch is open,
+                // publish when it closes (this very read is usually the `2026l`), and
+                // force one through when the budget expires so the display can never be
+                // frozen by a child that forgets to close.
+                let publish_now = if terminal.synchronized_output() {
+                    let since = *sync_since.get_or_insert_with(std::time::Instant::now);
+                    since.elapsed() >= SYNC_BUDGET
+                } else {
+                    sync_since = None;
+                    true
+                };
+                if publish_now {
+                    if sync_since.is_some() {
+                        sync_since = Some(std::time::Instant::now());
+                    }
+                    publisher
+                        .publish_scrolled(&mut terminal, offset as u32)
+                        .expect(GATED);
+                }
             }
             Err(Errno::INTR) | Err(Errno::AGAIN) => continue,
             Err(_) => break,

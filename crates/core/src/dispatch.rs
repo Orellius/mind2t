@@ -33,6 +33,12 @@ impl State {
             }
             1 => self.cursor_keys = on,
             7 => self.autowrap = on,
+            // The key-encoder trio: keypad application (also ESC = / ESC >), keypad-
+            // ignored-under-numlock, and alt-sends-ESC-prefix. The latter two DEFAULT
+            // ON in the oracle's table.
+            66 => self.keypad_keys = on,
+            1035 => self.ignore_keypad_with_numlock = on,
+            1036 => self.alt_esc_prefix = on,
             25 => self.cursor_visible = on,
             47 => self.switch_screen(on, AltMode::M47),
             1047 => self.switch_screen(on, AltMode::M1047),
@@ -149,6 +155,62 @@ impl State {
         self.screen_mut().erase_in_display(2, blank);
     }
 
+    /// The kitty keyboard CSI family (`stream.zig`'s 'u' intermediate dispatch):
+    /// `?` queries, `>` pushes, `<` pops, `=` combines. A flags value past the five
+    /// defined bits invalidates the WHOLE command (the oracle warns and drops it,
+    /// no clamping); a push with any param count other than exactly one pushes 0.
+    fn kitty_keyboard_csi(&mut self, params: &Params, intermediates: &[u8]) {
+        use crate::kitty_keys::{KITTY_ALL, SetMode};
+        let count = params.len();
+        match intermediates.first() {
+            Some(&b'?') => self.kitty_keyboard_report(),
+            Some(&b'>') => {
+                let flags = if count == 1 { arg_or_zero(params, 0) } else { 0 };
+                if flags > u16::from(KITTY_ALL) {
+                    return;
+                }
+                self.screen_mut().kitty_keyboard.push(flags as u8);
+            }
+            Some(&b'<') => {
+                // vte reports an absent parameter list as one zero-valued group, so
+                // `CSI < u` and `CSI < 0 u` are indistinguishable here; the VT
+                // missing-or-zero-means-one rule resolves both to a pop of one,
+                // which matches the oracle on the only spelling programs send.
+                self.screen_mut().kitty_keyboard.pop(usize::from(arg(params, 0)));
+            }
+            Some(&b'=') => {
+                let flags = if count >= 1 { arg_or_zero(params, 0) } else { 0 };
+                if flags > u16::from(KITTY_ALL) {
+                    return;
+                }
+                let mode = match if count >= 2 { arg_or_zero(params, 1) } else { 1 } {
+                    1 => SetMode::Set,
+                    2 => SetMode::Or,
+                    3 => SetMode::Not,
+                    _ => return,
+                };
+                self.screen_mut().kitty_keyboard.set(mode, flags as u8);
+            }
+            _ => {}
+        }
+    }
+
+    /// xterm modifyOtherKeys (`CSI > Pp ; Pv m`). Only `>4;2m` turns the numeric
+    /// form ON; every other VALID form -- including bare `CSI > m` -- resets it,
+    /// and an invalid one changes nothing (the oracle warns and drops, no reset).
+    fn modify_key_format(&mut self, params: &Params) {
+        let count = params.len();
+        if count == 0 {
+            self.modify_other_keys_2 = false;
+            return;
+        }
+        if count > 2 || !matches!(arg_or_zero(params, 0), 0 | 1 | 2 | 4) {
+            return;
+        }
+        self.modify_other_keys_2 =
+            arg_or_zero(params, 0) == 4 && count == 2 && arg_or_zero(params, 1) == 2;
+    }
+
     pub(crate) fn csi(&mut self, params: &Params, intermediates: &[u8], ignore: bool, action: char) {
         if ignore {
             return;
@@ -160,6 +222,21 @@ impl State {
         if action == 'p' && (intermediates == [b'$'] || intermediates == [b'?', b'$']) {
             let ansi = intermediates.len() == 1;
             return self.mode_report(arg_or_zero(params, 0), ansi);
+        }
+
+        // The kitty keyboard family (CSI ? u / > u / < u / = u) must also precede the
+        // private-mode branch: the query's intermediates start with `?` and action `u`
+        // would fall into its silent `_ => return`. Bare `CSI u` (SCORC) is not handled
+        // here -- it falls through to the intermediate-free match below, the oracle's
+        // own split (`stream.zig` dispatches on intermediates.len for 'u').
+        if action == 'u' && !intermediates.is_empty() {
+            return self.kitty_keyboard_csi(params, intermediates);
+        }
+
+        // xterm modifyOtherKeys (CSI > Pp ; Pv m). Before the private-mode branch for
+        // symmetry, though only the `>` marker reaches it.
+        if action == 'm' && intermediates.first() == Some(&b'>') {
+            return self.modify_key_format(params);
         }
 
         if intermediates.first() == Some(&b'?') {
@@ -326,6 +403,11 @@ impl State {
             }
             b'7' => self.save_cursor(),
             b'8' => self.restore_cursor(),
+            // DECKPAM / DECKPNM route through the same mode-66 state as CSI ?66h/l --
+            // the oracle's ESC dispatch emits set_mode/reset_mode for them, so
+            // mode_get(66) observes both spellings identically.
+            b'=' => self.keypad_keys = true,
+            b'>' => self.keypad_keys = false,
             b'c' => self.full_reset(),
             _ => {}
         }

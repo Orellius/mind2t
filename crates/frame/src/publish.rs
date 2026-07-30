@@ -83,6 +83,11 @@ impl Publisher {
         let mouse_alternate_scroll = terminal.mouse_alternate_scroll();
         let alternate_screen = terminal.on_alternate_screen();
         let cursor_keys = terminal.cursor_keys();
+        let keypad_keys = terminal.keypad_keys();
+        let ignore_keypad_with_numlock = terminal.ignore_keypad_with_numlock();
+        let alt_esc_prefix = terminal.alt_esc_prefix();
+        let modify_other_keys_2 = terminal.modify_other_keys_2();
+        let kitty_key_flags = terminal.kitty_key_flags();
         let cluster = &mut self.cluster;
 
         // OSC 8: the core's link ids are table-wide; the frame carries only the links
@@ -194,6 +199,19 @@ impl Publisher {
             if cursor_keys {
                 modes |= crate::frame::Frame::MODE_CURSOR_KEYS;
             }
+            if keypad_keys {
+                modes |= crate::frame::Frame::MODE_KEYPAD_KEYS;
+            }
+            if ignore_keypad_with_numlock {
+                modes |= crate::frame::Frame::MODE_IGNORE_KEYPAD_WITH_NUMLOCK;
+            }
+            if alt_esc_prefix {
+                modes |= crate::frame::Frame::MODE_ALT_ESC_PREFIX;
+            }
+            if modify_other_keys_2 {
+                modes |= crate::frame::Frame::MODE_MODIFY_OTHER_KEYS_2;
+            }
+            modes |= u64::from(kitty_key_flags) << crate::frame::Frame::MODE_KITTY_KEY_SHIFT;
             frame.modes(modes);
 
             frame.viewport(offset as u32);

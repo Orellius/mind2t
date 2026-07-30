@@ -327,6 +327,20 @@ pub unsafe extern "C" fn ghostty_terminal_mode_get(
             unsafe { *out_value = view.modes.cursor_keys };
             GHOSTTY_SUCCESS
         }
+        // The key-encoder trio (66 keypad application, 1035 numlock-ignores-keypad,
+        // 1036 alt-sends-ESC), tracked for the host's key encoding.
+        66 => {
+            unsafe { *out_value = view.modes.keypad_keys };
+            GHOSTTY_SUCCESS
+        }
+        1035 => {
+            unsafe { *out_value = view.modes.ignore_keypad_with_numlock };
+            GHOSTTY_SUCCESS
+        }
+        1036 => {
+            unsafe { *out_value = view.modes.alt_esc_prefix };
+            GHOSTTY_SUCCESS
+        }
         _ => GHOSTTY_INVALID_VALUE,
     }
 }

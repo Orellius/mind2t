@@ -664,6 +664,92 @@ pub unsafe extern "C" fn ruuah_host_mouse(
     }
 }
 
+/// Feeds one keyboard event to the key encoder and writes the result to the pty.
+///
+/// `action`: 0 release, 1 press, 2 repeat. `key`: the C key enum from
+/// `ghostty/vt/key/event.h` (KeyMap.swift's values). `mods`/`consumed_mods`: the
+/// GhosttyMods bitmask (shift 1, ctrl 2, alt 4, super 8, caps 16, num 32).
+/// `text`/`text_len`: the translated UTF-8 for the event, or NULL/0 when the key
+/// produced none. `unshifted_codepoint`: the key's codepoint with no modifiers, 0
+/// when it has none.
+///
+/// Every encoding mode rides the last polled frame -- DECCKM, keypad application,
+/// 1035/1036, modifyOtherKeys, and the active screen's kitty flags -- so a kitty
+/// negotiation takes effect at the very next keystroke a rendering host forwards.
+/// Returns `Success` when bytes were written, `Ignored` when the event encodes to
+/// nothing (a bare modifier under legacy modes, a release without report-events,
+/// mid-IME composition), `InvalidValue` for an out-of-range action/key or invalid
+/// UTF-8.
+///
+/// # Safety
+/// `host` must be a live handle from `ruuah_host_spawn`; `text`, if non-NULL, must
+/// point to `text_len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_host_key(
+    host: *mut RuuahHost,
+    action: u32,
+    key: u32,
+    mods: u32,
+    consumed_mods: u32,
+    text: *const u8,
+    text_len: usize,
+    unshifted_codepoint: u32,
+) -> RuuahHostResult {
+    use ruuah_vt_pty::key::{Key, KeyAction, KeyEvent, KeyOptions, OptionAsAlt};
+    if host.is_null() || action > 2 {
+        return RuuahHostResult::InvalidValue;
+    }
+    let host = unsafe { &mut *host };
+    let action = match action {
+        0 => KeyAction::Release,
+        1 => KeyAction::Press,
+        _ => KeyAction::Repeat,
+    };
+    // Key::ALL is in C declaration order by construction, so the C value indexes it.
+    let Some(&key) = Key::ALL.get(key as usize) else {
+        return RuuahHostResult::InvalidValue;
+    };
+    let utf8 = if text.is_null() || text_len == 0 {
+        ""
+    } else {
+        match std::str::from_utf8(unsafe { std::slice::from_raw_parts(text, text_len) }) {
+            Ok(text) => text,
+            Err(_) => return RuuahHostResult::InvalidValue,
+        }
+    };
+
+    let encoded = ruuah_vt_pty::key::encode(
+        &KeyEvent {
+            action,
+            key,
+            mods: mods as u16,
+            consumed_mods: consumed_mods as u16,
+            composing: false,
+            utf8,
+            unshifted_codepoint,
+        },
+        &KeyOptions {
+            cursor_key_application: host.frame.cursor_keys(),
+            keypad_key_application: host.frame.keypad_keys(),
+            ignore_keypad_with_numlock: host.frame.ignore_keypad_with_numlock(),
+            alt_esc_prefix: host.frame.alt_esc_prefix(),
+            modify_other_keys_state_2: host.frame.modify_other_keys_2(),
+            kitty_flags: host.frame.kitty_key_flags(),
+            // The window owns option-as-alt policy; none is configured yet, and False
+            // matches what setopt_from_terminal resets it to.
+            macos_option_as_alt: OptionAsAlt::False,
+            backarrow_key_mode: false,
+        },
+    );
+    if encoded.is_empty() {
+        return RuuahHostResult::Ignored;
+    }
+    match host.host.send(&encoded) {
+        Ok(()) => RuuahHostResult::Success,
+        Err(_) => RuuahHostResult::SendFailed,
+    }
+}
+
 /// Routes a wheel gesture through the terminal's three-way precedence, the oracle's
 /// own (`Surface.zig` scrollCallback): an active mouse mode gets wheel-button reports
 /// (64/65); otherwise the alternate screen with alternate scroll (1007, default on)

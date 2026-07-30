@@ -57,6 +57,7 @@ EXPECTED=(
   ruuah_host_mouse_geometry
   ruuah_host_mouse
   ruuah_host_wheel
+  ruuah_host_key
   ruuah_host_scroll
   ruuah_host_resize
   ruuah_host_cell_metrics

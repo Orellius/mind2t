@@ -60,6 +60,9 @@ fn empty_frame() -> RuuahHostFrame {
         row_semantics: ptr::null(),
         row_count: 0,
         viewport_offset: 0,
+        cursor_col: 0,
+        cursor_row: 0,
+        cursor_visible: false,
     }
 }
 

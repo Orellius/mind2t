@@ -275,6 +275,8 @@ RuuahHostResult ruuah_host_link_at(
 
 /* Pops the next host-facing event, oldest first. *kind: 0 = none, 1 = set clipboard to
  * payload, 2 = notification (payload = title, '\n', body), 3 = bell. An event is
+ * 4 = title (payload = UTF-8), 5 = progress (payload = state,value), 6 = command
+ * started (OSC 133;C, no payload -- read the input cells for the text). An event is
  * consumed only when cap held its whole payload; a smaller cap reports kind + *len and
  * leaves it queued (size-then-fetch never loses an event). */
 RuuahHostResult ruuah_host_next_event(

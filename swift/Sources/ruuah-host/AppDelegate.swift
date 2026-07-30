@@ -267,9 +267,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         // Mouse geometry is per-host state; a session activated (or just spawned)
         // after the last layout pass has never seen the view's size.
         view.pushMouseGeometry()
-        // The ghost and its block tracking belong to the outgoing session's grid.
+        // The ghost and its input tracking belong to the outgoing session's grid.
         hideGhost()
-        lastNewestBlockStart = -1
+        lastInputLine = ""
         window.makeFirstResponder(view)
     }
 
@@ -303,6 +303,11 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         view.updateGutter(
             blocks: computeBlocks(session.rowClasses),
             cellHeightDevice: session.cellHeight)
+        // Events BEFORE the suggestion pass: the 133;C event and the cursor's move to
+        // the fresh prompt land in the SAME polled frame, so recording must read the
+        // previous tick's input line before captureAndSuggest overwrites it (the tap
+        // caught exactly this race as an empty history file).
+        apply(events: session.drainEvents(), to: session)
         captureAndSuggest(session)
         if !windowSized && session.cellWidth != 0 {
             windowSized = true
@@ -312,7 +317,6 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             closeSession(index: activeIndex)
             return
         }
-        apply(events: session.drainEvents(), to: session)
         if tick % HostAppDelegate.backgroundEvery == 0 {
             reapBackgroundSessions()
         }
@@ -339,6 +343,10 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
                 postNotification(title: title.isEmpty ? "RUUAH VT" : title, body: body)
             case .bell:
                 NSSound.beep()
+            case .commandStart:
+                // Execution began: the input line seen on the LAST tick is the final
+                // typed command. Reading the row now would race the shell's redraw.
+                recordExecutedCommand(of: session)
             }
         }
         if chromeChanged {
@@ -502,9 +510,10 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     private let ghost = CATextLayer()
     /// The un-typed remainder of the current suggestion, ready for the paste path.
     private var ghostRemainder: [UInt8] = []
-    /// The newest block's start row at last tick: a new block appearing BELOW it is
-    /// the signal the previous command was executed and belongs in history.
-    private var lastNewestBlockStart = -1
+    /// The cursor row's input text as of the last tick, per session identity: the
+    /// OSC 133;C event says WHEN a command executed, and this is WHAT it was -- read
+    /// a tick earlier, because by event time the shell may already be redrawing.
+    private var lastInputLine = ""
 
     private func setupSuggestions() {
         if let configDir {
@@ -522,38 +531,38 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         view.contentLayer.addSublayer(ghost)
     }
 
-    /// Per tick: record executed commands and refresh the ghost. History capture works
-    /// off the OSC 133 rails -- no shell integration means no blocks, no suggestions,
-    /// exactly the S2 dependency the backlog names.
-    private func captureAndSuggest(_ session: Session) {
-        let blocks = computeBlocks(session.rowClasses)
-        guard let newest = blocks.last else {
-            hideGhost()
-            lastNewestBlockStart = -1
-            return
-        }
-        if lastNewestBlockStart >= 0, newest.rows.lowerBound > lastNewestBlockStart,
-            blocks.count >= 2
-        {
-            let command = session.command(of: blocks[blocks.count - 2])
-            if !command.isEmpty {
-                _ = Array(command.utf8).withUnsafeBufferPointer { pointer in
-                    ruuah_history_append(historyStore, pointer.baseAddress, pointer.count)
-                }
-            }
-        }
-        lastNewestBlockStart = newest.rows.lowerBound
-        updateGhost(session, newest: newest)
+    /// The typed text on the caret's row -- input-marked cells only, so the prompt
+    /// itself never leaks in. Single-row deliberately: a wrapped command is a named
+    /// v1 boundary, and joining a whole prompt RUN would merge adjacent commands
+    /// (the cd-then-cd case measured in the tap).
+    private func currentInputLine(_ session: Session) -> String {
+        session.rowText(UInt16(session.cursorRow), semantic: UInt8(RUUAH_ROW_INPUT))
+            .trimmingCharacters(in: .whitespaces)
     }
 
-    private func updateGhost(_ session: Session, newest: Block) {
+    /// The event half: OSC 133;C fired, so the last tick's input line IS the command.
+    private func recordExecutedCommand(of session: Session) {
+        guard session === activeSession, !lastInputLine.isEmpty else { return }
+        _ = Array(lastInputLine.utf8).withUnsafeBufferPointer { pointer in
+            ruuah_history_append(historyStore, pointer.baseAddress, pointer.count)
+        }
+        lastInputLine = ""
+    }
+
+    /// Per tick: remember what is typed (for the C event) and refresh the ghost.
+    /// Everything rides the OSC 133 rails -- no shell integration means no input
+    /// marks, no history, no suggestions: the S2 dependency the backlog names.
+    private func captureAndSuggest(_ session: Session) {
+        let input = currentInputLine(session)
+        lastInputLine = input
+        updateGhost(session, input: input)
+    }
+
+    private func updateGhost(_ session: Session, input: String) {
         // Only at the live bottom, with a visible caret parked at the END of the
         // typed line -- a ghost mid-line would suggest an edit we cannot make.
         guard session.viewportOffset == 0, session.cursorVisible,
-            session.cellWidth > 0
-        else { return hideGhost() }
-        let input = session.command(of: newest)
-        guard !input.isEmpty,
+            session.cellWidth > 0, !input.isEmpty,
             session.cursorCol
                 == session.rowText(
                     UInt16(session.cursorRow), semantic: UInt8(RUUAH_TEXT_ALL)

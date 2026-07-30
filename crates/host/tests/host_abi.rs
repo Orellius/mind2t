@@ -718,6 +718,80 @@ fn a_key_takes_the_legacy_form_without_negotiation() {
     assert!(matched, "the legacy escape never echoed back as pixels");
 }
 
+/// S4's C surface end to end: load an empty store, append commands (with the
+/// drop rules answering Ignored), suggest through the buffer protocol in both the
+/// sizing and copy phases, and prove persistence by reopening the path in a second
+/// handle. Deterministic -- the fixture IS the oracle the backlog names.
+#[test]
+fn history_appends_suggests_and_persists_through_the_c_surface() {
+    use ruuah_vt_host::{
+        RuuahHistory, ruuah_history_append, ruuah_history_free, ruuah_history_load,
+        ruuah_history_suggest,
+    };
+    let dir = std::env::temp_dir().join(format!("ruuah-hist-abi-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let path = CString::new(dir.join("history").to_str().expect("utf8")).expect("cstr");
+
+    let mut handle: *mut RuuahHistory = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_history_load(path.as_ptr(), &mut handle) },
+        RuuahHostResult::Success
+    );
+    let append = |handle: *mut RuuahHistory, text: &str| unsafe {
+        ruuah_history_append(handle, text.as_ptr(), text.len())
+    };
+    assert_eq!(append(handle, "git status"), RuuahHostResult::Success);
+    assert_eq!(append(handle, "git status"), RuuahHostResult::Ignored, "consecutive dupe");
+    assert_eq!(append(handle, "  "), RuuahHostResult::Ignored, "blank");
+    assert_eq!(append(handle, "a\nb"), RuuahHostResult::Ignored, "multiline");
+    assert_eq!(append(handle, "git stash"), RuuahHostResult::Success);
+
+    // Sizing call, then the copy; the most recent match must win.
+    let input = b"git s";
+    let mut length = 0usize;
+    assert_eq!(
+        unsafe {
+            ruuah_history_suggest(handle, input.as_ptr(), input.len(), ptr::null_mut(), 0, &mut length)
+        },
+        RuuahHostResult::Success
+    );
+    let mut out = vec![0u8; length];
+    assert_eq!(
+        unsafe {
+            ruuah_history_suggest(handle, input.as_ptr(), input.len(), out.as_mut_ptr(), length, &mut length)
+        },
+        RuuahHostResult::Success
+    );
+    assert_eq!(&out, b"git stash");
+    // No match answers Ignored with length 0 -- the ghost-hidden signal.
+    let miss = b"cargo";
+    assert_eq!(
+        unsafe {
+            ruuah_history_suggest(handle, miss.as_ptr(), miss.len(), ptr::null_mut(), 0, &mut length)
+        },
+        RuuahHostResult::Ignored
+    );
+    assert_eq!(length, 0);
+    unsafe { ruuah_history_free(handle) };
+
+    // A second handle on the same path sees the persisted store.
+    let mut reopened: *mut RuuahHistory = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_history_load(path.as_ptr(), &mut reopened) },
+        RuuahHostResult::Success
+    );
+    let mut length = 0usize;
+    assert_eq!(
+        unsafe {
+            ruuah_history_suggest(reopened, input.as_ptr(), input.len(), ptr::null_mut(), 0, &mut length)
+        },
+        RuuahHostResult::Success,
+        "appends persisted across handles"
+    );
+    unsafe { ruuah_history_free(reopened) };
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// S1's observable: a theme with a distinct background must recolor the grid AND the
 /// reported margin background through the C surface -- and survive a resize, because
 /// resize rebuilds the renderer and a rebuild that forgets the theme silently reverts
@@ -860,6 +934,9 @@ fn empty_frame() -> RuuahHostFrame {
         row_semantics: ptr::null(),
         row_count: 0,
         viewport_offset: 0,
+        cursor_col: 0,
+        cursor_row: 0,
+        cursor_visible: false,
     }
 }
 

@@ -16,11 +16,12 @@
 use ruuah_vt as _;
 
 pub mod config;
+pub mod suggest;
 pub mod workflow;
 
 use std::ffi::{CStr, CString, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use config::Config;
@@ -99,6 +100,12 @@ pub struct RuuahHostFrame {
     /// the pump after clamping, so it reports where the view actually IS -- a GUI drawing
     /// a scroll indicator reads this, never its own accumulated deltas.
     pub viewport_offset: u32,
+    /// The caret's cell in this frame's coordinates, and whether it is shown. The
+    /// ghost-suggestion layer (S4) anchors here; the renderer already draws the caret
+    /// itself, so a GUI must never re-derive this from pixels.
+    pub cursor_col: u16,
+    pub cursor_row: u16,
+    pub cursor_visible: bool,
 }
 
 pub const RUUAH_ROW_OUTPUT: u8 = 0;
@@ -277,6 +284,9 @@ fn poll_impl(host: &mut RuuahHost, mode: DrawMode) -> RuuahHostFrame {
         },
         row_count: host.row_semantics.len() as u32,
         viewport_offset: host.frame.viewport,
+        cursor_col: host.frame.cursor.x,
+        cursor_row: host.frame.cursor.y,
+        cursor_visible: host.frame.cursor.visible,
     }
 }
 
@@ -517,6 +527,127 @@ pub unsafe extern "C" fn ruuah_host_paste(
     match host.host.send(&encoded) {
         Ok(()) => RuuahHostResult::Success,
         Err(_) => RuuahHostResult::SendFailed,
+    }
+}
+
+/// The state behind the opaque history handle: the store plus the path appends
+/// persist to.
+pub struct RuuahHistory {
+    history: suggest::History,
+    path: PathBuf,
+}
+
+/// Opens (or starts) the command history at `path`, or `~/.ruuah/history` when NULL.
+///
+/// # Safety
+/// `path`, if non-NULL, must be NUL-terminated; `out` must be valid for one write.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_history_load(
+    path: *const c_char,
+    out: *mut *mut RuuahHistory,
+) -> RuuahHostResult {
+    if out.is_null() {
+        return RuuahHostResult::InvalidValue;
+    }
+    let path = if path.is_null() {
+        let Some(home) = std::env::var_os("HOME") else {
+            unsafe { out.write(std::ptr::null_mut()) };
+            return RuuahHostResult::InvalidValue;
+        };
+        Path::new(&home).join(".ruuah").join("history")
+    } else {
+        match unsafe { CStr::from_ptr(path) }.to_str() {
+            Ok(path) => Path::new(path).to_path_buf(),
+            Err(_) => {
+                unsafe { out.write(std::ptr::null_mut()) };
+                return RuuahHostResult::InvalidValue;
+            }
+        }
+    };
+    let handle =
+        Box::new(RuuahHistory { history: suggest::History::load(&path), path });
+    unsafe { out.write(Box::into_raw(handle)) };
+    RuuahHostResult::Success
+}
+
+/// # Safety
+/// `handle` must be NULL or a live handle from `ruuah_history_load`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_history_free(handle: *mut RuuahHistory) {
+    if !handle.is_null() {
+        drop(unsafe { Box::from_raw(handle) });
+    }
+}
+
+/// Records one executed command and persists the store. Blank, multiline, and
+/// consecutive-duplicate commands are dropped by the store's own rules; a failed
+/// save answers SendFailed but keeps the in-memory entry (suggestions still work
+/// this session).
+///
+/// # Safety
+/// `handle` live; `command` readable for `len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_history_append(
+    handle: *mut RuuahHistory,
+    command: *const u8,
+    len: usize,
+) -> RuuahHostResult {
+    if handle.is_null() || (command.is_null() && len != 0) {
+        return RuuahHostResult::InvalidValue;
+    }
+    let handle = unsafe { &mut *handle };
+    let bytes = if len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(command, len) }
+    };
+    let Ok(command) = std::str::from_utf8(bytes) else {
+        return RuuahHostResult::InvalidValue;
+    };
+    let before = handle.history.len();
+    handle.history.append(command);
+    if handle.history.len() == before {
+        return RuuahHostResult::Ignored;
+    }
+    match handle.history.save(&handle.path) {
+        Ok(()) => RuuahHostResult::Success,
+        Err(_) => RuuahHostResult::SendFailed,
+    }
+}
+
+/// The most recent history entry `input` is a proper prefix of, via the buffer
+/// protocol; `Ignored` with length 0 when nothing matches.
+///
+/// # Safety
+/// `handle` live; `input` readable for `len` bytes; `out`/`out_len` per the protocol.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_history_suggest(
+    handle: *const RuuahHistory,
+    input: *const u8,
+    len: usize,
+    out: *mut u8,
+    cap: usize,
+    out_len: *mut usize,
+) -> RuuahHostResult {
+    if handle.is_null() || (input.is_null() && len != 0) {
+        return RuuahHostResult::InvalidValue;
+    }
+    let bytes = if len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(input, len) }
+    };
+    let Ok(input) = std::str::from_utf8(bytes) else {
+        return RuuahHostResult::InvalidValue;
+    };
+    match unsafe { &*handle }.history.suggest(input) {
+        Some(suggestion) => copy_out(suggestion, out, cap, out_len),
+        None => {
+            if !out_len.is_null() {
+                unsafe { out_len.write(0) };
+            }
+            RuuahHostResult::Ignored
+        }
     }
 }
 

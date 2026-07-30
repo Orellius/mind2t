@@ -24,6 +24,9 @@ final class TerminalView: NSView {
     var onNewSession: (() -> Void)?
     /// cmd+K: the receiver presents (or toggles) the command palette.
     var onPalette: (() -> Void)?
+    /// A bare right-arrow while a ghost suggestion shows: returns whether the
+    /// receiver accepted it (typed the remainder); false lets the key go to the child.
+    var onAcceptSuggestion: (() -> Bool)?
     var onCloseSession: (() -> Void)?
     var onZoomIn: (() -> Void)?
     var onZoomOut: (() -> Void)?
@@ -365,6 +368,16 @@ final class TerminalView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        // Fish's accept gesture: a BARE right-arrow while a ghost shows completes it.
+        // Arrow keys stamp .function/.numericPad on their own, so those don't count
+        // as modifiers; any real modifier lets the arrow reach the child untouched.
+        if event.keyCode == 124,
+            event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                .subtracting([.function, .numericPad]).isEmpty,
+            onAcceptSuggestion?() == true
+        {
+            return
+        }
         forwardKey(event, action: event.isARepeat ? 2 : 1)
     }
 

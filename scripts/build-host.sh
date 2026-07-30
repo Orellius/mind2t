@@ -66,6 +66,10 @@ EXPECTED=(
   ruuah_host_link_at
   ruuah_host_next_event
   ruuah_host_free
+  ruuah_history_load
+  ruuah_history_free
+  ruuah_history_append
+  ruuah_history_suggest
   ruuah_workflows_load
   ruuah_workflows_free
   ruuah_workflows_count

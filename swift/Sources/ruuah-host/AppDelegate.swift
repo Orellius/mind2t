@@ -130,6 +130,15 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             session.paste(bytes)
         }
         view.onScroll = { [weak self] rows in self?.activeSession?.scroll(rows) }
+        view.onAcceptSuggestion = { [weak self] in
+            guard let self, !self.ghostRemainder.isEmpty,
+                let session = self.activeSession
+            else { return false }
+            // The paste path types the remainder; bracketed mode is its concern.
+            session.paste(self.ghostRemainder)
+            self.hideGhost()
+            return true
+        }
         view.onMouse = { [weak self] action, button, mods, x, y in
             self?.activeSession?.mouse(action: action, button: button, mods: mods, x: x, y: y)
                 ?? false
@@ -156,6 +165,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         view.onZoomOut = { [weak self] in self?.zoom(by: 1 / 1.1) }
         view.onZoomReset = { [weak self] in self?.zoom(to: 1.0) }
 
+        setupSuggestions()
         newSession()
         guard !sessions.isEmpty else {
             NSApp.terminate(nil)
@@ -257,6 +267,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         // Mouse geometry is per-host state; a session activated (or just spawned)
         // after the last layout pass has never seen the view's size.
         view.pushMouseGeometry()
+        // The ghost and its block tracking belong to the outgoing session's grid.
+        hideGhost()
+        lastNewestBlockStart = -1
         window.makeFirstResponder(view)
     }
 
@@ -290,6 +303,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         view.updateGutter(
             blocks: computeBlocks(session.rowClasses),
             cellHeightDevice: session.cellHeight)
+        captureAndSuggest(session)
         if !windowSized && session.cellWidth != 0 {
             windowSized = true
             sizeWindowToGrid(session)
@@ -480,6 +494,113 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     /// The clicked block's actions. The menu is built per click -- blocks move as the
     /// grid scrolls, so caching one would act on stale rows.
+    // MARK: autosuggestions (S4)
+
+    /// The command history handle, app-global. Loaded once; appends persist as they
+    /// happen, so a crash costs at most the last command.
+    private var historyStore: OpaquePointer?
+    private let ghost = CATextLayer()
+    /// The un-typed remainder of the current suggestion, ready for the paste path.
+    private var ghostRemainder: [UInt8] = []
+    /// The newest block's start row at last tick: a new block appearing BELOW it is
+    /// the signal the previous command was executed and belongs in history.
+    private var lastNewestBlockStart = -1
+
+    private func setupSuggestions() {
+        if let configDir {
+            let path = (configDir as NSString).appendingPathComponent("history")
+            _ = path.withCString { pointer in ruuah_history_load(pointer, &historyStore) }
+        } else {
+            _ = ruuah_history_load(nil, &historyStore)
+        }
+        ghost.actions = [
+            "contents": NSNull(), "position": NSNull(), "bounds": NSNull(),
+            "hidden": NSNull(), "string": NSNull(),
+        ]
+        ghost.foregroundColor = NSColor(white: 1, alpha: 0.35).cgColor
+        ghost.isHidden = true
+        view.contentLayer.addSublayer(ghost)
+    }
+
+    /// Per tick: record executed commands and refresh the ghost. History capture works
+    /// off the OSC 133 rails -- no shell integration means no blocks, no suggestions,
+    /// exactly the S2 dependency the backlog names.
+    private func captureAndSuggest(_ session: Session) {
+        let blocks = computeBlocks(session.rowClasses)
+        guard let newest = blocks.last else {
+            hideGhost()
+            lastNewestBlockStart = -1
+            return
+        }
+        if lastNewestBlockStart >= 0, newest.rows.lowerBound > lastNewestBlockStart,
+            blocks.count >= 2
+        {
+            let command = session.command(of: blocks[blocks.count - 2])
+            if !command.isEmpty {
+                _ = Array(command.utf8).withUnsafeBufferPointer { pointer in
+                    ruuah_history_append(historyStore, pointer.baseAddress, pointer.count)
+                }
+            }
+        }
+        lastNewestBlockStart = newest.rows.lowerBound
+        updateGhost(session, newest: newest)
+    }
+
+    private func updateGhost(_ session: Session, newest: Block) {
+        // Only at the live bottom, with a visible caret parked at the END of the
+        // typed line -- a ghost mid-line would suggest an edit we cannot make.
+        guard session.viewportOffset == 0, session.cursorVisible,
+            session.cellWidth > 0
+        else { return hideGhost() }
+        let input = session.command(of: newest)
+        guard !input.isEmpty,
+            session.cursorCol
+                == session.rowText(
+                    UInt16(session.cursorRow), semantic: UInt8(RUUAH_TEXT_ALL)
+                ).count
+        else { return hideGhost() }
+
+        var length = 0
+        let inputBytes = Array(input.utf8)
+        let sized = inputBytes.withUnsafeBufferPointer { pointer in
+            ruuah_history_suggest(historyStore, pointer.baseAddress, pointer.count, nil, 0, &length)
+        }
+        guard sized == RUUAH_HOST_SUCCESS, length > 0 else { return hideGhost() }
+        var buffer = [UInt8](repeating: 0, count: length)
+        let copied = inputBytes.withUnsafeBufferPointer { pointer in
+            buffer.withUnsafeMutableBufferPointer { outPointer in
+                ruuah_history_suggest(
+                    historyStore, pointer.baseAddress, pointer.count,
+                    outPointer.baseAddress, length, &length)
+            }
+        }
+        guard copied == RUUAH_HOST_SUCCESS else { return hideGhost() }
+        let suggestion = String(decoding: buffer, as: UTF8.self)
+        let remainder = String(suggestion.dropFirst(input.count))
+        guard !remainder.isEmpty else { return hideGhost() }
+
+        ghostRemainder = Array(remainder.utf8)
+        let scale = window.backingScaleFactor
+        let cellWidth = CGFloat(session.cellWidth) / scale
+        let cellHeight = CGFloat(session.cellHeight) / scale
+        let fontSize = CGFloat(baseFontSize * fontScale)
+        ghost.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+        ghost.fontSize = fontSize
+        ghost.contentsScale = scale
+        ghost.string = remainder
+        ghost.frame = CGRect(
+            x: CGFloat(session.cursorCol) * cellWidth,
+            y: view.contentLayer.bounds.height - CGFloat(session.cursorRow + 1) * cellHeight,
+            width: CGFloat(remainder.count) * cellWidth + cellWidth,
+            height: cellHeight)
+        ghost.isHidden = false
+    }
+
+    private func hideGhost() {
+        ghost.isHidden = true
+        ghostRemainder = []
+    }
+
     // MARK: command palette (S3)
 
     private var palette: PaletteView?

@@ -158,12 +158,49 @@ pub struct Damage {
 /// that ignores it entirely scores a perfect match on every grid comparison — which is
 /// exactly the blind-spot shape every slice has hit. These are compared as state, not
 /// as behaviour, because there is no behaviour inside the core to compare.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Modes {
     /// DEC private mode 2004: the host wraps pastes in `ESC[200~` / `ESC[201~`.
     pub bracketed_paste: bool,
     /// DEC private mode 2026: the pump holds frames back until the batch closes.
     pub synchronized_output: bool,
+    /// DEC private modes 9/1000/1002/1003: which pointer events the child asked for.
+    /// These are the RAW bits as the oracle's mode table stores them (`modes.zig`) --
+    /// what `ghostty_terminal_mode_get` answers from -- not the derived last-writer
+    /// event kind, which the ABI does not expose. After `1000h 1002h 1002l` the 1000
+    /// bit is still set even though reporting is off; comparing raw bits is what lets
+    /// a differential see that distinction at all.
+    pub mouse_event_x10: bool,
+    pub mouse_event_normal: bool,
+    pub mouse_event_button: bool,
+    pub mouse_event_any: bool,
+    /// DEC private modes 1005/1006/1015/1016: the report encoding the child asked for.
+    pub mouse_format_utf8: bool,
+    pub mouse_format_sgr: bool,
+    pub mouse_format_urxvt: bool,
+    pub mouse_format_sgr_pixels: bool,
+    /// DEC private mode 1007: wheel-to-arrows on the alternate screen. The one tracked
+    /// mode that DEFAULTS ON (the oracle marks it `.default = true`), which is why
+    /// `Default` here is hand-written.
+    pub mouse_alternate_scroll: bool,
+}
+
+impl Default for Modes {
+    fn default() -> Self {
+        Self {
+            bracketed_paste: false,
+            synchronized_output: false,
+            mouse_event_x10: false,
+            mouse_event_normal: false,
+            mouse_event_button: false,
+            mouse_event_any: false,
+            mouse_format_utf8: false,
+            mouse_format_sgr: false,
+            mouse_format_urxvt: false,
+            mouse_format_sgr_pixels: false,
+            mouse_alternate_scroll: true,
+        }
+    }
 }
 
 /// Cursor position and the style newly printed cells will take.

@@ -186,7 +186,14 @@ unsafe fn read_snapshot(handle: GhosttyTerminal, reader: Reader) -> Snapshot {
                     GHOSTTY_SUCCESS,
                     "mode_get(2026)"
                 );
-                ruuah_vt_snapshot::Modes { bracketed_paste, synchronized_output }
+                ruuah_vt_snapshot::Modes {
+                    bracketed_paste,
+                    synchronized_output,
+                    // The mouse family is filled from defaults until the C surface
+                    // answers it below (the widened mode_get lands with the core
+                    // routing; this constructor is replaced in the same slice).
+                    ..Default::default()
+                }
             },
             grid,
             history,

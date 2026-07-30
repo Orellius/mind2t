@@ -51,6 +51,11 @@ pub struct Screen {
     /// Rows that have scrolled off the top of this screen. The alternate screen is created
     /// with a zero budget, which is how it ends up with no scrollback.
     pub history: History,
+    /// The kitty keyboard flag stack. Per SCREEN, matching the oracle (`Screen.zig:73`)
+    /// and kitty's spec: a TUI entering the alternate screen pushes its flags without
+    /// disturbing the shell's stack, and leaving 1049 restores the shell's negotiation
+    /// with no pop required.
+    pub kitty_keyboard: crate::kitty_keys::KittyFlagStack,
 }
 
 impl Screen {
@@ -67,6 +72,7 @@ impl Screen {
             saved: None,
             semantic_content: Semantic::Output,
             semantic_clear_at_eol: false,
+            kitty_keyboard: crate::kitty_keys::KittyFlagStack::default(),
         }
     }
 

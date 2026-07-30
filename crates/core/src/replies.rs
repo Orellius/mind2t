@@ -65,6 +65,9 @@ impl State {
             let tracked = match mode {
                 1 => Some(self.cursor_keys),
                 6 => Some(self.origin),
+                66 => Some(self.keypad_keys),
+                1035 => Some(self.ignore_keypad_with_numlock),
+                1036 => Some(self.alt_esc_prefix),
                 7 => Some(self.autowrap),
                 25 => Some(self.cursor_visible),
                 47 | 1047 | 1049 => Some(matches!(self.active, crate::terminal::Active::Alternate)),
@@ -86,6 +89,14 @@ impl State {
         };
         let prefix = if ansi { "" } else { "?" };
         let reply = format!("\x1b[{prefix}{mode};{state}$y");
+        self.replies.extend_from_slice(reply.as_bytes());
+    }
+
+    /// The kitty keyboard query (`CSI ? u`) -> `CSI ? flags u`, the active screen's
+    /// stack top. Unconditional like DECRQM -- this reply is HOW a 2026 CLI detects
+    /// kitty support at all; refusing it would silently degrade every one of them.
+    pub(crate) fn kitty_keyboard_report(&mut self) {
+        let reply = format!("\x1b[?{}u", self.screen().kitty_keyboard.current());
         self.replies.extend_from_slice(reply.as_bytes());
     }
 
@@ -238,6 +249,37 @@ mod tests {
         // 2 = iconify, 3 = move: a child steering the operator's window is not a
         // feature. 14/16 (pixel reports) wait for a consumer.
         assert_eq!(reporting_terminal(b"\x1b[2t\x1b[3;0;0t\x1b[14t\x1b[16t"), b"");
+    }
+
+    /// The kitty detection handshake, the exact probe a 2026 CLI sends: query, push,
+    /// query again, pop, query a third time. A terminal that cannot answer the first
+    /// query is one where every kitty-capable program silently falls back.
+    #[test]
+    fn the_kitty_query_reports_the_stack_top() {
+        assert_eq!(replies_for(b"\x1b[?u"), b"\x1b[?0u");
+        assert_eq!(replies_for(b"\x1b[>1u\x1b[?u"), b"\x1b[?1u");
+        assert_eq!(replies_for(b"\x1b[>1u\x1b[<u\x1b[?u"), b"\x1b[?0u");
+        // The = forms compose on the current entry: set 1, or 2, not 2 -> 1.
+        assert_eq!(replies_for(b"\x1b[=1;1u\x1b[=2;2u\x1b[=2;3u\x1b[?u"), b"\x1b[?1u");
+    }
+
+    /// The stack is per SCREEN: flags pushed on the alternate screen vanish from the
+    /// query the moment 1049 exits, with no pop -- vim's negotiation must not leak
+    /// into the shell's.
+    #[test]
+    fn kitty_flags_are_per_screen() {
+        assert_eq!(
+            replies_for(b"\x1b[?1049h\x1b[>31u\x1b[?u\x1b[?1049l\x1b[?u"),
+            b"\x1b[?31u\x1b[?0u"
+        );
+    }
+
+    /// A flags value past the five defined bits invalidates the whole command --
+    /// measured from the oracle (u5 cast failure warns and drops), not clamped.
+    #[test]
+    fn out_of_range_kitty_flags_are_dropped_not_clamped() {
+        assert_eq!(replies_for(b"\x1b[>32u\x1b[?u"), b"\x1b[?0u");
+        assert_eq!(replies_for(b"\x1b[=63;1u\x1b[?u"), b"\x1b[?0u");
     }
 
     #[test]

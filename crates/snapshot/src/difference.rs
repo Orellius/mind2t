@@ -79,8 +79,15 @@ pub fn diff(oracle: &Snapshot, candidate: &Snapshot) -> Vec<Difference> {
 
     // The nine mouse-mode raw bits, uniformly: one entry per bit so a mutation test can
     // kill each comparison individually (`a_mode_only_one_side_set_is_reported`).
-    let mouse_bits: [(&str, bool, bool); 10] = [
+    let mouse_bits: [(&str, bool, bool); 13] = [
         ("modes.cursor_keys", oracle.modes.cursor_keys, candidate.modes.cursor_keys),
+        ("modes.keypad_keys", oracle.modes.keypad_keys, candidate.modes.keypad_keys),
+        (
+            "modes.ignore_keypad_with_numlock",
+            oracle.modes.ignore_keypad_with_numlock,
+            candidate.modes.ignore_keypad_with_numlock,
+        ),
+        ("modes.alt_esc_prefix", oracle.modes.alt_esc_prefix, candidate.modes.alt_esc_prefix),
         ("modes.mouse_event_x10", oracle.modes.mouse_event_x10, candidate.modes.mouse_event_x10),
         (
             "modes.mouse_event_normal",
@@ -419,8 +426,12 @@ mod tests {
     /// assertions, which is what makes the table's nine entries individually real.
     #[test]
     fn each_mouse_mode_bit_disagreement_is_reported_under_its_own_path() {
-        let flips: [(&str, fn(&mut crate::grid::Modes)); 10] = [
+        let flips: [(&str, fn(&mut crate::grid::Modes)); 13] = [
             ("modes.cursor_keys", |m| m.cursor_keys = true),
+            ("modes.keypad_keys", |m| m.keypad_keys = true),
+            // 1035 and 1036 default ON; their disagreement direction is a clear.
+            ("modes.ignore_keypad_with_numlock", |m| m.ignore_keypad_with_numlock = false),
+            ("modes.alt_esc_prefix", |m| m.alt_esc_prefix = false),
             ("modes.mouse_event_x10", |m| m.mouse_event_x10 = true),
             ("modes.mouse_event_normal", |m| m.mouse_event_normal = true),
             ("modes.mouse_event_button", |m| m.mouse_event_button = true),

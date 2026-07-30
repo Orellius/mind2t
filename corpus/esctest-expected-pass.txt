@@ -2,7 +2,7 @@
 # The corpus law in both directions: a line here failing is a regression; a test
 # passing without a line here must be promoted by adding it. Re-triage after suite
 # updates: cargo test -p ruuah-vt-pty --test esctest -- --ignored print_esctest --nocapture
-# Suite pin: esctest.lock. Baseline 2026-07-30 (post-DECRQM): 119 pass / 404 fail / 45 skip of 568 (DECCKM tracking for the SGR mouse slice promoted DECRQM_DEC_DECCKM). Note: DECSCL_Level2DoesntSupportDECRQM passed only while DECRQM did not exist at all (vacuous level-gating); answering DECRQM un-passed it, and DECSCL level tracking is its own future item.
+# Suite pin: esctest.lock. Baseline 2026-07-30 (post-DECRQM): 120 pass / 403 fail / 45 skip of 568 (DECCKM promoted by the SGR mouse slice; DECNKM by the kitty keyboard slice, which tracks mode 66). Note: DECSCL_Level2DoesntSupportDECRQM passed only while DECRQM did not exist at all (vacuous level-gating); answering DECRQM un-passed it, and DECSCL level tracking is its own future item.
 BSTests.test_BS_Basic
 BSTests.test_BS_InitialReverseWraparound
 BSTests.test_BS_MovesLeftWhenLeftOfLeftMargin
@@ -65,6 +65,7 @@ DECRCTests.test_SaveRestoreCursor_Wrap
 DECRQMTests.test_DECRQM
 DECRQMTests.test_DECRQM_DEC_DECAWM
 DECRQMTests.test_DECRQM_DEC_DECCKM
+DECRQMTests.test_DECRQM_DEC_DECNKM
 DECRQMTests.test_DECRQM_DEC_DECOM
 DECRQMTests.test_DECRQM_DEC_DECTCEM
 DECSCLTests.test_DSCSCL_Level2Supports7BitControls

@@ -176,7 +176,17 @@ unsafe fn read_snapshot(handle: GhosttyTerminal, reader: Reader) -> Snapshot {
                     GHOSTTY_SUCCESS,
                     "mode_get(2004)"
                 );
-                ruuah_vt_snapshot::Modes { bracketed_paste }
+                let mut synchronized_output = false;
+                assert_eq!(
+                    ghostty_terminal_mode_get(
+                        handle,
+                        GHOSTTY_MODE_SYNCHRONIZED_OUTPUT,
+                        &mut synchronized_output,
+                    ),
+                    GHOSTTY_SUCCESS,
+                    "mode_get(2026)"
+                );
+                ruuah_vt_snapshot::Modes { bracketed_paste, synchronized_output }
             },
             grid,
             history,

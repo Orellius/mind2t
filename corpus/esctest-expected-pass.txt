@@ -2,7 +2,7 @@
 # The corpus law in both directions: a line here failing is a regression; a test
 # passing without a line here must be promoted by adding it. Re-triage after suite
 # updates: cargo test -p ruuah-vt-pty --test esctest -- --ignored print_esctest --nocapture
-# Suite pin: esctest.lock. Baseline 2026-07-30: 114 pass / 409 fail / 45 skip of 568.
+# Suite pin: esctest.lock. Baseline 2026-07-30 (post-DECRQM): 118 pass / 405 fail / 45 skip of 568. Note: DECSCL_Level2DoesntSupportDECRQM passed only while DECRQM did not exist at all (vacuous level-gating); answering DECRQM un-passed it, and DECSCL level tracking is its own future item.
 BSTests.test_BS_Basic
 BSTests.test_BS_InitialReverseWraparound
 BSTests.test_BS_MovesLeftWhenLeftOfLeftMargin
@@ -62,8 +62,12 @@ DECRCTests.test_SaveRestoreCursor_MoveToHomeWhenNotSaved
 DECRCTests.test_SaveRestoreCursor_ReverseWrapNotAffected
 DECRCTests.test_SaveRestoreCursor_WorksInLRM
 DECRCTests.test_SaveRestoreCursor_Wrap
-DECSCLTests.test_DECSCL_Level2DoesntSupportDECRQM
+DECRQMTests.test_DECRQM
+DECRQMTests.test_DECRQM_DEC_DECAWM
+DECRQMTests.test_DECRQM_DEC_DECOM
+DECRQMTests.test_DECRQM_DEC_DECTCEM
 DECSCLTests.test_DSCSCL_Level2Supports7BitControls
+DECSCLTests.test_DSCSCL_Level3_SupportsDECRQMDoesntSupportDECSLRM
 DECSERATests.test_DECSERA_cursorDoesNotMove
 DECSETTests.test_DECSET_DECAWM_CursorAtRightMargin
 DECSETTests.test_DECSET_DECAWM_TabDoesNotWrapAround

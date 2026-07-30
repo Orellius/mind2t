@@ -147,6 +147,19 @@ pub struct Host {
 /// Reading it back works from either end. Linux accepts both, so this is the portable order
 /// rather than a workaround. Opening the slave transiently is safe -- the child holds its own
 /// descriptor, so this one is never the last.
+/// Opens, grants and unlocks a fresh pty master, CLOEXEC set. One unit so the transient
+/// -retry in `spawn` re-runs the WHOLE acquisition -- a grantpt that failed halfway
+/// leaves a master worth abandoning, not resuming. The CLOEXEC matters because without
+/// it the child inherits the master and the pty never reports EOF: one end stays open
+/// in a process that is not reading it.
+fn open_master() -> Result<OwnedFd, Errno> {
+    let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY)?;
+    grantpt(&master)?;
+    unlockpt(&master)?;
+    fcntl_setfd(&master, FdFlags::CLOEXEC)?;
+    Ok(master)
+}
+
 fn set_winsize(pts: &CStr, size: Geometry) -> Result<(), Errno> {
     let slave = rustix::fs::open(pts, OFlags::RDWR | OFlags::NOCTTY, Mode::empty())?;
     tcsetwinsize(&slave, size.winsize())
@@ -166,12 +179,27 @@ impl Host {
                 capacity: options.capacity,
             });
         }
-        let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY).map_err(SpawnError::Pty)?;
-        grantpt(&master).map_err(SpawnError::Pty)?;
-        unlockpt(&master).map_err(SpawnError::Pty)?;
-        // Without this the child inherits the master and the pty never reports EOF, because
-        // one end stays open in a process that is not reading it.
-        fcntl_setfd(&master, FdFlags::CLOEXEC).map_err(SpawnError::Pty)?;
+        // Pty allocation can transiently fail under parallel churn -- measured
+        // 2026-07-30: ENXIO from the openpt sequence roughly once per three full-suite
+        // runs with 13 concurrent opens, and the same spawn passes alone (the sibling
+        // of 11470ca's fork EAGAIN, which the C layer already retries). Acquisition
+        // happens before the fork and touches nothing else, so retrying HERE is safe
+        // for every caller; genuine exhaustion still fails, 75ms later.
+        let master = {
+            let mut attempt = 0;
+            loop {
+                match open_master() {
+                    Ok(master) => break master,
+                    Err(errno)
+                        if attempt < 3 && matches!(errno, Errno::NXIO | Errno::AGAIN) =>
+                    {
+                        attempt += 1;
+                        thread::sleep(std::time::Duration::from_millis(25));
+                    }
+                    Err(errno) => return Err(SpawnError::Pty(errno)),
+                }
+            }
+        };
 
         let pts = ptsname(&master, Vec::new()).map_err(SpawnError::Pty)?;
 

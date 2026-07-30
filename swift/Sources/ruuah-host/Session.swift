@@ -222,6 +222,30 @@ final class Session {
         }
     }
 
+    /// Tells the host what pixel space pointer events arrive in: the view's size and
+    /// content insets, in backing pixels. Re-sent on every layout change AND on session
+    /// activation -- geometry is per-host state, and a session spawned while another
+    /// was frontmost has never seen the view.
+    func mouseGeometry(width: UInt32, height: UInt32, inset: UInt32) {
+        guard let host else { return }
+        _ = ruuah_host_mouse_geometry(host, width, height, inset, inset, inset, inset)
+    }
+
+    /// One pointer event in surface pixels. True when the terminal consumed it (a
+    /// report went to the child); false hands the event back to AppKit.
+    func mouse(action: UInt32, button: UInt32, mods: UInt32, x: Float, y: Float) -> Bool {
+        guard let host else { return false }
+        return ruuah_host_mouse(host, action, button, mods, x, y) == RUUAH_HOST_SUCCESS
+    }
+
+    /// One wheel gesture in whole ticks, positive up. True when the terminal consumed
+    /// it (mouse-mode report or alternate-scroll arrows); false means the viewport
+    /// scroll is ours.
+    func wheel(x: Float, y: Float, ticks: Int32, mods: UInt32) -> Bool {
+        guard let host else { return false }
+        return ruuah_host_wheel(host, x, y, ticks, mods) == RUUAH_HOST_SUCCESS
+    }
+
     func paste(_ bytes: [UInt8]) {
         guard let host else { return }
         _ = bytes.withUnsafeBufferPointer { buffer in

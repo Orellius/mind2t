@@ -167,6 +167,32 @@ impl Terminal {
     pub fn on_alternate_screen(&self) -> bool {
         matches!(self.state.active, Active::Alternate)
     }
+
+    /// DECKPAM (mode 66): keypad application mode, for the host's key encoder.
+    pub fn keypad_keys(&self) -> bool {
+        self.state.keypad_keys
+    }
+
+    /// Mode 1035 (default ON): keypad application encoding yields to numlock.
+    pub fn ignore_keypad_with_numlock(&self) -> bool {
+        self.state.ignore_keypad_with_numlock
+    }
+
+    /// Mode 1036 (default ON): alt prefixes an ESC in legacy key encoding.
+    pub fn alt_esc_prefix(&self) -> bool {
+        self.state.alt_esc_prefix
+    }
+
+    /// xterm modifyOtherKeys state 2, for the host's key encoder.
+    pub fn modify_other_keys_2(&self) -> bool {
+        self.state.modify_other_keys_2
+    }
+
+    /// The ACTIVE screen's negotiated kitty keyboard flags -- the stack top, which is
+    /// all an encoder ever consults. The stack itself stays per-screen and private.
+    pub fn kitty_key_flags(&self) -> crate::kitty_keys::KittyKeyFlags {
+        self.state.screen().kitty_keyboard.current()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,6 +219,15 @@ pub(crate) struct State {
     /// `ESC [ A`. The core only TRACKS it; the host's key and alternate-scroll paths
     /// read it to pick the byte form, exactly as the oracle's Surface does.
     pub(crate) cursor_keys: bool,
+    /// DECKPAM/DECKPNM (mode 66, also ESC = / ESC >): keypad application mode.
+    pub(crate) keypad_keys: bool,
+    /// Mode 1035 (default ON): numlock suppresses keypad application encoding.
+    pub(crate) ignore_keypad_with_numlock: bool,
+    /// Mode 1036 (default ON): alt-modified keys get an ESC prefix in legacy encoding.
+    pub(crate) alt_esc_prefix: bool,
+    /// xterm modifyOtherKeys state 2 (`CSI > 4 ; 2 m`). Not a DEC mode -- no
+    /// mode_get/DECRQM surface -- so its only gate is the key-encoder differential.
+    pub(crate) modify_other_keys_2: bool,
     /// Bracketed paste (mode 2004). Terminal-global, not per-screen: measured against the
     /// oracle, entering the alternate screen keeps it and only RIS or `2004l` clears it.
     /// The core only TRACKS it -- wrapping paste bytes is the host's job, because the
@@ -260,6 +295,10 @@ impl State {
             origin: false,
             cursor_visible: true,
             cursor_keys: false,
+            keypad_keys: false,
+            ignore_keypad_with_numlock: true,
+            alt_esc_prefix: true,
+            modify_other_keys_2: false,
             bracketed_paste: false,
             synchronized_output: false,
             mouse: crate::mouse::MouseModes::default(),
@@ -359,6 +398,9 @@ impl State {
                 mouse_format_sgr_pixels: self.mouse.sgr_pixels,
                 mouse_alternate_scroll: self.mouse.alternate_scroll,
                 cursor_keys: self.cursor_keys,
+                keypad_keys: self.keypad_keys,
+                ignore_keypad_with_numlock: self.ignore_keypad_with_numlock,
+                alt_esc_prefix: self.alt_esc_prefix,
             },
             cursor: Cursor {
                 x: screen.x,
@@ -635,8 +677,10 @@ impl State {
         self.cursor_visible = true;
         self.origin = false;
         self.autowrap = true;
-        // xterm's DECSTR resets DECCKM to normal; part of the same xterm-shaped set.
+        // xterm's DECSTR resets DECCKM to normal; part of the same xterm-shaped set,
+        // as is the keypad returning to numeric (VT510's DECSTR table lists both).
         self.cursor_keys = false;
+        self.keypad_keys = false;
         self.pen = Style::DEFAULT;
         self.saved_pen = None;
         let screen = self.screen_mut();

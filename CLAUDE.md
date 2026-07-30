@@ -623,6 +623,11 @@ overnight is indistinguishable from a regression you caused.
   branch per slice or fix, pushed to origin, `gh pr create`, gates green in the PR,
   merged `--no-ff` (via `gh pr merge --merge`). No direct pushes to `main`. GUI-facing
   changes carry a live-tap result or an explicit untested note in the PR body (SCAR-014).
+  **AUTO-MERGE AMENDMENT (Orel, 2026-07-30 ~17:0x): when EVERY gate is green (full
+  workspace suite on exit codes, difftest, export counts, smoke, live taps where the
+  slice is GUI-facing), Claude merges the PR and rebuilds+reinstalls the app without
+  waiting. A red or skipped gate, a named-divergence question, or anything touching
+  the security posture still waits for Orel.**
 - **`main` holds verified slices only.** Every commit on it has `cargo test --workspace`
   green and `difftest` exiting 0.
 - **One branch per slice**, `slice-N-<name>`, merged with `--no-ff` so slice boundaries stay

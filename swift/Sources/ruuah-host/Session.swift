@@ -246,6 +246,21 @@ final class Session {
         return ruuah_host_wheel(host, x, y, ticks, mods) == RUUAH_HOST_SUCCESS
     }
 
+    /// One keyboard event through the host's encoder -- every mode (DECCKM, keypad,
+    /// kitty flags) rides the frame, so this replaces byte-building entirely. True
+    /// when the terminal produced bytes.
+    func key(
+        action: UInt32, key: UInt32, mods: UInt32, consumedMods: UInt32,
+        text: [UInt8], unshiftedCodepoint: UInt32
+    ) -> Bool {
+        guard let host else { return false }
+        return text.withUnsafeBufferPointer { buffer in
+            ruuah_host_key(
+                host, action, key, mods, consumedMods,
+                buffer.baseAddress, buffer.count, unshiftedCodepoint)
+        } == RUUAH_HOST_SUCCESS
+    }
+
     func paste(_ bytes: [UInt8]) {
         guard let host else { return }
         _ = bytes.withUnsafeBufferPointer { buffer in

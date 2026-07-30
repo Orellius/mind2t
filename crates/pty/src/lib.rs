@@ -12,6 +12,7 @@
 //! is justified where it sits.
 
 pub mod host;
+pub mod key;
 pub mod mouse;
 pub mod paste;
 

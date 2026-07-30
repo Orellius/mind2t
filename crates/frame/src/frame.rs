@@ -166,6 +166,19 @@ impl Frame {
     /// Bit set while DECCKM (mode 1, application cursor keys) is on: arrows and
     /// alternate-scroll wheel bytes take the `ESC O` form instead of `ESC [`.
     pub const MODE_CURSOR_KEYS: u64 = 1 << 10;
+    /// Bit set while DECKPAM (mode 66, keypad application) is on.
+    pub const MODE_KEYPAD_KEYS: u64 = 1 << 11;
+    /// Bit set while mode 1035 (numlock suppresses keypad application; default ON).
+    pub const MODE_IGNORE_KEYPAD_WITH_NUMLOCK: u64 = 1 << 12;
+    /// Bit set while mode 1036 (alt sends ESC prefix; default ON).
+    pub const MODE_ALT_ESC_PREFIX: u64 = 1 << 13;
+    /// Bit set while xterm modifyOtherKeys state 2 is on.
+    pub const MODE_MODIFY_OTHER_KEYS_2: u64 = 1 << 14;
+    /// Bits 15-19: the ACTIVE screen's negotiated kitty keyboard flags, the wire's
+    /// own 5-bit layout (disambiguate 1, events 2, alternates 4, all 8, associated
+    /// 16). The stack itself stays in the core; an encoder only ever needs the top.
+    pub const MODE_KITTY_KEY_SHIFT: u64 = 15;
+    pub const MODE_KITTY_KEY_MASK: u64 = 0b11111 << 15;
 
     pub fn new() -> Frame {
         Frame::default()
@@ -220,6 +233,31 @@ impl Frame {
     /// Whether DECCKM (application cursor keys) was on at publish time.
     pub fn cursor_keys(&self) -> bool {
         self.modes & Frame::MODE_CURSOR_KEYS != 0
+    }
+
+    /// Whether DECKPAM (keypad application) was on at publish time.
+    pub fn keypad_keys(&self) -> bool {
+        self.modes & Frame::MODE_KEYPAD_KEYS != 0
+    }
+
+    /// Whether mode 1035 (numlock suppresses keypad application) was on.
+    pub fn ignore_keypad_with_numlock(&self) -> bool {
+        self.modes & Frame::MODE_IGNORE_KEYPAD_WITH_NUMLOCK != 0
+    }
+
+    /// Whether mode 1036 (alt sends ESC prefix) was on.
+    pub fn alt_esc_prefix(&self) -> bool {
+        self.modes & Frame::MODE_ALT_ESC_PREFIX != 0
+    }
+
+    /// Whether xterm modifyOtherKeys state 2 was on.
+    pub fn modify_other_keys_2(&self) -> bool {
+        self.modes & Frame::MODE_MODIFY_OTHER_KEYS_2 != 0
+    }
+
+    /// The active screen's negotiated kitty keyboard flags at publish time.
+    pub fn kitty_key_flags(&self) -> u8 {
+        ((self.modes & Frame::MODE_KITTY_KEY_MASK) >> Frame::MODE_KITTY_KEY_SHIFT) as u8
     }
 
     pub(crate) fn resize(&mut self, cols: u16, rows: u16) {

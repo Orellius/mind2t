@@ -22,8 +22,8 @@ use ruuah_vt_core::Terminal;
 use ruuah_vt_frame::{BaseDirection, Frame, Publisher, channel};
 use ruuah_vt_host::{
     DEFAULT_FONT_SIZE, RuuahConfig, RuuahHost, RuuahHostFrame, RuuahHostOptions, RuuahHostResult,
-    ruuah_config_error, ruuah_config_free, ruuah_config_load, ruuah_host_free, ruuah_host_mouse,
-    ruuah_host_mouse_geometry, ruuah_host_paste, ruuah_host_poll,
+    ruuah_config_error, ruuah_config_free, ruuah_config_load, ruuah_host_free, ruuah_host_key,
+    ruuah_host_mouse, ruuah_host_mouse_geometry, ruuah_host_paste, ruuah_host_poll,
     ruuah_host_poll_skipping_row_for_testing, ruuah_host_resize, ruuah_host_row_text,
     ruuah_host_scroll, ruuah_host_send, ruuah_host_spawn, ruuah_host_wheel,
 };
@@ -641,6 +641,81 @@ fn a_wheel_on_the_primary_screen_is_the_embedders() {
     let verdict = unsafe { ruuah_host_wheel(host, 1.0, 1.0, 1, 0) };
     unsafe { ruuah_host_free(host) };
     assert_eq!(verdict, RuuahHostResult::Ignored);
+}
+
+/// The key path through the C boundary, kitty half: the child pushes disambiguate
+/// (CSI > 1 u), so the escape KEY -- C enum 120 -- must reach it as `CSI 27 u`
+/// rather than a raw ESC byte, echoed back as printable `^[[27u`. This crosses the
+/// frame's kitty-flag bits, the encoder, and the pty write in one assertion.
+#[test]
+fn a_key_takes_the_kitty_form_when_the_child_pushed_flags() {
+    let enable = b"\x1b[>1uREADY\r\n";
+    let (ready, ..) = reference_pixels_for(enable, BaseDirection::LeftToRight);
+    let after = b"\x1b[>1uREADY\r\n^[[27u";
+    let (want, ..) = reference_pixels_for(after, BaseDirection::LeftToRight);
+
+    let command = CString::new("printf '\\033[>1uREADY\\n'; exec cat").expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+        config: ptr::null(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+    if !poll_until_pixels(host, &ready) {
+        unsafe { ruuah_host_free(host) };
+        panic!("the child's READY line never appeared, so the kitty bits were never polled");
+    }
+    assert_eq!(
+        unsafe { ruuah_host_key(host, 1, 120, 0, 0, ptr::null(), 0, 27) },
+        RuuahHostResult::Success,
+        "escape press"
+    );
+    let matched = poll_until_pixels(host, &want);
+    unsafe { ruuah_host_free(host) };
+    assert!(matched, "the kitty-form escape never echoed back as pixels");
+}
+
+/// The control: the same escape press with NO negotiation must arrive as the raw
+/// ESC byte (echoed `^[`). Together with the test above this pins that the kitty
+/// flags GATE the encoding rather than either form being hardcoded.
+#[test]
+fn a_key_takes_the_legacy_form_without_negotiation() {
+    let (ready, ..) = reference_pixels_for(b"READY\r\n", BaseDirection::LeftToRight);
+    let (want, ..) = reference_pixels_for(b"READY\r\n^[", BaseDirection::LeftToRight);
+
+    let command = CString::new("printf 'READY\\n'; exec cat").expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+        config: ptr::null(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+    if !poll_until_pixels(host, &ready) {
+        unsafe { ruuah_host_free(host) };
+        panic!("the child's READY line never appeared");
+    }
+    assert_eq!(
+        unsafe { ruuah_host_key(host, 1, 120, 0, 0, ptr::null(), 0, 27) },
+        RuuahHostResult::Success,
+        "escape press"
+    );
+    let matched = poll_until_pixels(host, &want);
+    unsafe { ruuah_host_free(host) };
+    assert!(matched, "the legacy escape never echoed back as pixels");
 }
 
 /// S1's observable: a theme with a distinct background must recolor the grid AND the

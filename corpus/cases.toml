@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 150
+declared_cases = 155
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -1287,3 +1287,34 @@ expect = "diff"
 diff_paths = ["modes.cursor_keys"]
 bytes = "\u001B[?1h\u001B[!p"
 note = "The DECSTR divergence seen through DECCKM: the oracle has no ! dispatch so it keeps mode 1 set; this core soft-resets it, xterm way (xterm DECSTR resets DECCKM). Same deliberate divergence as decstr-soft-reset-diverges, pinned on the one mode the wheel routing reads."
+
+[[case]]
+name = "mode-66-keypad-application"
+expect = "match"
+bytes = "\u001B[?66h"
+note = "DECKPAM via the CSI spelling. Tracked for the host key encoder; observable through ghostty_terminal_mode_get. Added with the kitty keyboard slice 2026-07-30 -- routing landed with the harness, so the comparator control (each_mouse_mode_bit_disagreement...) is the discriminating guard for the comparison itself."
+
+[[case]]
+name = "mode-66-esc-equals-spelling"
+expect = "match"
+bytes = "\u001B="
+note = "DECKPAM via ESC =. The oracle routes it through the same mode-66 table entry as CSI ?66h (stream.zig emits set_mode), so mode_get observes both spellings identically -- this pins that our ESC dispatch does too."
+
+[[case]]
+name = "mode-1035-default-on"
+expect = "match"
+bytes = "\u001B[?1035l"
+note = "ignore_keypad_with_numlock DEFAULTS ON (modes.zig .default = true); the 1035l pins the shared default and the reset direction at once, the 1007 pattern."
+
+[[case]]
+name = "mode-1036-default-on"
+expect = "match"
+bytes = "\u001B[?1036l"
+note = "alt_esc_prefix DEFAULTS ON; same shape as 1035."
+
+[[case]]
+name = "mode-66-keypad-across-decstr"
+expect = "diff"
+diff_paths = ["modes.keypad_keys"]
+bytes = "\u001B=\u001B[!p"
+note = "The DECSTR divergence seen through the keypad: the oracle has no ! dispatch and keeps mode 66 set; this core soft-resets it (VT510 DECSTR table lists the keypad returning to numeric). Same deliberate divergence family as decstr-soft-reset-diverges and the DECCKM pin."

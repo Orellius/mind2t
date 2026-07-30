@@ -1,0 +1,77 @@
+// Generates swift/Sources/ruuah-host/KeyMap.swift from the oracle's keycode table
+// (src/input/keycodes.zig, Chromium dom_code_data) and the C key enum order
+// (vendor/.../vt/key/event.h). Run: bun gen-keymap.ts <ruuah-src> <ruuah-vt-root>
+import { readFileSync, writeFileSync } from "fs";
+
+const oracleSrc = process.argv[2];
+const repo = process.argv[3];
+if (!oracleSrc || !repo) throw new Error("usage: gen-keymap.ts <oracle-src> <repo>");
+
+// 1. C enum order -> value.
+const eventH = readFileSync(`${repo}/vendor/libghostty-vt/include/ghostty/vt/key/event.h`, "utf8");
+const enumBody = eventH.match(/GHOSTTY_KEY_UNIDENTIFIED = 0,([\s\S]*?)GHOSTTY_KEY_MAX_VALUE/);
+if (!enumBody) throw new Error("enum body not found");
+const cValues = new Map<string, number>();
+cValues.set("GHOSTTY_KEY_UNIDENTIFIED", 0);
+let next = 1;
+for (const m of enumBody[1].matchAll(/GHOSTTY_KEY_([A-Z0-9_]+),/g)) {
+  cValues.set(`GHOSTTY_KEY_${m[1]}`, next++);
+}
+
+// 2. DomCode -> zig key name.
+const keycodes = readFileSync(`${oracleSrc}/src/input/keycodes.zig`, "utf8");
+const codeToKey = new Map<string, string>();
+for (const m of keycodes.matchAll(/\.\{ "([A-Za-z0-9]+)", \.([a-z0-9_]+) \}/g)) {
+  codeToKey.set(m[1], m[2]);
+}
+
+// 3. raw_entries rows: { usb, evdev, xkb, win, mac, "DomCode" }.
+const rows = [...keycodes.matchAll(
+  /\.\{\s*0x([0-9a-fA-F]+),\s*0x([0-9a-fA-F]+),\s*0x([0-9a-fA-F]+),\s*0x([0-9a-fA-F]+),\s*0x([0-9a-fA-F]+),\s*"([A-Za-z0-9]*)"\s*\}/g,
+)];
+if (rows.length < 100) throw new Error(`only ${rows.length} raw entries parsed`);
+
+const zigToC = (zig: string): string => {
+  let name = zig.toUpperCase();
+  if (name.startsWith("KEY_")) name = name.slice(4); // key_a -> A
+  return `GHOSTTY_KEY_${name}`;
+};
+
+const pairs: Array<[number, number, string]> = [];
+const seen = new Set<number>();
+let unmappedKeys: string[] = [];
+for (const row of rows) {
+  const mac = parseInt(row[5], 16);
+  const dom = row[6];
+  if (mac === 0xffff || dom === "") continue;
+  const zig = codeToKey.get(dom);
+  if (!zig) continue; // dom codes the oracle maps to .unidentified
+  const cName = zigToC(zig);
+  const value = cValues.get(cName);
+  if (value === undefined) {
+    unmappedKeys.push(`${dom} -> ${zig} -> ${cName}`);
+    continue;
+  }
+  if (seen.has(mac)) continue; // first entry wins, matching the table order
+  seen.add(mac);
+  pairs.push([mac, value, dom]);
+}
+if (unmappedKeys.length) {
+  console.error("zig->C name misses (fix zigToC):\n" + unmappedKeys.join("\n"));
+  process.exit(1);
+}
+pairs.sort((a, b) => a[0] - b[0]);
+
+const lines = pairs.map(([mac, value, dom]) => `        ${mac}: ${value},  // ${dom}`);
+const swift = `// macOS virtual keyCode -> the C key enum (GhosttyKey values, see
+// vendor/libghostty-vt/include/ghostty/vt/key/event.h). GENERATED from the oracle's
+// keycode table (src/input/keycodes.zig, itself Chromium's dom_code_data mac column)
+// by scripts/gen-keymap.ts -- regenerate, never hand-edit. ${pairs.length} entries.
+enum KeyMap {
+    static let keyByCode: [UInt16: UInt32] = [
+${lines.join("\n")}
+    ]
+}
+`;
+writeFileSync(`${repo}/swift/Sources/ruuah-host/KeyMap.swift`, swift);
+console.log(`wrote ${pairs.length} entries`);

@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 132
+declared_cases = 133
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -1174,3 +1174,10 @@ cols = 8
 rows = 2
 bytes = "a\u2764\uFE0Fb"
 note = "MEASURED 2026-07-30: upstream keeps a VS16 emoji-presentation cluster at width 1 -- b lands in column 2 and the grids agree exactly. Pinned so the renderer-side emoji-presentation work (which draws the color glyph in that single cell) can never leak a width change into the core."
+
+[[case]]
+name = "decstr-soft-reset-diverges"
+expect = "diff"
+diff_paths = ["cell[1,0].style", "cursor.style"]
+bytes = "\u001B[2;5r\u001B[?6h\u001B[31m\u001B[!pX"
+note = "DECSTR (CSI ! p). The oracle has no ! intermediate dispatch at all (v1.3.2), so it keeps DECOM, the region and the red pen; this core soft-resets them, xterm's way -- esctest2 sends DECSTR before every test, and ignoring it makes every result order-dependent. Deliberate divergence where the oracle is silent, the sixel precedent."

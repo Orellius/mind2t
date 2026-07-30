@@ -73,8 +73,18 @@ release and Superset): settings+themes, Blocks on our OSC 133 rails, palette+wor
 autosuggestions, worktree workspaces, diff panel, splits, persistent sessions, MCP
 control. Homegrown clean-room law stated in the file — never copy AGPL/ELv2 code.
 
-**Next: slice 9 (esctest2)** -- its blocker is gone: the DSR/DA reply path's seam,
-`Host::send`, is now exercised end to end through the C surface.
+**Slice 9 (esctest2) DONE 2026-07-30** (`esctest-wiring`): the suite runs as the child
+of our own pty host (`crates/pty/tests/esctest.rs`) and gates the workspace -- 568
+tests in ~154s, 114 passes pinned BOTH directions in `corpus/esctest-expected-pass.txt`
+(regression and unpromoted pass are each red; the reports-grant mutant was seen to fail
+the gate). Enablers: DECRQCRA (per-cell checksum == codepoint, modern xterm), WINOPS 18
+size report -- both behind `Terminal::enable_reports`, an embedder grant RIS cannot
+revoke, OFF by default (the OSC 52-read posture; the app does not grant it yet) -- and
+DECSTR, a corpus-pinned deliberate divergence (the oracle has no `!` intermediate
+dispatch at all; esctest sends DECSTR before every test). The 409 failures are the
+ranked reply/feature to-do list: rectangle ops, DECLRMM, DECRQM/DECRQSS, charsets,
+REP, DECALN, IRM. Re-triage: the ignored `print_esctest_results` authoring test;
+suite pin in `esctest.lock`, refetch via `scripts/fetch-esctest.sh`.
 
 **Slice 8, `[tested]` (2026-07-29): the embedder surface and the minimal Swift host.**
 `crates/host` exports `ruuah_host_spawn/poll/send/resize/free` -- the pty -> core -> frame ->

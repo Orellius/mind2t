@@ -157,6 +157,19 @@ RuuahHostResult ruuah_host_mouse_geometry(RuuahHost *host, uint32_t screen_width
 RuuahHostResult ruuah_host_mouse(RuuahHost *host, uint32_t action, uint32_t button,
                                  uint32_t mods, float x, float y);
 
+/* Feeds one keyboard event to the key encoder and writes the result to the pty.
+ * action: 0 release, 1 press, 2 repeat. key: the GhosttyKey C enum value
+ * (KeyMap.swift). mods/consumed_mods: GhosttyMods bits (shift 1, ctrl 2, alt 4,
+ * super 8, caps 16, num 32); consumed = mods spent producing text (macOS: mods
+ * minus control and command). text: the event's translated UTF-8 (NULL/0 = none);
+ * unshifted_codepoint: the key with no modifiers, 0 if none. Encoding modes --
+ * DECCKM, keypad, 1035/1036, modifyOtherKeys, the kitty flags -- ride the last
+ * polled frame. Success = bytes written; IGNORED = the event encodes to nothing. */
+RuuahHostResult ruuah_host_key(RuuahHost *host, uint32_t action, uint32_t key,
+                               uint32_t mods, uint32_t consumed_mods,
+                               const uint8_t *text, size_t text_len,
+                               uint32_t unshifted_codepoint);
+
 /* Routes a wheel gesture through the terminal's precedence: active mouse mode ->
  * wheel-button reports; else alternate screen + alternate scroll (1007, default on)
  * -> arrow keys (ESC O form under DECCKM); else IGNORED, and the embedder scrolls its

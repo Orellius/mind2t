@@ -285,13 +285,16 @@ impl Publish<'_> {
     }
 
     /// Writes the frame's kitty placements: (image, col, row, cols, rows) per slot.
-    pub fn placements(&mut self, table: impl ExactSizeIterator<Item = (u32, u16, u16, u16, u16)>) {
+    pub fn placements(
+        &mut self,
+        table: impl ExactSizeIterator<Item = (u32, u16, i16, u16, u16)>,
+    ) {
         let len = table.len().min(PLACEMENT_SLOTS);
         self.shared.placement_len.store(len as u64, Ordering::Relaxed);
         for (slot, (image, col, row, cols, rows)) in table.take(len).enumerate() {
             let base = slot * PLACEMENT_WORDS;
             self.shared.placements[base].store(
-                u64::from(image) | (u64::from(col) << 32) | (u64::from(row) << 48),
+                u64::from(image) | (u64::from(col) << 32) | (u64::from(row as u16) << 48),
                 Ordering::Relaxed,
             );
             self.shared.placements[base + 1]
@@ -431,7 +434,7 @@ impl FrameReader {
             frame.placements.push(crate::frame::FramePlacement {
                 image: a as u32,
                 col: (a >> 32) as u16,
-                row: (a >> 48) as u16,
+                row: (a >> 48) as u16 as i16,
                 cols: b as u16,
                 rows: (b >> 16) as u16,
             });

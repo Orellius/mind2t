@@ -129,7 +129,9 @@ pub struct Frame {
 pub struct FramePlacement {
     pub image: u32,
     pub col: u16,
-    pub row: u16,
+    /// Signed: a negative row is an image partially scrolled off the top, drawn
+    /// clipped (both backends bound-check per pixel).
+    pub row: i16,
     /// 0 = native pixel size; the renderer resolves the cell box.
     pub cols: u16,
     pub rows: u16,

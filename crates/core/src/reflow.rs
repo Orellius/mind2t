@@ -38,6 +38,10 @@ pub enum Mode {
 /// The rows at the new width, and where the tracked positions ended up among them.
 #[derive(Debug)]
 pub struct Reflowed {
+    /// Extra tracked anchors (placement cells), in input order. `None` = the anchor's
+    /// row did not survive the transform. Saved-cursor clamping rules: an extra anchor
+    /// never extends a line.
+    pub extras: Vec<Option<Anchor>>,
     pub rows: Vec<HistoryRow>,
     pub cursor: Anchor,
     /// The saved (DECSC) cursor, if one was tracked. `None` means its row did not survive.
@@ -64,6 +68,7 @@ pub fn resize_rows(
     new_cols: u16,
     cursor: Anchor,
     saved: Option<Anchor>,
+    extras: &[Anchor],
     mode: Mode,
 ) -> Reflowed {
     if new_cols == 0 {
@@ -71,6 +76,7 @@ pub fn resize_rows(
             rows: Vec::new(),
             cursor: Anchor { row: 0, x: 0 },
             saved: None,
+            extras: vec![None; extras.len()],
         };
     }
 
@@ -78,12 +84,13 @@ pub fn resize_rows(
     let mut deferred_blanks = 0usize;
     let mut out_cursor = Anchor { row: 0, x: 0 };
     let mut out_saved = None;
+    let mut out_extras: Vec<Option<Anchor>> = vec![None; extras.len()];
 
     for line in lines(rows, mode) {
         let last = line.end;
 
         let mut content: Vec<HistoryCell> = Vec::new();
-        let mut tracked: [Option<usize>; 2] = [None, None];
+        let mut tracked: Vec<Option<usize>> = vec![None; 2 + extras.len()];
         // Where each source row's cells begin in `content`, with the mark it carried.
         let mut marks: Vec<(usize, RowSemantic)> = Vec::new();
         for (index, row) in rows[line.start..=last].iter().enumerate() {
@@ -122,6 +129,19 @@ pub fn resize_rows(
                 };
                 tracked[1] = Some(row_start + x);
             }
+            for (slot, extra) in extras.iter().enumerate() {
+                // Placement anchors take the saved-cursor rule: travel with the cell,
+                // clamp past content, never extend a line -- an image may not add rows.
+                if extra.row == y {
+                    let x = if usize::from(extra.x) < row_len {
+                        usize::from(extra.x)
+                    } else {
+                        let column = row_start % usize::from(new_cols);
+                        usize::from(extra.x).min(usize::from(new_cols) - 1 - column)
+                    };
+                    tracked[2 + slot] = Some(row_start + x);
+                }
+            }
         }
 
         // A tracked cell has to exist, which is also what keeps the row the cursor is
@@ -147,7 +167,7 @@ pub fn resize_rows(
         }
         deferred_blanks = 0;
 
-        let split = split(&content, new_cols, tracked);
+        let split = split(&content, new_cols, &tracked);
         let first = out.len();
         let count = split.rows.len();
         let content_end = split.content_end;
@@ -185,12 +205,21 @@ pub fn resize_rows(
                 x,
             });
         }
+        for (slot, landed) in split.tracked.iter().enumerate().skip(2) {
+            if let Some((row, x)) = landed {
+                out_extras[slot - 2] = Some(Anchor {
+                    row: first + row,
+                    x: *x,
+                });
+            }
+        }
     }
 
     Reflowed {
         rows: out,
         cursor: out_cursor,
         saved: out_saved,
+        extras: out_extras,
     }
 }
 
@@ -316,7 +345,7 @@ mod tests {
     #[test]
     fn a_wrapped_line_re_splits_at_the_new_width() {
         let rows = [row("abcdefghij", true, false), row("klmno", false, true)];
-        let out = resize_rows(&rows, 10, 5, Anchor { row: 1, x: 4 }, None, Mode::Rejoin);
+        let out = resize_rows(&rows, 10, 5, Anchor { row: 1, x: 4 }, None, &[], Mode::Rejoin);
         assert_eq!(texts(&out), ["abcde", "fghij", "klmno"]);
         assert_eq!(out.cursor, Anchor { row: 2, x: 4 });
     }
@@ -328,7 +357,7 @@ mod tests {
             row("fghij", true, true),
             row("klmno", false, true),
         ];
-        let out = resize_rows(&rows, 5, 10, Anchor { row: 2, x: 4 }, None, Mode::Rejoin);
+        let out = resize_rows(&rows, 5, 10, Anchor { row: 2, x: 4 }, None, &[], Mode::Rejoin);
         assert_eq!(texts(&out), ["abcdefghij", "klmno"]);
         assert_eq!(out.cursor, Anchor { row: 1, x: 4 });
     }
@@ -338,7 +367,7 @@ mod tests {
         // The cursor sat one cell past 'o'. That cell has to exist at the new width, which
         // is why an empty continuation row appears under a line that divided evenly.
         let rows = [row("abcdefghij", true, false), row("klmno", false, true)];
-        let out = resize_rows(&rows, 10, 5, Anchor { row: 1, x: 5 }, None, Mode::Rejoin);
+        let out = resize_rows(&rows, 10, 5, Anchor { row: 1, x: 5 }, None, &[], Mode::Rejoin);
         assert_eq!(texts(&out), ["abcde", "fghij", "klmno", ""]);
         assert_eq!(out.cursor, Anchor { row: 3, x: 0 });
         assert!(out.rows[2].meta.wrap, "the row above the cursor now wraps");
@@ -353,14 +382,14 @@ mod tests {
             row("d", false, false),
             row("", false, false),
         ];
-        let out = resize_rows(&rows, 10, 10, Anchor { row: 2, x: 1 }, None, Mode::Rejoin);
+        let out = resize_rows(&rows, 10, 10, Anchor { row: 2, x: 1 }, None, &[], Mode::Rejoin);
         assert_eq!(texts(&out), ["a", "", "d"]);
     }
 
     #[test]
     fn the_row_the_cursor_sits_on_is_never_dropped_as_blank() {
         let rows = [row("", false, false), row("", false, false)];
-        let out = resize_rows(&rows, 10, 10, Anchor { row: 1, x: 0 }, None, Mode::Rejoin);
+        let out = resize_rows(&rows, 10, 10, Anchor { row: 1, x: 0 }, None, &[], Mode::Rejoin);
         assert_eq!(out.rows.len(), 2);
         assert_eq!(out.cursor, Anchor { row: 1, x: 0 });
     }
@@ -396,7 +425,7 @@ mod tests {
             meta: RowMeta::default(),
         }];
 
-        let out = resize_rows(&rows, 3, 2, Anchor { row: 0, x: 0 }, None, Mode::Rejoin);
+        let out = resize_rows(&rows, 3, 2, Anchor { row: 0, x: 0 }, None, &[], Mode::Rejoin);
         assert_eq!(out.rows.len(), 2);
         assert_eq!(out.rows[0].cells[1].wide, Wide::SpacerHead);
         assert_eq!(out.rows[1].cells[0].codepoint, '世' as u32);
@@ -407,7 +436,7 @@ mod tests {
     fn truncate_mode_keeps_every_row_separate() {
         // The alternate screen: rows lose columns but never rejoin.
         let rows = [row("abcdefghij", true, false), row("klmno", false, true)];
-        let out = resize_rows(&rows, 10, 5, Anchor { row: 1, x: 4 }, None, Mode::Truncate);
+        let out = resize_rows(&rows, 10, 5, Anchor { row: 1, x: 4 }, None, &[], Mode::Truncate);
         assert_eq!(texts(&out), ["abcde", "klmno"]);
         assert!(out.rows[0].meta.wrap, "the flags are carried, not recomputed");
         assert!(out.rows[1].meta.wrap_continuation);
@@ -417,7 +446,7 @@ mod tests {
     fn a_grapheme_cluster_travels_with_its_cell() {
         let mut rows = [row("ab", false, false)];
         rows[0].cells[1].graphemes = vec!['\u{301}'];
-        let out = resize_rows(&rows, 10, 1, Anchor { row: 0, x: 1 }, None, Mode::Rejoin);
+        let out = resize_rows(&rows, 10, 1, Anchor { row: 0, x: 1 }, None, &[], Mode::Rejoin);
         assert_eq!(out.rows.len(), 2);
         assert_eq!(out.rows[1].cells[0].graphemes, vec!['\u{301}']);
     }

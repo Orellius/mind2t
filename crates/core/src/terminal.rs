@@ -508,15 +508,9 @@ impl State {
         crate::resize::apply(&mut self.primary, cols, rows, primary_mode);
         crate::resize::apply(&mut self.alternate, cols, rows, Mode::Truncate);
 
-        // Inline images (kitty/sixel placements) do NOT survive a resize, v1: reflow
-        // moves the text but a placement is anchored to grid coordinates, so keeping it
-        // draws the image beside the wrong content -- the "evades its cell" defect,
-        // seen live 2026-07-30. A predictable vanish beats a lying position; the real
-        // fix (anchors that ride the reflow like the cursor's tracked pin) is a slice
-        // of its own on the backlog. The image STORE is untouched -- a program can
-        // re-place by id without retransmitting.
-        self.primary.placements.clear();
-        self.alternate.placements.clear();
+        // Inline images ride the reflow: `resize::apply` maps each placement's anchor
+        // through the same transform as the cursors (v2, replacing the interim
+        // clear-on-resize). An anchor whose row does not survive drops its placement.
 
         // Only when the column count changed -- upstream guards its rebuild on exactly that
         // (`Terminal.zig:3766`), so a rows-only resize keeps custom HTS stops (finding 21).

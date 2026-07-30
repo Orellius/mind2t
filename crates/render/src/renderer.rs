@@ -502,7 +502,7 @@ impl<S: Surface> Renderer<S> {
                 target_height,
             );
             let x = i32::from(placement.col) * metrics.width as i32;
-            let y = i32::from(placement.row) * metrics.height as i32;
+            let y = i32::from(placement.row) * metrics.height as i32; // negative = clipped top
             self.canvas
                 .blend_image(x, y, target_width, target_height, &scaled);
         }

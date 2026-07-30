@@ -170,6 +170,24 @@ impl State {
             }
         }
 
+        // DECSTR (CSI ! p): the soft reset esctest2 runs before every test.
+        if action == 'p' && intermediates.first() == Some(&b'!') {
+            return self.soft_reset();
+        }
+
+        // DECRQCRA (CSI Pid;Pp;Pt;Pl;Pb;Pr * y): the checksum readback esctest2's screen
+        // assertions run on. Pp (the page) is ignored -- there is one page here.
+        if action == 'y' && intermediates.first() == Some(&b'*') {
+            let id = arg_or_zero(params, 0);
+            let rect = [
+                arg_or_zero(params, 2),
+                arg_or_zero(params, 3),
+                arg_or_zero(params, 4),
+                arg_or_zero(params, 5),
+            ];
+            return self.checksum_report(id, rect);
+        }
+
         // Other intermediates carry sequences this slice does not implement. Acting on them
         // half-way would be worse than not acting.
         if !intermediates.is_empty() {
@@ -181,6 +199,7 @@ impl State {
             'm' => sgr::apply(&mut self.pen, params),
 
             'n' => self.device_status_report(arg_or_zero(params, 0)),
+            't' => self.window_report(arg_or_zero(params, 0)),
             'c' => {
                 if arg_or_zero(params, 0) == 0 {
                     self.device_attributes_primary();

@@ -45,6 +45,11 @@ impl State {
             1049 => self.switch_screen(on, AltMode::M1049),
             2004 => self.bracketed_paste = on,
             2026 => self.synchronized_output = on,
+            // The mouse family (9/1000/1002/1003/1005/1006/1015/1016/1007): raw bit plus
+            // derived last-writer state, both maintained inside `MouseModes::set`.
+            9 | 1000 | 1002 | 1003 | 1005 | 1006 | 1015 | 1016 | 1007 => {
+                self.mouse.set(mode, on);
+            }
             _ => {}
         }
     }

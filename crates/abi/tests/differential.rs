@@ -166,33 +166,29 @@ unsafe fn read_snapshot(handle: GhosttyTerminal, reader: Reader) -> Snapshot {
                 style: unpack_style(&cursor_style),
             },
             modes: {
-                let mut bracketed_paste = false;
-                assert_eq!(
-                    ghostty_terminal_mode_get(
-                        handle,
-                        GHOSTTY_MODE_BRACKETED_PASTE,
-                        &mut bracketed_paste,
-                    ),
-                    GHOSTTY_SUCCESS,
-                    "mode_get(2004)"
-                );
-                let mut synchronized_output = false;
-                assert_eq!(
-                    ghostty_terminal_mode_get(
-                        handle,
-                        GHOSTTY_MODE_SYNCHRONIZED_OUTPUT,
-                        &mut synchronized_output,
-                    ),
-                    GHOSTTY_SUCCESS,
-                    "mode_get(2026)"
-                );
+                // Every tracked mode is read through the C surface, so the corpus
+                // compares what an embedder would actually see, not the Rust API.
+                let mode = |packed: u16| {
+                    let mut value = false;
+                    assert_eq!(
+                        unsafe { ghostty_terminal_mode_get(handle, packed, &mut value) },
+                        GHOSTTY_SUCCESS,
+                        "mode_get({packed})"
+                    );
+                    value
+                };
                 ruuah_vt_snapshot::Modes {
-                    bracketed_paste,
-                    synchronized_output,
-                    // The mouse family is filled from defaults until the C surface
-                    // answers it below (the widened mode_get lands with the core
-                    // routing; this constructor is replaced in the same slice).
-                    ..Default::default()
+                    bracketed_paste: mode(GHOSTTY_MODE_BRACKETED_PASTE),
+                    synchronized_output: mode(GHOSTTY_MODE_SYNCHRONIZED_OUTPUT),
+                    mouse_event_x10: mode(9),
+                    mouse_event_normal: mode(1000),
+                    mouse_event_button: mode(1002),
+                    mouse_event_any: mode(1003),
+                    mouse_format_utf8: mode(1005),
+                    mouse_format_sgr: mode(1006),
+                    mouse_format_urxvt: mode(1015),
+                    mouse_format_sgr_pixels: mode(1016),
+                    mouse_alternate_scroll: mode(1007),
                 }
             },
             grid,

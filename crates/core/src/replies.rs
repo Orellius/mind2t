@@ -69,6 +69,12 @@ impl State {
                 47 | 1047 | 1049 => Some(matches!(self.active, crate::terminal::Active::Alternate)),
                 2004 => Some(self.bracketed_paste),
                 2026 => Some(self.synchronized_output),
+                // The mouse family answers from the RAW bits, not the derived kind:
+                // after 1000h 1002h 1002l the oracle's table still holds 1000 set, so
+                // DECRQM(1000) is 1 even though reporting is off. xterm agrees.
+                9 | 1000 | 1002 | 1003 | 1005 | 1006 | 1015 | 1016 | 1007 => {
+                    self.mouse.raw_bit(mode)
+                }
                 _ => None,
             };
             match tracked {

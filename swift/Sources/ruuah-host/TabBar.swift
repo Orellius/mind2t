@@ -19,6 +19,7 @@ final class TabBarView: NSView {
     weak var delegate: TabBarDelegate?
 
     private var titles: [String] = []
+    private var states: [Session.WorkState] = []
     private var activeIndex = -1
     private var pills: [NSView] = []
 
@@ -37,9 +38,11 @@ final class TabBarView: NSView {
 
     required init?(coder: NSCoder) { nil }
 
-    func update(titles: [String], activeIndex: Int) {
-        guard titles != self.titles || activeIndex != self.activeIndex else { return }
+    func update(titles: [String], states: [Session.WorkState], activeIndex: Int) {
+        guard titles != self.titles || states != self.states || activeIndex != self.activeIndex
+        else { return }
         self.titles = titles
+        self.states = states
         self.activeIndex = activeIndex
         rebuild()
     }
@@ -62,7 +65,8 @@ final class TabBarView: NSView {
         for (index, title) in titles.enumerated() {
             let active = index == activeIndex
             let pill = makePill(
-                title: title, active: active, index: index, height: pillHeight)
+                title: title, active: active, index: index, height: pillHeight,
+                state: index < states.count ? states[index] : .idle)
             pill.frame.origin = NSPoint(x: x, y: y)
             addSubview(pill)
             pills.append(pill)
@@ -84,8 +88,18 @@ final class TabBarView: NSView {
         pills.append(panel)
     }
 
-    private func makePill(title: String, active: Bool, index: Int, height: CGFloat) -> NSView {
-        let label = NSTextField(labelWithString: title)
+    // Work-state indicator colors: amber while an agent works, red on error, green
+    // when finished and not yet looked at. Explicit signals only -- OSC 9;4 progress
+    // or a per-CLI title marker -- never an idle timer (the operator's rule).
+    private static let workingDot = NSColor(srgbRed: 1.0, green: 0.72, blue: 0.20, alpha: 1)
+    private static let errorDot = NSColor(srgbRed: 0.95, green: 0.30, blue: 0.30, alpha: 1)
+    private static let doneDot = NSColor(srgbRed: 0x2B / 255, green: 0xD9 / 255, blue: 0x9F / 255, alpha: 1)
+
+    private func makePill(
+        title: String, active: Bool, index: Int, height: CGFloat, state: Session.WorkState
+    ) -> NSView {
+        let shown = title.count > 24 ? String(title.prefix(23)) + "…" : title
+        let label = NSTextField(labelWithString: shown)
         label.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         label.textColor = active ? TabBarView.activeGreen : TabBarView.labelColor
         label.sizeToFit()
@@ -93,8 +107,10 @@ final class TabBarView: NSView {
         let hasClose = active
         let iconWidth: CGFloat = 16
         let closeWidth: CGFloat = hasClose ? 16 : 0
+        let dotWidth: CGFloat = state == .idle ? 0 : 12
         let padding: CGFloat = 10
-        let width = padding + closeWidth + iconWidth + 6 + label.frame.width + padding
+        let width =
+            padding + closeWidth + iconWidth + 6 + label.frame.width + dotWidth + padding
 
         let pill = ClickView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         pill.wantsLayer = true
@@ -125,6 +141,21 @@ final class TabBarView: NSView {
         cursor += iconWidth + 6
         label.frame.origin = NSPoint(x: cursor, y: (height - label.frame.height) / 2)
         pill.addSubview(label)
+        cursor += label.frame.width
+        if state != .idle {
+            let dot = NSView(frame: NSRect(x: cursor + 5, y: (height - 7) / 2, width: 7, height: 7))
+            dot.wantsLayer = true
+            dot.layer?.cornerRadius = 3.5
+            dot.layer?.backgroundColor = {
+                switch state {
+                case .working: return TabBarView.workingDot.cgColor
+                case .error: return TabBarView.errorDot.cgColor
+                case .done: return TabBarView.doneDot.cgColor
+                case .idle: return NSColor.clear.cgColor
+                }
+            }()
+            pill.addSubview(dot)
+        }
         return pill
     }
 

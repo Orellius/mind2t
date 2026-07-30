@@ -132,6 +132,7 @@ impl Terminal {
                 mouse_format_urxvt: self.dec_mode(1015)?,
                 mouse_format_sgr_pixels: self.dec_mode(1016)?,
                 mouse_alternate_scroll: self.dec_mode(1007)?,
+                cursor_keys: self.dec_mode(1)?,
             },
             grid,
             history,

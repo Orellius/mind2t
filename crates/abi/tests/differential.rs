@@ -189,6 +189,7 @@ unsafe fn read_snapshot(handle: GhosttyTerminal, reader: Reader) -> Snapshot {
                     mouse_format_urxvt: mode(1015),
                     mouse_format_sgr_pixels: mode(1016),
                     mouse_alternate_scroll: mode(1007),
+                    cursor_keys: mode(1),
                 }
             },
             grid,

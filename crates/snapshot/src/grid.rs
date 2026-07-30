@@ -183,6 +183,9 @@ pub struct Modes {
     /// mode that DEFAULTS ON (the oracle marks it `.default = true`), which is why
     /// `Default` here is hand-written.
     pub mouse_alternate_scroll: bool,
+    /// DEC private mode 1 (DECCKM): application cursor keys. Tracked because the
+    /// alternate-scroll wheel path picks `ESC O A` over `ESC [ A` by it.
+    pub cursor_keys: bool,
 }
 
 impl Default for Modes {
@@ -199,6 +202,7 @@ impl Default for Modes {
             mouse_format_urxvt: false,
             mouse_format_sgr_pixels: false,
             mouse_alternate_scroll: true,
+            cursor_keys: false,
         }
     }
 }

@@ -155,6 +155,18 @@ impl Terminal {
     pub fn mouse_alternate_scroll(&self) -> bool {
         self.state.mouse.alternate_scroll
     }
+
+    /// DECCKM (mode 1): application cursor keys. Selects `ESC O A` over `ESC [ A` in
+    /// the host's arrow and alternate-scroll encodings.
+    pub fn cursor_keys(&self) -> bool {
+        self.state.cursor_keys
+    }
+
+    /// Whether the alternate screen is active. The host's wheel routing needs it:
+    /// alternate scroll (1007) applies only there.
+    pub fn on_alternate_screen(&self) -> bool {
+        matches!(self.state.active, Active::Alternate)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,6 +189,10 @@ pub(crate) struct State {
     pub(crate) origin: bool,
     /// DECTCEM (mode 25).
     pub(crate) cursor_visible: bool,
+    /// DECCKM (mode 1). Application cursor keys: arrows encode `ESC O A` instead of
+    /// `ESC [ A`. The core only TRACKS it; the host's key and alternate-scroll paths
+    /// read it to pick the byte form, exactly as the oracle's Surface does.
+    pub(crate) cursor_keys: bool,
     /// Bracketed paste (mode 2004). Terminal-global, not per-screen: measured against the
     /// oracle, entering the alternate screen keeps it and only RIS or `2004l` clears it.
     /// The core only TRACKS it -- wrapping paste bytes is the host's job, because the
@@ -243,6 +259,7 @@ impl State {
             autowrap: true,
             origin: false,
             cursor_visible: true,
+            cursor_keys: false,
             bracketed_paste: false,
             synchronized_output: false,
             mouse: crate::mouse::MouseModes::default(),
@@ -341,6 +358,7 @@ impl State {
                 mouse_format_urxvt: self.mouse.urxvt,
                 mouse_format_sgr_pixels: self.mouse.sgr_pixels,
                 mouse_alternate_scroll: self.mouse.alternate_scroll,
+                cursor_keys: self.cursor_keys,
             },
             cursor: Cursor {
                 x: screen.x,
@@ -617,6 +635,8 @@ impl State {
         self.cursor_visible = true;
         self.origin = false;
         self.autowrap = true;
+        // xterm's DECSTR resets DECCKM to normal; part of the same xterm-shaped set.
+        self.cursor_keys = false;
         self.pen = Style::DEFAULT;
         self.saved_pen = None;
         let screen = self.screen_mut();

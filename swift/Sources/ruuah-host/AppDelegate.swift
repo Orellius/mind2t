@@ -25,6 +25,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// What could not be honoured in the config, shown once at launch -- a settings file
     /// that silently half-applies looks like a broken app, so the failure is loud.
     private let configError: String?
+    /// Overrides the workflows directory the same way it overrides config.toml, so
+    /// captures and taps never touch (or require) the real ~/.ruuah.
+    private let configDir: String?
     private var window: NSWindow!
     private var view: TerminalView!
     private var tabBar: TabBarView!
@@ -42,13 +45,14 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     init(
         command: String?, autoDirection: Bool, config: OpaquePointer?,
-        baseFontSize: Float, configError: String?
+        baseFontSize: Float, configError: String?, configDir: String? = nil
     ) {
         self.command = command
         self.autoDirection = autoDirection
         self.config = config
         self.baseFontSize = baseFontSize
         self.configError = configError
+        self.configDir = configDir
         if let config, let family = ruuah_config_font_family(config) {
             self.fontFamily = String(cString: family)
         } else {
@@ -139,6 +143,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             self?.sessions.forEach { $0.mouseGeometry(width: width, height: height, inset: inset) }
         }
         view.onNewSession = { [weak self] in self?.newSession() }
+        view.onPalette = { [weak self] in self?.togglePalette() }
         view.onCloseSession = { [weak self] in
             guard let self, self.activeIndex >= 0 else { return }
             self.closeSession(index: self.activeIndex)
@@ -475,6 +480,117 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     /// The clicked block's actions. The menu is built per click -- blocks move as the
     /// grid scrolls, so caching one would act on stale rows.
+    // MARK: command palette (S3)
+
+    private var palette: PaletteView?
+
+    /// cmd+K toggles. Items are rebuilt and workflows reloaded at every open, so
+    /// session changes and template file edits show up without a restart.
+    private func togglePalette() {
+        if let palette {
+            palette.removeFromSuperview()
+            self.palette = nil
+            window.makeFirstResponder(view)
+            return
+        }
+        let workflows = Workflows(
+            dir: configDir.map { ($0 as NSString).appendingPathComponent("workflows") })
+        var items: [PaletteItem] = [
+            PaletteItem(
+                title: "New Session", subtitle: "cmd+T", workflowIndex: nil,
+                action: { [weak self] in self?.newSession() }),
+            PaletteItem(
+                title: "Close Session", subtitle: "cmd+W", workflowIndex: nil,
+                action: { [weak self] in
+                    guard let self, self.activeIndex >= 0 else { return }
+                    self.closeSession(index: self.activeIndex)
+                }),
+        ]
+        for (index, session) in sessions.enumerated() where index != activeIndex {
+            items.append(
+                PaletteItem(
+                    title: "Switch: \(session.title)", subtitle: "session \(index + 1)",
+                    workflowIndex: nil,
+                    action: { [weak self] in self?.activate(index: index) }))
+        }
+        if let session = activeSession,
+            let block = computeBlocks(session.rowClasses).last
+        {
+            let command = session.command(of: block)
+            if !command.isEmpty {
+                items.append(
+                    PaletteItem(
+                        title: "Copy Last Command", subtitle: command, workflowIndex: nil,
+                        action: { [weak self] in
+                            guard let self, let session = self.activeSession else { return }
+                            self.clip(session.command(of: block))
+                        }))
+                items.append(
+                    PaletteItem(
+                        title: "Copy Last Output", subtitle: "the block's output text",
+                        workflowIndex: nil,
+                        action: { [weak self] in
+                            guard let self, let session = self.activeSession else { return }
+                            self.clip(session.output(of: block))
+                        }))
+            }
+        }
+        items.append(
+            PaletteItem(
+                title: "Scroll to Top", subtitle: "cmd+Home", workflowIndex: nil,
+                action: { [weak self] in self?.activeSession?.scroll(Int32.max / 2) }))
+        items.append(
+            PaletteItem(
+                title: "Scroll to Bottom", subtitle: "cmd+End", workflowIndex: nil,
+                action: { [weak self] in self?.activeSession?.scroll(Int32.min) }))
+        for index in 0..<workflows.count {
+            let description = workflows.field(index, RUUAH_WORKFLOW_DESCRIPTION)
+            let command = workflows.field(index, RUUAH_WORKFLOW_COMMAND)
+            items.append(
+                PaletteItem(
+                    title: workflows.field(index, RUUAH_WORKFLOW_NAME),
+                    subtitle: description.isEmpty ? command : description,
+                    workflowIndex: index, action: nil))
+        }
+        let errors = workflows.errors
+        if !errors.isEmpty {
+            items.append(
+                PaletteItem(
+                    title: "\u{26A0} Workflow files with errors",
+                    subtitle: errors.replacingOccurrences(of: "\n", with: " \u{2022} "),
+                    workflowIndex: nil,
+                    action: {
+                        let alert = NSAlert()
+                        alert.alertStyle = .warning
+                        alert.messageText = "Some workflow files were skipped"
+                        alert.informativeText = errors
+                        alert.runModal()
+                    }))
+        }
+
+        let paletteView = PaletteView(items: items, workflows: workflows)
+        paletteView.onDismiss = { [weak self] in
+            guard let self else { return }
+            self.palette?.removeFromSuperview()
+            self.palette = nil
+            self.window.makeFirstResponder(self.view)
+        }
+        paletteView.onCommand = { [weak self] bytes in
+            guard let session = self?.activeSession else { return }
+            session.scroll(Int32.min)
+            session.paste(bytes)
+        }
+        paletteView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(paletteView)
+        NSLayoutConstraint.activate([
+            paletteView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            paletteView.topAnchor.constraint(equalTo: view.topAnchor, constant: 64),
+            paletteView.widthAnchor.constraint(equalToConstant: 560),
+        ])
+        palette = paletteView
+        paletteView.focus()
+    }
+
     private func showBlockMenu(_ block: Block, with event: NSEvent) {
         guard let session = activeSession else { return }
         let command = session.command(of: block)

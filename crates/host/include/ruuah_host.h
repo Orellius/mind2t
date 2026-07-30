@@ -180,6 +180,41 @@ RuuahHostResult ruuah_host_key(RuuahHost *host, uint32_t action, uint32_t key,
 RuuahHostResult ruuah_host_wheel(RuuahHost *host, float x, float y, int32_t ticks,
                                  uint32_t mods);
 
+/* Workflow templates (~/.ruuah/workflows/*.toml, the cmd+K palette's data). All
+ * string getters use the row_text buffer protocol: NULL out sizes the value into
+ * out_len, a short buffer refuses with the needed length, no NUL is written.
+ * Field selectors: 0 name, 1 description, 2 command (or 2 default for args). */
+typedef struct RuuahWorkflows RuuahWorkflows;
+
+#define RUUAH_WORKFLOW_NAME 0u
+#define RUUAH_WORKFLOW_DESCRIPTION 1u
+#define RUUAH_WORKFLOW_COMMAND 2u
+#define RUUAH_WORKFLOW_ARG_DEFAULT 2u
+
+/* dir NULL = ~/.ruuah/workflows. Broken files are skipped, their errors kept on the
+ * handle; a missing directory is a valid empty handle. */
+RuuahHostResult ruuah_workflows_load(const char *dir, RuuahWorkflows **out);
+void ruuah_workflows_free(RuuahWorkflows *handle);
+uint32_t ruuah_workflows_count(const RuuahWorkflows *handle);
+/* Loader error lines, newline-joined; empty when every file parsed. Show loudly. */
+RuuahHostResult ruuah_workflows_errors(const RuuahWorkflows *handle, uint8_t *out,
+                                       size_t cap, size_t *out_len);
+RuuahHostResult ruuah_workflow_field(const RuuahWorkflows *handle, uint32_t index,
+                                     uint32_t field, uint8_t *out, size_t cap,
+                                     size_t *out_len);
+uint32_t ruuah_workflow_arg_count(const RuuahWorkflows *handle, uint32_t index);
+/* A missing default answers RUUAH_HOST_IGNORED with length 0 -- distinct from an
+ * empty-string default, so the palette prefills one and prompts bare for the other. */
+RuuahHostResult ruuah_workflow_arg(const RuuahWorkflows *handle, uint32_t index,
+                                   uint32_t arg_index, uint32_t field, uint8_t *out,
+                                   size_t cap, size_t *out_len);
+/* args_blob: pairs of NUL-terminated strings (name, value, ...), blob_len total
+ * bytes. An unresolved placeholder refuses with INVALID_VALUE -- a command with a
+ * hole in it must never reach the paste path. */
+RuuahHostResult ruuah_workflow_render(const RuuahWorkflows *handle, uint32_t index,
+                                      const uint8_t *args_blob, size_t blob_len,
+                                      uint8_t *out, size_t cap, size_t *out_len);
+
 /* Scrolls the displayed view through scrollback: positive rows climbs into history,
  * negative returns toward the live bottom, INT32_MIN snaps straight to it. Deltas
  * accumulate on the pump thread and are clamped against what history actually holds;

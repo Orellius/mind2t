@@ -1405,6 +1405,7 @@ pub unsafe extern "C" fn ruuah_host_next_event(
         Event::Bell => (3, Vec::new()),
         Event::Title(title) => (4, title.clone().into_bytes()),
         Event::Progress { state, value } => (5, vec![*state, *value]),
+        Event::CommandStart => (6, Vec::new()),
     };
     unsafe {
         kind.write(code);

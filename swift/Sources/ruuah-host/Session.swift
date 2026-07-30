@@ -159,6 +159,8 @@ final class Session {
         case bell
         case title(String)
         case progress(state: UInt8)
+        /// OSC 133;C: execution began -- the typed command is final (S4 records it).
+        case commandStart
     }
 
     /// Drains every pending host-facing event, oldest first. The C contract consumes an
@@ -194,6 +196,7 @@ final class Session {
             case 3: drained.append(.bell)
             case 4: drained.append(.title(text))
             case 5: drained.append(.progress(state: payload.first ?? 0))
+            case 6: drained.append(.commandStart)
             default: break
             }
         }

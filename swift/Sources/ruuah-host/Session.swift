@@ -206,6 +206,15 @@ final class Session {
         return String(decoding: buffer, as: UTF8.self)
     }
 
+    /// Scrolls the view through scrollback; positive climbs into history, negative
+    /// returns, `Int32.min` snaps to the live bottom (the host's documented sentinel).
+    /// The host clamps against what history holds; the landed position rides back in
+    /// the next polled frame's viewport_offset.
+    func scroll(_ rows: Int32) {
+        guard let host else { return }
+        _ = ruuah_host_scroll(host, rows)
+    }
+
     func send(_ bytes: [UInt8]) {
         guard let host else { return }
         _ = bytes.withUnsafeBufferPointer { buffer in

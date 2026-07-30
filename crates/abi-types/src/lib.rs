@@ -57,6 +57,7 @@ pub const GHOSTTY_TERMINAL_SCREEN_ALTERNATE: GhosttyTerminalScreen = 1;
 /// packed form -- bracketed paste is the literal 2004.
 pub type GhosttyMode = u16;
 pub const GHOSTTY_MODE_BRACKETED_PASTE: GhosttyMode = 2004;
+pub const GHOSTTY_MODE_SYNCHRONIZED_OUTPUT: GhosttyMode = 2026;
 
 pub type GhosttyPointTag = i32;
 pub const GHOSTTY_POINT_TAG_ACTIVE: GhosttyPointTag = 0;

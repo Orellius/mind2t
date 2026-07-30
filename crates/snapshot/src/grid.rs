@@ -162,6 +162,8 @@ pub struct Damage {
 pub struct Modes {
     /// DEC private mode 2004: the host wraps pastes in `ESC[200~` / `ESC[201~`.
     pub bracketed_paste: bool,
+    /// DEC private mode 2026: the pump holds frames back until the batch closes.
+    pub synchronized_output: bool,
 }
 
 /// Cursor position and the style newly printed cells will take.

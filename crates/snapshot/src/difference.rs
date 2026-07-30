@@ -69,6 +69,14 @@ pub fn diff(oracle: &Snapshot, candidate: &Snapshot) -> Vec<Difference> {
         ));
     }
 
+    if oracle.modes.synchronized_output != candidate.modes.synchronized_output {
+        out.push(Difference::new(
+            "modes.synchronized_output",
+            oracle.modes.synchronized_output,
+            candidate.modes.synchronized_output,
+        ));
+    }
+
     diff_cursor(oracle, candidate, &mut out);
 
     // History length first: a shorter or longer history shifts every row, so comparing rows
@@ -347,6 +355,19 @@ mod tests {
         let found = diff(&a, &b);
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].path, "modes.bracketed_paste");
+    }
+
+    /// Same law as bracketed paste: no grid effect, so only this control guards the
+    /// comparison itself.
+    #[test]
+    fn a_synchronized_output_disagreement_is_reported() {
+        let a = snapshot(4, 2);
+        let mut b = a.clone();
+        b.modes.synchronized_output = true;
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "modes.synchronized_output");
     }
 
     #[test]

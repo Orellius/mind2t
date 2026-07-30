@@ -247,11 +247,12 @@ pub unsafe extern "C" fn ghostty_terminal_get(
 /// may run concurrently with other reads. `out_value`, if non-null, must be valid for
 /// writing one `bool`.
 ///
-/// The one mode this core tracks as queryable state is DEC 2004 (bracketed paste) -- the
-/// mode a GUI host must consult before every paste. Anything else answers
-/// `GHOSTTY_INVALID_VALUE` rather than a guessed `false`: a wrong "off" for a mode like
-/// 1006 would make a consumer silently drop mouse encoding, which is worse than an error
-/// it can see. Extend per mode, each with its own corpus pin, as consumers need them.
+/// The modes this core tracks as queryable state are DEC 2004 (bracketed paste -- what
+/// a GUI host consults before every paste) and DEC 2026 (synchronized output -- what
+/// the pump's publish gate reads). Anything else answers `GHOSTTY_INVALID_VALUE`
+/// rather than a guessed `false`: a wrong "off" for a mode like 1006 would make a
+/// consumer silently drop mouse encoding, which is worse than an error it can see.
+/// Extend per mode, each with its own corpus pin, as consumers need them.
 pub unsafe extern "C" fn ghostty_terminal_mode_get(
     handle: GhosttyTerminal,
     mode: GhosttyMode,
@@ -273,6 +274,10 @@ pub unsafe extern "C" fn ghostty_terminal_mode_get(
     match mode {
         2004 => {
             unsafe { *out_value = view.modes.bracketed_paste };
+            GHOSTTY_SUCCESS
+        }
+        2026 => {
+            unsafe { *out_value = view.modes.synchronized_output };
             GHOSTTY_SUCCESS
         }
         _ => GHOSTTY_INVALID_VALUE,

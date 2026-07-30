@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 133
+declared_cases = 136
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -1181,3 +1181,24 @@ expect = "diff"
 diff_paths = ["cell[1,0].style", "cursor.style"]
 bytes = "\u001B[2;5r\u001B[?6h\u001B[31m\u001B[!pX"
 note = "DECSTR (CSI ! p). The oracle has no ! intermediate dispatch at all (v1.3.2), so it keeps DECOM, the region and the red pen; this core soft-resets them, xterm's way -- esctest2 sends DECSTR before every test, and ignoring it makes every result order-dependent. Deliberate divergence where the oracle is silent, the sixel precedent."
+
+[[case]]
+name = "sync-2026-tracked"
+expect = "match"
+bytes = "\u001B[?2026hbatch"
+note = "Synchronized output (mode 2026) is tracked state both sides report through ghostty_terminal_mode_get; the BATCHING itself is the pump's publish gate, outside the core by design."
+
+[[case]]
+name = "sync-2026-cleared-by-resize"
+expect = "match"
+cols = 10
+rows = 4
+resize = { cols = 12, rows = 4 }
+bytes = "\u001B[?2026hx"
+note = "MEASURED 2026-07-30: the oracle clears 2026 on resize (its own test pins even the unchanged-dimensions direction); a program holding the gate across a resize would freeze the redraw the user just asked for."
+
+[[case]]
+name = "sync-2026-survives-alt-switch"
+expect = "match"
+bytes = "\u001B[?2026h\u001B[?1049halt"
+note = "2026 is terminal-global like 2004: entering the alternate screen keeps the batch open."

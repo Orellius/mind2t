@@ -144,6 +144,10 @@ pub struct FramePlacement {
 impl Frame {
     /// Bit set in `modes` while the child has bracketed paste (DEC 2004) enabled.
     pub const MODE_BRACKETED_PASTE: u64 = 1 << 0;
+    /// Bit set while the child has synchronized output (DEC 2026) enabled. Mostly
+    /// diagnostic on the reader side -- the pump already withholds publishes during a
+    /// batch, so a frame carrying this bit is one the anti-stuck budget forced out.
+    pub const MODE_SYNCHRONIZED_OUTPUT: u64 = 1 << 1;
 
     pub fn new() -> Frame {
         Frame::default()
@@ -152,6 +156,11 @@ impl Frame {
     /// Whether the child enabled bracketed paste (DEC 2004).
     pub fn bracketed_paste(&self) -> bool {
         self.modes & Frame::MODE_BRACKETED_PASTE != 0
+    }
+
+    /// Whether the child had synchronized output (DEC 2026) enabled at publish time.
+    pub fn synchronized_output(&self) -> bool {
+        self.modes & Frame::MODE_SYNCHRONIZED_OUTPUT != 0
     }
 
     pub(crate) fn resize(&mut self, cols: u16, rows: u16) {

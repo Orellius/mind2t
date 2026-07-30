@@ -147,6 +147,19 @@ pub struct Host {
 /// Reading it back works from either end. Linux accepts both, so this is the portable order
 /// rather than a workaround. Opening the slave transiently is safe -- the child holds its own
 /// descriptor, so this one is never the last.
+/// Opens, grants and unlocks a fresh pty master, CLOEXEC set. One unit so the transient
+/// -retry in `spawn` re-runs the WHOLE acquisition -- a grantpt that failed halfway
+/// leaves a master worth abandoning, not resuming. The CLOEXEC matters because without
+/// it the child inherits the master and the pty never reports EOF: one end stays open
+/// in a process that is not reading it.
+fn open_master() -> Result<OwnedFd, Errno> {
+    let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY)?;
+    grantpt(&master)?;
+    unlockpt(&master)?;
+    fcntl_setfd(&master, FdFlags::CLOEXEC)?;
+    Ok(master)
+}
+
 fn set_winsize(pts: &CStr, size: Geometry) -> Result<(), Errno> {
     let slave = rustix::fs::open(pts, OFlags::RDWR | OFlags::NOCTTY, Mode::empty())?;
     tcsetwinsize(&slave, size.winsize())
@@ -166,12 +179,27 @@ impl Host {
                 capacity: options.capacity,
             });
         }
-        let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY).map_err(SpawnError::Pty)?;
-        grantpt(&master).map_err(SpawnError::Pty)?;
-        unlockpt(&master).map_err(SpawnError::Pty)?;
-        // Without this the child inherits the master and the pty never reports EOF, because
-        // one end stays open in a process that is not reading it.
-        fcntl_setfd(&master, FdFlags::CLOEXEC).map_err(SpawnError::Pty)?;
+        // Pty allocation can transiently fail under parallel churn -- measured
+        // 2026-07-30: ENXIO from the openpt sequence roughly once per three full-suite
+        // runs with 13 concurrent opens, and the same spawn passes alone (the sibling
+        // of 11470ca's fork EAGAIN, which the C layer already retries). Acquisition
+        // happens before the fork and touches nothing else, so retrying HERE is safe
+        // for every caller; genuine exhaustion still fails, 75ms later.
+        let master = {
+            let mut attempt = 0;
+            loop {
+                match open_master() {
+                    Ok(master) => break master,
+                    Err(errno)
+                        if attempt < 3 && matches!(errno, Errno::NXIO | Errno::AGAIN) =>
+                    {
+                        attempt += 1;
+                        thread::sleep(std::time::Duration::from_millis(25));
+                    }
+                    Err(errno) => return Err(SpawnError::Pty(errno)),
+                }
+            }
+        };
 
         let pts = ptsname(&master, Vec::new()).map_err(SpawnError::Pty)?;
 
@@ -372,6 +400,14 @@ fn pump(
     terminal.enable_reports(options.reports);
     let mut buffer = vec![0u8; 64 * 1024];
 
+    // Synchronized output (mode 2026): while the child holds the gate, reads parse but
+    // do not publish, so a renderer never shows a half-drawn batch. The budget is the
+    // anti-stuck bound -- a child that never closes its batch (crashed mid-escape, or
+    // simply hostile) gets force-published at this cadence rather than freezing the
+    // display. 150ms is the ecosystem's working norm for the gate.
+    const SYNC_BUDGET: std::time::Duration = std::time::Duration::from_millis(150);
+    let mut sync_since: Option<std::time::Instant> = None;
+
     // The viewport: how many rows the published view is scrolled up into history. Lives
     // here because the pump owns the terminal -- the GUI thread only ever sends deltas.
     let mut offset: usize = 0;
@@ -417,7 +453,19 @@ fn pump(
 
         let mut fds = [PollFd::new(&*master, PollFlags::IN)];
         match rustix::event::poll(&mut fds, Some(&TICK)) {
-            Ok(0) => continue,
+            Ok(0) => {
+                // A held batch whose budget ran out publishes even though the child went
+                // quiet -- the quiet child is exactly the stuck case the budget exists for.
+                if let Some(since) = sync_since {
+                    if since.elapsed() >= SYNC_BUDGET {
+                        sync_since = Some(std::time::Instant::now());
+                        publisher
+                            .publish_scrolled(&mut terminal, offset as u32)
+                            .expect(GATED);
+                    }
+                }
+                continue;
+            }
             Ok(_) => {}
             Err(Errno::INTR) => continue,
             Err(_) => break,
@@ -483,9 +531,25 @@ fn pump(
                         .min(terminal.screen().history.len());
                 }
                 anchored_pushed = pushed;
-                publisher
-                    .publish_scrolled(&mut terminal, offset as u32)
-                    .expect(GATED);
+                // The synchronized-output gate: hold the frame while the batch is open,
+                // publish when it closes (this very read is usually the `2026l`), and
+                // force one through when the budget expires so the display can never be
+                // frozen by a child that forgets to close.
+                let publish_now = if terminal.synchronized_output() {
+                    let since = *sync_since.get_or_insert_with(std::time::Instant::now);
+                    since.elapsed() >= SYNC_BUDGET
+                } else {
+                    sync_since = None;
+                    true
+                };
+                if publish_now {
+                    if sync_since.is_some() {
+                        sync_since = Some(std::time::Instant::now());
+                    }
+                    publisher
+                        .publish_scrolled(&mut terminal, offset as u32)
+                        .expect(GATED);
+                }
             }
             Err(Errno::INTR) | Err(Errno::AGAIN) => continue,
             Err(_) => break,

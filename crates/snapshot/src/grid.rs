@@ -186,6 +186,12 @@ pub struct Modes {
     /// DEC private mode 1 (DECCKM): application cursor keys. Tracked because the
     /// alternate-scroll wheel path picks `ESC O A` over `ESC [ A` by it.
     pub cursor_keys: bool,
+    /// DEC private mode 66 (DECKPAM/DECKPNM, also ESC = / ESC >): keypad application.
+    pub keypad_keys: bool,
+    /// DEC private mode 1035 (default ON): numlock suppresses keypad application.
+    pub ignore_keypad_with_numlock: bool,
+    /// DEC private mode 1036 (default ON): alt prefixes ESC in legacy key encoding.
+    pub alt_esc_prefix: bool,
 }
 
 impl Default for Modes {
@@ -203,6 +209,9 @@ impl Default for Modes {
             mouse_format_sgr_pixels: false,
             mouse_alternate_scroll: true,
             cursor_keys: false,
+            keypad_keys: false,
+            ignore_keypad_with_numlock: true,
+            alt_esc_prefix: true,
         }
     }
 }

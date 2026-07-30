@@ -111,6 +111,10 @@ pub struct Frame {
     /// thread boundary: the pump owns the terminal, so a host deciding how to encode a
     /// paste reads the mode here rather than reaching into the core.
     pub modes: u64,
+    /// Rows this view is scrolled up into history. Zero is the live bottom; while non-zero
+    /// the top of the frame shows scrollback and the cursor may be published invisible
+    /// because its cell sits below the window.
+    pub viewport: u32,
     /// How rows are laid out. Left-to-right by default; see `BaseDirection`.
     pub base_direction: BaseDirection,
     pub(crate) cells: Vec<PackedCell>,
@@ -370,6 +374,7 @@ mod tests {
             full_generation: 0,
             cursor: FrameCursor::default(),
             modes: 0,
+            viewport: 0,
             base_direction: BaseDirection::default(),
             cells,
             row_generation: vec![1],

@@ -64,6 +64,8 @@ struct Shared {
     /// Terminal mode bits (`Frame::MODE_*`). One word for all of them, so a mode the
     /// renderer never looks at costs the channel nothing.
     modes: AtomicU64,
+    /// Rows the published view is scrolled up into history. Zero is the live bottom.
+    viewport: AtomicU64,
     cursor: [AtomicU64; 3],
     cells: Box<[AtomicU64]>,
     row_generation: Box<[AtomicU64]>,
@@ -116,6 +118,7 @@ pub fn channel(cols: u16, rows: u16) -> (FrameWriter, FrameReader) {
         geometry: AtomicU64::new(0),
         full: AtomicU64::new(0),
         modes: AtomicU64::new(0),
+        viewport: AtomicU64::new(0),
         cursor: [const { AtomicU64::new(0) }; 3],
         cells: zeroed(cells * CELL_WORDS),
         row_generation: zeroed(usize::from(rows)),
@@ -147,6 +150,13 @@ pub struct FrameWriter {
 impl FrameWriter {
     pub fn capacity(&self) -> (u16, u16) {
         self.shared.capacity
+    }
+
+    /// How many style entries the channel can carry. The publisher caps its table here:
+    /// entries past it would be silently dropped by `Publish::styles`, and a scrolled view
+    /// appending history styles is the one caller that can actually reach the ceiling.
+    pub fn style_capacity(&self) -> usize {
+        self.shared.style_capacity
     }
 
     /// Publishes one frame. The closure fills it; the counter around it is what makes the
@@ -250,6 +260,13 @@ impl Publish<'_> {
     /// Publishes the terminal mode bits (`Frame::MODE_*`), one word for all of them.
     pub fn modes(&mut self, modes: u64) {
         self.shared.modes.store(modes, Ordering::Relaxed);
+    }
+
+    /// Publishes how many rows this view is scrolled up into history. Written by every
+    /// publish -- the word persists across publishes, so an unwritten value would leak the
+    /// previous frame's scroll position into this one.
+    pub fn viewport(&mut self, offset: u32) {
+        self.shared.viewport.store(u64::from(offset), Ordering::Relaxed);
     }
 
     pub fn cursor(&mut self, x: u16, y: u16, pending_wrap: bool, visible: bool, style: [u64; 2]) {
@@ -376,6 +393,7 @@ impl FrameReader {
         let rows = (geometry >> 16) as u16;
         frame.resize(cols, rows);
         frame.modes = shared.modes.load(Ordering::Relaxed);
+        frame.viewport = shared.viewport.load(Ordering::Relaxed) as u32;
 
         let cells = usize::from(cols) * usize::from(rows);
         for index in 0..cells {

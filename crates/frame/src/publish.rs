@@ -7,7 +7,9 @@
 //!   same rows forever.
 //! NOT responsible for: reading a pty (the pty crate), the handoff protocol (`seqlock.rs`).
 //! Test strategy: `tests/publish.rs` writes bytes into a core, publishes, reads back, and
-//!   compares text, styles, damage and cursor against the core's own snapshot.
+//!   compares text, styles, damage and cursor against the core's own snapshot;
+//!   `tests/viewport.rs` proves a scrolled publish shows scrollback, against controls a
+//!   publisher that ignores the offset was seen to fail.
 
 use ruuah_vt_core::Terminal;
 
@@ -20,6 +22,10 @@ use crate::seqlock::{CapacityExceeded, FrameWriter};
 pub struct Publisher {
     writer: FrameWriter,
     cluster: String,
+    /// The viewport offset of the previous publish, so returning to the live bottom is
+    /// recognized as a whole-frame change -- per-row stamps say nothing about rows that
+    /// moved because the WINDOW moved.
+    last_offset: usize,
 }
 
 impl Publisher {
@@ -27,6 +33,7 @@ impl Publisher {
         Publisher {
             writer,
             cluster: String::with_capacity(crate::packed::CLUSTER_BYTES),
+            last_offset: 0,
         }
     }
 
@@ -39,10 +46,33 @@ impl Publisher {
     /// A failed publish leaves the damage intact, so the rows that could not be sent are
     /// still owed and go out with the next successful frame.
     pub fn publish(&mut self, terminal: &mut Terminal) -> Result<u64, CapacityExceeded> {
+        self.publish_scrolled(terminal, 0)
+    }
+
+    /// Publishes the view scrolled `offset` rows up into history: the frame's top rows come
+    /// from scrollback, the remainder from the top of the active grid, bottom-aligned the
+    /// way every terminal scrolls.
+    ///
+    /// The offset is a VIEW concern and never enters the core -- the terminal has no idea
+    /// it is being looked at somewhere other than the bottom, which is what keeps the
+    /// differential corpus untouched by this feature. An offset past the top of history is
+    /// clamped. While scrolled (and on the publish that returns to the bottom), the whole
+    /// frame is marked changed: per-row damage stamps describe active-grid rows, and under
+    /// a moved window they name the wrong screen positions.
+    pub fn publish_scrolled(
+        &mut self,
+        terminal: &mut Terminal,
+        offset: u32,
+    ) -> Result<u64, CapacityExceeded> {
         let screen = terminal.screen();
         let grid = &screen.grid;
         let (cols, rows) = (grid.cols(), grid.rows());
-        let wholly_damaged = terminal.is_wholly_damaged();
+        let offset = (offset as usize).min(screen.history.len());
+        // Rows of the frame showing history; the rest show the active grid's top.
+        let history_visible = offset.min(usize::from(rows));
+        let history_rows = screen.history.rows_from_end(offset, history_visible);
+        let window_moved = offset != self.last_offset;
+        let wholly_damaged = terminal.is_wholly_damaged() || offset > 0 || window_moved;
         let cursor = terminal.cursor();
         let bracketed_paste = terminal.bracketed_paste();
         let cluster = &mut self.cluster;
@@ -63,12 +93,52 @@ impl Publisher {
             slots.len() as u8
         }
 
-        let generation = self.writer.publish(cols, rows, |frame| {
-            frame.styles(grid.styles().as_slice().iter().map(pack_style));
+        // History styles arrive by value -- their rows may predate the grid's compacted
+        // table -- so the frame's table is the grid's interned entries with the visible
+        // history styles appended, deduplicated. Past the channel's ceiling a history
+        // cell publishes the default style: a bounded, visible degradation, never a
+        // silently dropped table entry (Publish::styles truncates without telling).
+        let mut styles: Vec<[u64; 2]> = grid.styles().as_slice().iter().map(pack_style).collect();
+        let style_cap = self.writer.style_capacity();
+        fn intern(styles: &mut Vec<[u64; 2]>, cap: usize, packed: [u64; 2]) -> u16 {
+            if let Some(index) = styles.iter().position(|entry| *entry == packed) {
+                return index as u16;
+            }
+            if styles.len() >= cap {
+                return 0;
+            }
+            styles.push(packed);
+            (styles.len() - 1) as u16
+        }
 
+        let generation = self.writer.publish(cols, rows, |frame| {
             for y in 0..rows {
+                if usize::from(y) < history_visible {
+                    // This frame row shows scrollback. Rows come back full-width from the
+                    // page store; OSC 8 link ids do not survive the page readout, so
+                    // scrolled-back text is not clickable (a named v1 boundary).
+                    let Some(row) = history_rows.get(usize::from(y)) else {
+                        continue;
+                    };
+                    for x in 0..cols {
+                        let packed = match row.cells.get(usize::from(x)) {
+                            Some(cell) => {
+                                let id = intern(&mut styles, style_cap, pack_style(&cell.style));
+                                PackedCell::new(&cell.text, id, cell.wide, cell.semantic)
+                            }
+                            None => PackedCell::BLANK,
+                        };
+                        frame.cell(x, y, packed);
+                    }
+                    frame.row_flags(y, row.wrap, row.wrap_continuation);
+                    frame.row_changed(y);
+                    continue;
+                }
+
+                // This frame row shows the active grid, shifted down by the scrolled rows.
+                let source_y = y - history_visible as u16;
                 for x in 0..cols {
-                    let index = grid.index(x, y);
+                    let index = grid.index(x, source_y);
                     let cell = grid.cell(index);
                     grid.cluster_into(index, cluster);
                     let mut packed = PackedCell::new(
@@ -83,13 +153,16 @@ impl Publisher {
                     frame.cell(x, y, packed);
                 }
 
-                let meta = grid.row_meta(y);
+                let meta = grid.row_meta(source_y);
                 frame.row_flags(y, meta.wrap, meta.wrap_continuation);
 
-                if wholly_damaged || grid.dirty_rows().get(usize::from(y)) == Some(&true) {
+                if wholly_damaged || grid.dirty_rows().get(usize::from(source_y)) == Some(&true) {
                     frame.row_changed(y);
                 }
             }
+
+            // After the cell loop: interning during it may have appended entries.
+            frame.styles(styles.iter().copied());
 
             if wholly_damaged {
                 frame.whole_frame_changed();
@@ -101,11 +174,17 @@ impl Publisher {
                 0
             });
 
+            frame.viewport(offset as u32);
+
+            // The cursor lives in the active grid, so a scrolled view shifts it down with
+            // its rows; once its cell leaves the bottom of the window it is published
+            // invisible rather than drawn on the wrong row.
+            let cursor_y = usize::from(cursor.y) + history_visible;
             frame.cursor(
                 cursor.x,
-                cursor.y,
+                cursor_y.min(usize::from(rows)) as u16,
                 cursor.pending_wrap,
-                cursor.visible,
+                cursor.visible && cursor_y < usize::from(rows),
                 pack_style(&cursor.style),
             );
 
@@ -117,16 +196,28 @@ impl Publisher {
                     .into_iter(),
             );
 
+            // Placements anchor to active-grid rows and ride the same shift; both
+            // backends clip per pixel at every canvas edge.
             frame.placements(
                 screen
                     .placements
                     .iter()
-                    .map(|p| (p.image, p.col, p.row, p.cols, p.rows))
+                    .map(|p| {
+                        (
+                            p.image,
+                            p.col,
+                            p.row
+                                .saturating_add(i16::try_from(history_visible).unwrap_or(i16::MAX)),
+                            p.cols,
+                            p.rows,
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .into_iter(),
             );
         })?;
 
+        self.last_offset = offset;
         terminal.clear_damage();
         Ok(generation)
     }

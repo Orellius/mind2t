@@ -19,7 +19,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::collections::VecDeque;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 
 use rustix::event::{PollFd, PollFlags, Timespec};
@@ -120,6 +120,10 @@ pub struct Host {
     stop: Arc<AtomicBool>,
     /// A geometry the pump has not applied to the terminal yet. Zero means none.
     pending: Arc<AtomicU64>,
+    /// Scroll rows the pump has not applied yet, accumulated so a fast wheel never loses
+    /// ticks. Positive scrolls up into history; the pump swaps it to zero, clamps the
+    /// resulting offset against what history actually holds, and republishes.
+    scroll: Arc<AtomicI64>,
     /// The frame channel's fixed geometry ceiling; `resize` refuses anything past it.
     capacity: Geometry,
     /// Host-facing events the pump drained from the core (OSC 52, notifications, BEL).
@@ -209,6 +213,7 @@ impl Host {
         let events: Arc<Mutex<VecDeque<Event>>> = Arc::new(Mutex::new(VecDeque::new()));
         let images: Arc<Mutex<HashMap<u32, (u32, u32, Arc<Vec<u8>>)>>> =
             Arc::new(Mutex::new(HashMap::new()));
+        let scroll = Arc::new(AtomicI64::new(0));
         let pump = thread::Builder::new()
             .name("ruuah-vt-pty".to_string())
             .spawn({
@@ -217,8 +222,18 @@ impl Host {
                 let pending = Arc::clone(&pending);
                 let events = Arc::clone(&events);
                 let images = Arc::clone(&images);
+                let scroll = Arc::clone(&scroll);
                 move || {
-                    pump(master, Publisher::new(writer), options, stop, pending, events, images)
+                    pump(
+                        master,
+                        Publisher::new(writer),
+                        options,
+                        stop,
+                        pending,
+                        events,
+                        images,
+                        scroll,
+                    )
                 }
             })
             .map_err(SpawnError::Child)?;
@@ -234,6 +249,7 @@ impl Host {
                 capacity: options.capacity,
                 events,
                 images,
+                scroll,
             },
             reader,
         ))
@@ -251,6 +267,21 @@ impl Host {
     pub fn take_events(&self) -> Vec<Event> {
         let mut queue = self.events.lock().expect("event queue");
         queue.drain(..).collect()
+    }
+
+    /// Scrolls the published view by `rows`: positive climbs into history, negative moves
+    /// back toward the live bottom. Deltas accumulate until the pump's next tick (at most
+    /// one TICK away), and the pump clamps the result to what history actually holds --
+    /// the caller never needs to know the scrollback length.
+    pub fn scroll(&self, rows: i32) {
+        self.scroll.fetch_add(i64::from(rows), Ordering::Relaxed);
+    }
+
+    /// Returns the view to the live bottom. A subtraction larger than any reachable
+    /// offset rather than a store, so a wheel tick racing this call is absorbed by the
+    /// pump's clamp instead of being overwritten.
+    pub fn scroll_to_bottom(&self) {
+        self.scroll.fetch_sub(1 << 40, Ordering::Relaxed);
     }
 
     pub fn send(&self, bytes: &[u8]) -> Result<(), Errno> {
@@ -330,10 +361,20 @@ fn pump(
     pending: Arc<AtomicU64>,
     events: Arc<Mutex<VecDeque<Event>>>,
     images: Arc<Mutex<HashMap<u32, (u32, u32, Arc<Vec<u8>>)>>>,
+    scroll: Arc<AtomicI64>,
 ) {
     let mut terminal =
         Terminal::with_scrollback(options.size.cols, options.size.rows, options.scrollback);
     let mut buffer = vec![0u8; 64 * 1024];
+
+    // The viewport: how many rows the published view is scrolled up into history. Lives
+    // here because the pump owns the terminal -- the GUI thread only ever sends deltas.
+    let mut offset: usize = 0;
+    // The pushed-counter reading the current `offset` was computed against. While
+    // scrolled, rows entering history push the offset up by the same amount, which is
+    // what keeps the view pinned to its CONTENT while the child keeps printing --
+    // watching `history.len()` instead drifts one row per prune once the budget is met.
+    let mut anchored_pushed: u64 = 0;
 
     // Every geometry the terminal can wear is gated against the channel's capacity at spawn
     // and at resize, so a failed publish is a bug in that gating -- swallowing it here is how
@@ -348,7 +389,25 @@ fn pump(
         let requested = pending.swap(0, Ordering::Relaxed);
         if requested & (1 << 32) != 0 {
             terminal.resize(requested as u16, (requested >> 16) as u16);
+            // A reflow re-lays the very rows a scrolled view was anchored to (and re-pushes
+            // the whole history, inflating the counter). v1 snaps to the live bottom rather
+            // than guessing an anchor; a reflow-riding viewport anchor is a backlog slice,
+            // the same class images-v2 solved for placements.
+            offset = 0;
+            anchored_pushed = terminal.screen().history.total_pushed();
             publisher.publish(&mut terminal).expect(GATED);
+        }
+
+        let delta = scroll.swap(0, Ordering::Relaxed);
+        if delta != 0 {
+            let limit = terminal.screen().history.len();
+            let next = (offset as i64).saturating_add(delta).clamp(0, limit as i64) as usize;
+            if next != offset {
+                offset = next;
+                publisher
+                    .publish_scrolled(&mut terminal, offset as u32)
+                    .expect(GATED);
+            }
         }
 
         let mut fds = [PollFd::new(&*master, PollFlags::IN)];
@@ -408,7 +467,20 @@ fn pump(
                         queue.drain(..excess);
                     }
                 }
-                publisher.publish(&mut terminal).expect(GATED);
+                // Pin the scrolled view to its content: rows that just entered history
+                // slide the offset up by the same count, clamped to what survives the
+                // prune. Saturating because a screen SWITCH (alt has its own zero-budget
+                // history) can move the counter backwards between reads.
+                let pushed = terminal.screen().history.total_pushed();
+                if offset > 0 {
+                    offset = offset
+                        .saturating_add(pushed.saturating_sub(anchored_pushed) as usize)
+                        .min(terminal.screen().history.len());
+                }
+                anchored_pushed = pushed;
+                publisher
+                    .publish_scrolled(&mut terminal, offset as u32)
+                    .expect(GATED);
             }
             Err(Errno::INTR) | Err(Errno::AGAIN) => continue,
             Err(_) => break,

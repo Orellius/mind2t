@@ -54,6 +54,7 @@ EXPECTED=(
   ruuah_host_poll
   ruuah_host_send
   ruuah_host_paste
+  ruuah_host_scroll
   ruuah_host_resize
   ruuah_host_cell_metrics
   ruuah_host_set_font_size

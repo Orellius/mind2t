@@ -28,6 +28,9 @@ final class TerminalView: NSView {
     /// cmd+click anywhere on the grid; the receiver resolves the cell and its OSC 8
     /// link, because only it knows the active session's cell metrics.
     var onCommandClick: ((NSPoint) -> Void)?
+    /// Scrollback rows: positive climbs into history, Int32.min snaps to the bottom.
+    /// The receiver forwards to the active session's host, which owns the clamping.
+    var onScroll: ((Int32) -> Void)?
 
     /// The gutter (S2): one thin bar per block in the left margin, drawn from the
     /// shell's OSC 133 marks. Empty without shell integration -- the margin stays bare
@@ -36,6 +39,9 @@ final class TerminalView: NSView {
     private var bars: [CALayer] = []
     /// Device pixels per cell row, from the active session's first frame; 0 = no grid.
     private var cellHeightDevice = 0
+    /// Fractional wheel rows banked between events, so a slow trackpad swipe still
+    /// eventually moves a row instead of being rounded away on every tick.
+    private var wheelRemainder: CGFloat = 0
     private static let barColor = NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.22).cgColor
     private static let barHotColor =
         NSColor(srgbRed: 0x58 / 255.0, green: 0x65 / 255.0, blue: 0xF2 / 255.0, alpha: 1).cgColor
@@ -91,6 +97,32 @@ final class TerminalView: NSView {
         return blocks.first { $0.rows.contains(row) }
     }
 
+    /// One visible page of rows, for the cmd+PageUp/PageDown chords. Derived from the
+    /// content layer and the live cell metrics rather than asked of anyone.
+    private func pageRows() -> Int32 {
+        guard cellHeightDevice > 0, let scale = window?.backingScaleFactor else { return 0 }
+        return Int32(max(1, Int(contentLayer.bounds.height * scale) / cellHeightDevice))
+    }
+
+    /// Trackpad and wheel scrolling drive the scrollback viewport. Positive deltaY --
+    /// fingers or wheel moving the content down, toward earlier output -- climbs into
+    /// history, the direction every scrolling view on the platform means by it. Precise
+    /// deltas arrive in points and are banked as fractional rows; line-based wheels
+    /// report rows directly.
+    override func scrollWheel(with event: NSEvent) {
+        guard cellHeightDevice > 0, let scale = window?.backingScaleFactor else { return }
+        let rowHeight = CGFloat(cellHeightDevice) / scale
+        wheelRemainder +=
+            event.hasPreciseScrollingDeltas
+            ? event.scrollingDeltaY / rowHeight
+            : event.scrollingDeltaY
+        let rows = Int32(wheelRemainder.rounded(.towardZero))
+        if rows != 0 {
+            wheelRemainder -= CGFloat(rows)
+            onScroll?(rows)
+        }
+    }
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         if event.modifierFlags.contains(.command) {
@@ -123,7 +155,10 @@ final class TerminalView: NSView {
     /// disables every chord for exactly the user this terminal is built for (found live,
     /// 2026-07-29). ANSI key codes are layout-independent.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // Function keys (PageUp/PageDown/Home/End) stamp .function and .numericPad into
+        // the flags on their own; stripped so "cmd alone" still reads as cmd alone.
         let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            .subtracting([.function, .numericPad])
         // The zoom pair also answers with shift held: cmd+shift+= is how most fingers
         // type "cmd plus", and nothing else owns those chords.
         let zoomKey = event.keyCode == 24 || event.keyCode == 27
@@ -150,6 +185,18 @@ final class TerminalView: NSView {
             return true
         case 13:  // kVK_ANSI_W
             onCloseSession?()
+            return true
+        case 116:  // kVK_PageUp -- cmd+page-up, one page into history
+            onScroll?(pageRows())
+            return true
+        case 121:  // kVK_PageDown -- cmd+page-down, one page back toward the bottom
+            onScroll?(-pageRows())
+            return true
+        case 115:  // kVK_Home -- cmd+home, the top of scrollback (host clamps)
+            onScroll?(Int32.max / 2)
+            return true
+        case 119:  // kVK_End -- cmd+end, the live bottom
+            onScroll?(Int32.min)
             return true
         default:
             return super.performKeyEquivalent(with: event)

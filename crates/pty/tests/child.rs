@@ -238,3 +238,63 @@ fn a_resize_past_capacity_is_refused_and_the_display_keeps_updating() {
         "the refused resize must not have reached the terminal"
     );
 }
+
+#[test]
+fn scrolling_shows_rows_the_screen_has_lost() {
+    // 40 numbered lines through a 6-row screen; `cat` keeps the child alive so the pump
+    // stays in its loop while we scroll. mark-05 left the active grid long ago -- only a
+    // real history readout can bring it back.
+    let (host, reader) = Host::spawn(
+        sh("i=0; while [ $i -lt 40 ]; do echo mark-$i; i=$((i+1)); done; cat"),
+        Options::new(40, 6),
+    )
+    .expect("spawn");
+
+    wait_for(&reader, |frame| text(frame).contains("mark-39"));
+
+    host.scroll(30);
+    let scrolled = wait_for(&reader, |frame| frame.viewport > 0);
+    assert!(
+        text(&scrolled).contains("mark-5"),
+        "scrolled 30 rows up, the frame shows the mark-5 region:\n{}",
+        text(&scrolled)
+    );
+    assert!(
+        !scrolled.cursor.visible,
+        "the cursor's cell is far below the window"
+    );
+
+    host.scroll_to_bottom();
+    let bottom = wait_for(&reader, |frame| frame.viewport == 0);
+    assert!(text(&bottom).contains("mark-39"), "back at the live bottom");
+    drop(host);
+}
+
+#[test]
+fn a_scrolled_view_stays_pinned_to_its_content_while_the_child_prints() {
+    // The drift everyone has seen in a lesser terminal: you scroll up to read, output
+    // keeps arriving, and the text crawls out from under your eyes. The offset must grow
+    // with the pushed rows so the visible window keeps showing the same content.
+    let (host, reader) = Host::spawn(
+        sh("i=0; while [ $i -lt 30 ]; do echo pin-$i; i=$((i+1)); done; cat"),
+        Options::new(40, 6),
+    )
+    .expect("spawn");
+
+    wait_for(&reader, |frame| text(frame).contains("pin-29"));
+
+    host.scroll(20);
+    let scrolled = wait_for(&reader, |frame| frame.viewport == 20);
+    let held = text(&scrolled);
+    assert!(held.contains("pin-9"), "the window under inspection:\n{held}");
+
+    // `cat` echoes what we type: five more rows scroll into history underneath us.
+    host.send(b"one\rtwo\rthree\rfour\rfive\r").expect("send");
+    let after = wait_for(&reader, |frame| frame.viewport > 20);
+    assert_eq!(
+        text(&after),
+        held,
+        "new output moved the offset, never the content under the reader's eyes"
+    );
+    drop(host);
+}

@@ -106,8 +106,20 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         view.contentLayer.actions = hardCut
         view.layer?.actions = hardCut
 
-        view.onKeyBytes = { [weak self] bytes in self?.activeSession?.send(bytes) }
-        view.onPaste = { [weak self] bytes in self?.activeSession?.paste(bytes) }
+        // Typing and pasting snap the view to the live bottom first -- the standard
+        // terminal policy, applied here because the C surface deliberately leaves it
+        // to the embedder. A no-op when already at the bottom.
+        view.onKeyBytes = { [weak self] bytes in
+            guard let session = self?.activeSession else { return }
+            session.scroll(Int32.min)
+            session.send(bytes)
+        }
+        view.onPaste = { [weak self] bytes in
+            guard let session = self?.activeSession else { return }
+            session.scroll(Int32.min)
+            session.paste(bytes)
+        }
+        view.onScroll = { [weak self] rows in self?.activeSession?.scroll(rows) }
         view.onNewSession = { [weak self] in self?.newSession() }
         view.onCloseSession = { [weak self] in
             guard let self, self.activeIndex >= 0 else { return }

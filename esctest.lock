@@ -1,0 +1,3 @@
+# Which esctest2 the reply semantics were verified against.
+# Written by scripts/fetch-esctest.sh; commit this file when it changes.
+commit = "664be3cf2c1e3f06bc93a8bafb48a0db83c607db"

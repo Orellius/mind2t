@@ -60,6 +60,9 @@ pub struct Options {
     /// already has stays valid. Removing the ceiling is a slice 6 item.
     pub capacity: Geometry,
     pub scrollback: usize,
+    /// Enables screen-inspection reports in the core (DECRQCRA, WINOPS size). Off by
+    /// default -- the OSC 52-read security posture; the esctest harness is the caller.
+    pub reports: bool,
 }
 
 impl Options {
@@ -72,6 +75,7 @@ impl Options {
                 rows: rows.max(160),
             },
             scrollback: 10_000,
+            reports: false,
         }
     }
 }
@@ -365,6 +369,7 @@ fn pump(
 ) {
     let mut terminal =
         Terminal::with_scrollback(options.size.cols, options.size.rows, options.scrollback);
+    terminal.enable_reports(options.reports);
     let mut buffer = vec![0u8; 64 * 1024];
 
     // The viewport: how many rows the published view is scrolled up into history. Lives

@@ -58,7 +58,12 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
 4. **DSR / DA query replies — slice 9's seam.** Programs probe the terminal
    (`ESC[6n`, `ESC[c`) and hang or degrade without answers. The reply path is
    `Host::send`, proven end-to-end in slice 8; esctest2 is the oracle and was
-   always the plan of record.
+   always the plan of record. **esctest2 WIRED 2026-07-30** (`esctest-wiring`):
+   the whole suite (568 tests) gates in ~154s through our own pty with the new
+   reports grant (DECRQCRA + WINOPS 18 + DECSTR), 114 passes pinned both
+   directions in `corpus/esctest-expected-pass.txt`; the 409 failures are the
+   ranked to-do list (rectangle ops, DECLRMM, DECRQM/DECRQSS, charsets, REP,
+   DECALN, IRM lead it). Suite pinned by `esctest.lock`.
 5. **Mouse reporting (SGR 1006).** Claude Code, htop, lazygit all take clicks.
    Core tracks the modes; the window translates NSEvent to sequences; core stays
    I/O-free (encoding happens host-side, like keys — slice 5.6's rule).

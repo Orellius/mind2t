@@ -120,6 +120,18 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             session.paste(bytes)
         }
         view.onScroll = { [weak self] rows in self?.activeSession?.scroll(rows) }
+        view.onMouse = { [weak self] action, button, mods, x, y in
+            self?.activeSession?.mouse(action: action, button: button, mods: mods, x: x, y: y)
+                ?? false
+        }
+        view.onWheel = { [weak self] x, y, ticks, mods in
+            self?.activeSession?.wheel(x: x, y: y, ticks: ticks, mods: mods) ?? false
+        }
+        // Geometry goes to every session: it is per-host state, and a background
+        // session must not come to the front with a stale (or never-set) view size.
+        view.onMouseGeometry = { [weak self] width, height, inset in
+            self?.sessions.forEach { $0.mouseGeometry(width: width, height: height, inset: inset) }
+        }
         view.onNewSession = { [weak self] in self?.newSession() }
         view.onCloseSession = { [weak self] in
             guard let self, self.activeIndex >= 0 else { return }
@@ -231,6 +243,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             view.contentLayer.contents = image
         }
         applyBackground(of: session)
+        // Mouse geometry is per-host state; a session activated (or just spawned)
+        // after the last layout pass has never seen the view's size.
+        view.pushMouseGeometry()
         window.makeFirstResponder(view)
     }
 
@@ -256,10 +271,14 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         if let image = session.poll() {
             view.contentLayer.contents = image
             applyBackground(of: session)
-            view.updateGutter(
-                blocks: computeBlocks(session.rowClasses),
-                cellHeightDevice: session.cellHeight)
         }
+        // Outside the new-frame branch deliberately: a child that prints once and goes
+        // quiet never yields another image, and a view left at cellHeight 0 has no
+        // wheel handling at all (found by the SGR-mouse live tap). updateGutter's own
+        // change guard makes the every-tick call free.
+        view.updateGutter(
+            blocks: computeBlocks(session.rowClasses),
+            cellHeightDevice: session.cellHeight)
         if !windowSized && session.cellWidth != 0 {
             windowSized = true
             sizeWindowToGrid(session)

@@ -20,6 +20,7 @@ pub mod graphics;
 pub mod grid;
 pub mod history;
 mod hyperlink;
+pub mod mouse;
 pub mod page;
 pub mod reflow;
 mod replies;

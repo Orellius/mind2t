@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 136
+declared_cases = 150
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -1183,6 +1183,78 @@ bytes = "\u001B[2;5r\u001B[?6h\u001B[31m\u001B[!pX"
 note = "DECSTR (CSI ! p). The oracle has no ! intermediate dispatch at all (v1.3.2), so it keeps DECOM, the region and the red pen; this core soft-resets them, xterm's way -- esctest2 sends DECSTR before every test, and ignoring it makes every result order-dependent. Deliberate divergence where the oracle is silent, the sixel precedent."
 
 [[case]]
+name = "mouse-9-x10-tracking"
+expect = "match"
+bytes = "\u001B[?9h"
+note = "X10 mouse reporting. The raw bit is the observable (ghostty_terminal_mode_get); reports themselves are host output the differential cannot see. Went in as diff before the core routed the family and was promoted by the implementation."
+
+[[case]]
+name = "mouse-1000-normal-tracking"
+expect = "match"
+bytes = "\u001B[?1000h"
+note = "Normal tracking (press+release). Went in as diff before the core routed the family and was promoted by the implementation."
+
+[[case]]
+name = "mouse-1002-button-tracking"
+expect = "match"
+bytes = "\u001B[?1002h"
+note = "Button-event tracking (adds drag motion). Went in as diff before the core routed the family and was promoted by the implementation."
+
+[[case]]
+name = "mouse-1003-any-tracking"
+expect = "match"
+bytes = "\u001B[?1003h"
+note = "Any-event tracking (motion without buttons). Went in as diff before the core routed the family and was promoted by the implementation."
+
+[[case]]
+name = "mouse-1005-utf8-format"
+expect = "match"
+bytes = "\u001B[?1005h"
+note = "UTF-8 coordinate format. Went in as diff before the core routed the family and was promoted by the implementation."
+
+[[case]]
+name = "mouse-1006-sgr-format"
+expect = "match"
+bytes = "\u001B[?1006h"
+note = "SGR format, the one every modern TUI asks for. Went in as diff before the core routed the family and was promoted by the implementation."
+
+[[case]]
+name = "mouse-1015-urxvt-format"
+expect = "match"
+bytes = "\u001B[?1015h"
+note = "urxvt decimal format. Went in as diff before the core routed the family and was promoted by the implementation."
+
+[[case]]
+name = "mouse-1016-sgr-pixels-format"
+expect = "match"
+bytes = "\u001B[?1016h"
+note = "SGR-Pixels format. Went in as diff before the core routed the family and was promoted by the implementation."
+
+[[case]]
+name = "mouse-raw-bits-are-independent"
+expect = "match"
+bytes = "\u001B[?1000h\u001B[?1002h\u001B[?1002l"
+note = "The trap this family carries: the oracle records every mode's RAW bit before deriving its last-writer event kind (stream_terminal.zig setMode), so after 1000h 1002h 1002l the 1000 bit is STILL SET (DECRQM answers 1) even though the derived kind dropped to none and reporting is off. A core that stores only the-current-mode answers this wrong; went in as diff, promoted by the raw-bit implementation."
+
+[[case]]
+name = "mouse-1007-alternate-scroll-default-on"
+expect = "match"
+bytes = "\u001B[?1007l"
+note = "Alternate scroll is the one mouse mode that DEFAULTS ON (modes.zig marks it .default = true). The 1007l pins BOTH halves at once: the shared on-default (a wrong candidate default would add a second path on every other mouse case) and the reset direction, measured 2026-07-30 as oracle=false candidate=true before the core routed 1007, then promoted by the implementation."
+
+[[case]]
+name = "mouse-1007-restored-by-ris"
+expect = "match"
+bytes = "\u001B[?1007l\u001Bc"
+note = "RIS returns modes to their DEFAULTS, not to false: 1007 comes back ON after a reset. Green while both sides default on; guards full_reset once the core routes 1007."
+
+[[case]]
+name = "mouse-modes-survive-the-alt-screen"
+expect = "match"
+bytes = "\u001B[?1000h\u001B[?1006h\u001B[?1049h"
+note = "Mouse modes are terminal-global like 2004: entering the alternate screen keeps them. vim enables 1000/1006 and then 1049h -- clearing on the switch would kill its mouse support exactly when it starts. Went in as diff, promoted by the implementation."
+
+[[case]]
 name = "sync-2026-tracked"
 expect = "match"
 bytes = "\u001B[?2026hbatch"
@@ -1202,3 +1274,16 @@ name = "sync-2026-survives-alt-switch"
 expect = "match"
 bytes = "\u001B[?2026h\u001B[?1049halt"
 note = "2026 is terminal-global like 2004: entering the alternate screen keeps the batch open."
+
+[[case]]
+name = "mode-1-decckm-tracked"
+expect = "match"
+bytes = "\u001B[?1h"
+note = "DECCKM (application cursor keys). Tracked because the host arrow and alternate-scroll paths pick ESC O over ESC [ by it; the raw bit is the observable via ghostty_terminal_mode_get. Added with the SGR mouse slice 2026-07-30."
+
+[[case]]
+name = "mode-1-decckm-across-decstr"
+expect = "diff"
+diff_paths = ["modes.cursor_keys"]
+bytes = "\u001B[?1h\u001B[!p"
+note = "The DECSTR divergence seen through DECCKM: the oracle has no ! dispatch so it keeps mode 1 set; this core soft-resets it, xterm way (xterm DECSTR resets DECCKM). Same deliberate divergence as decstr-soft-reset-diverges, pinned on the one mode the wheel routing reads."

@@ -31,6 +31,7 @@ impl State {
                 // DECOM homes the cursor, to the region origin when it is being enabled.
                 self.cursor_position(0, 0);
             }
+            1 => self.cursor_keys = on,
             7 => self.autowrap = on,
             25 => self.cursor_visible = on,
             47 => self.switch_screen(on, AltMode::M47),
@@ -45,6 +46,11 @@ impl State {
             1049 => self.switch_screen(on, AltMode::M1049),
             2004 => self.bracketed_paste = on,
             2026 => self.synchronized_output = on,
+            // The mouse family (9/1000/1002/1003/1005/1006/1015/1016/1007): raw bit plus
+            // derived last-writer state, both maintained inside `MouseModes::set`.
+            9 | 1000 | 1002 | 1003 | 1005 | 1006 | 1015 | 1016 | 1007 => {
+                self.mouse.set(mode, on);
+            }
             _ => {}
         }
     }

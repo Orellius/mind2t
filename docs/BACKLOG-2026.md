@@ -69,9 +69,24 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
    directions in `corpus/esctest-expected-pass.txt`; the 409 failures are the
    ranked to-do list (rectangle ops, DECLRMM, DECRQM/DECRQSS, charsets, REP,
    DECALN, IRM lead it). Suite pinned by `esctest.lock`.
-5. **Mouse reporting (SGR 1006).** Claude Code, htop, lazygit all take clicks.
-   Core tracks the modes; the window translates NSEvent to sequences; core stays
-   I/O-free (encoding happens host-side, like keys — slice 5.6's rule).
+5. **Mouse reporting (SGR 1006). DONE 2026-07-30** (`sgr-mouse`). The whole
+   family: core tracks raw bits AND the derived last-writer pair for
+   9/1000/1002/1003 events, 1005/1006/1015/1016 formats, 1007 alternate scroll
+   (default ON) and DECCKM (mode 1, picked up because alternate scroll selects
+   its byte form by it) -- corpus-pinned via mode_get (150/150), DECRQM answers
+   the raw bits, esctest promoted DECRQM_DEC_DECCKM (119 pinned). The encoder is
+   pure Rust in the pty crate and BYTE-COMPARED against the oracle's own
+   `ghostty_mouse_encoder_encode` ABI (~65k-case matrix, dedup sequences, and
+   terminal-derived-state sequences through `setopt_from_terminal`). Exports:
+   `ruuah_host_mouse_geometry` / `ruuah_host_mouse` / `ruuah_host_wheel` (36
+   total); the wheel owns the three-way precedence (mouse mode -> 64/65; alt
+   screen + 1007 -> arrows, ESC O under DECCKM; else viewport). SCAR-014 live
+   taps: real click -> `^[[<0;30;15M/m` at the aimed cell, real wheel -> `^[[B`
+   on the alt screen (docs/images/sgr-mouse-*-tap-20260730.png); the tap also
+   caught and fixed the quiet-child cellHeight=0 wheel deadness. Item 6's "alt
+   screen wheel does nothing" boundary is now closed. Not done: SGR-Pixels is
+   encoded but the window always reports cells (no 1016 consumer yet); no
+   selection/shift-capture policy.
 6. **Scrollback in the window. DONE 2026-07-30** (`scrollback-viewport`). The
    offset never enters the core: `Publisher::publish_scrolled` stitches history
    above the active grid, the pump owns/clamps the offset and pins it to content

@@ -72,7 +72,9 @@ impl Terminal {
     }
 
     /// The raw handle, for the render state to read from.
-    pub(crate) fn raw(&self) -> sys::GhosttyTerminal {
+    /// The raw handle, for tests that drive oracle ABI surfaces this wrapper does not
+    /// cover (the mouse encoder's `setopt_from_terminal`). Reads only.
+    pub fn raw(&self) -> sys::GhosttyTerminal {
         self.raw
     }
 
@@ -121,6 +123,16 @@ impl Terminal {
             modes: Modes {
                 bracketed_paste: self.dec_mode(2004)?,
                 synchronized_output: self.dec_mode(2026)?,
+                mouse_event_x10: self.dec_mode(9)?,
+                mouse_event_normal: self.dec_mode(1000)?,
+                mouse_event_button: self.dec_mode(1002)?,
+                mouse_event_any: self.dec_mode(1003)?,
+                mouse_format_utf8: self.dec_mode(1005)?,
+                mouse_format_sgr: self.dec_mode(1006)?,
+                mouse_format_urxvt: self.dec_mode(1015)?,
+                mouse_format_sgr_pixels: self.dec_mode(1016)?,
+                mouse_alternate_scroll: self.dec_mode(1007)?,
+                cursor_keys: self.dec_mode(1)?,
             },
             grid,
             history,

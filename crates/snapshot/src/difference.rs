@@ -77,6 +77,50 @@ pub fn diff(oracle: &Snapshot, candidate: &Snapshot) -> Vec<Difference> {
         ));
     }
 
+    // The nine mouse-mode raw bits, uniformly: one entry per bit so a mutation test can
+    // kill each comparison individually (`a_mode_only_one_side_set_is_reported`).
+    let mouse_bits: [(&str, bool, bool); 10] = [
+        ("modes.cursor_keys", oracle.modes.cursor_keys, candidate.modes.cursor_keys),
+        ("modes.mouse_event_x10", oracle.modes.mouse_event_x10, candidate.modes.mouse_event_x10),
+        (
+            "modes.mouse_event_normal",
+            oracle.modes.mouse_event_normal,
+            candidate.modes.mouse_event_normal,
+        ),
+        (
+            "modes.mouse_event_button",
+            oracle.modes.mouse_event_button,
+            candidate.modes.mouse_event_button,
+        ),
+        ("modes.mouse_event_any", oracle.modes.mouse_event_any, candidate.modes.mouse_event_any),
+        (
+            "modes.mouse_format_utf8",
+            oracle.modes.mouse_format_utf8,
+            candidate.modes.mouse_format_utf8,
+        ),
+        ("modes.mouse_format_sgr", oracle.modes.mouse_format_sgr, candidate.modes.mouse_format_sgr),
+        (
+            "modes.mouse_format_urxvt",
+            oracle.modes.mouse_format_urxvt,
+            candidate.modes.mouse_format_urxvt,
+        ),
+        (
+            "modes.mouse_format_sgr_pixels",
+            oracle.modes.mouse_format_sgr_pixels,
+            candidate.modes.mouse_format_sgr_pixels,
+        ),
+        (
+            "modes.mouse_alternate_scroll",
+            oracle.modes.mouse_alternate_scroll,
+            candidate.modes.mouse_alternate_scroll,
+        ),
+    ];
+    for (path, oracle_bit, candidate_bit) in mouse_bits {
+        if oracle_bit != candidate_bit {
+            out.push(Difference::new(path, oracle_bit, candidate_bit));
+        }
+    }
+
     diff_cursor(oracle, candidate, &mut out);
 
     // History length first: a shorter or longer history shifts every row, so comparing rows
@@ -368,6 +412,35 @@ mod tests {
         let found = diff(&a, &b);
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].path, "modes.synchronized_output");
+    }
+
+    /// One flip per mouse raw bit, each expected to surface as exactly its own path:
+    /// deleting any single entry from the comparison table kills exactly one of these
+    /// assertions, which is what makes the table's nine entries individually real.
+    #[test]
+    fn each_mouse_mode_bit_disagreement_is_reported_under_its_own_path() {
+        let flips: [(&str, fn(&mut crate::grid::Modes)); 10] = [
+            ("modes.cursor_keys", |m| m.cursor_keys = true),
+            ("modes.mouse_event_x10", |m| m.mouse_event_x10 = true),
+            ("modes.mouse_event_normal", |m| m.mouse_event_normal = true),
+            ("modes.mouse_event_button", |m| m.mouse_event_button = true),
+            ("modes.mouse_event_any", |m| m.mouse_event_any = true),
+            ("modes.mouse_format_utf8", |m| m.mouse_format_utf8 = true),
+            ("modes.mouse_format_sgr", |m| m.mouse_format_sgr = true),
+            ("modes.mouse_format_urxvt", |m| m.mouse_format_urxvt = true),
+            ("modes.mouse_format_sgr_pixels", |m| m.mouse_format_sgr_pixels = true),
+            // 1007 defaults ON, so its disagreement direction is a clear.
+            ("modes.mouse_alternate_scroll", |m| m.mouse_alternate_scroll = false),
+        ];
+        for (path, flip) in flips {
+            let a = snapshot(4, 2);
+            let mut b = a.clone();
+            flip(&mut b.modes);
+
+            let found = diff(&a, &b);
+            assert_eq!(found.len(), 1, "{path}: {found:?}");
+            assert_eq!(found[0].path, path);
+        }
     }
 
     #[test]

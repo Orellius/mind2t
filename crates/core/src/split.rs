@@ -17,8 +17,9 @@ use crate::reflow::blank_cell;
 
 pub(crate) struct Split {
     pub(crate) rows: Vec<Vec<HistoryCell>>,
-    /// Where each tracked offset landed, as (row within this line, column).
-    pub(crate) tracked: [Option<(usize, u16)>; 2],
+    /// Where each tracked offset landed, as (row within this line, column). One slot
+    /// per input offset: cursor, saved cursor, then any number of placement anchors.
+    pub(crate) tracked: Vec<Option<(usize, u16)>>,
     /// One entry per row: the offset into `content` just past the last cell that row took.
     /// This is what lets a destination row be traced back to the source row that filled it,
     /// which the semantic prompt mark needs and no other field does.
@@ -26,11 +27,11 @@ pub(crate) struct Split {
 }
 
 /// Cuts a line's cells into rows of `new_cols`, keeping wide cells whole.
-pub(crate) fn split(content: &[HistoryCell], new_cols: u16, offsets: [Option<usize>; 2]) -> Split {
+pub(crate) fn split(content: &[HistoryCell], new_cols: u16, offsets: &[Option<usize>]) -> Split {
     let width = usize::from(new_cols);
     let mut rows: Vec<Vec<HistoryCell>> = Vec::new();
     let mut current: Vec<HistoryCell> = Vec::new();
-    let mut tracked: [Option<(usize, u16)>; 2] = [None, None];
+    let mut tracked: Vec<Option<(usize, u16)>> = vec![None; offsets.len()];
     let mut content_end: Vec<usize> = Vec::new();
 
     let mut index = 0;
@@ -98,13 +99,13 @@ pub(crate) fn mark_for(marks: &[(usize, RowSemantic)], end: usize) -> RowSemanti
 }
 
 fn mark(
-    tracked: &mut [Option<(usize, u16)>; 2],
-    offsets: [Option<usize>; 2],
+    tracked: &mut [Option<(usize, u16)>],
+    offsets: &[Option<usize>],
     index: usize,
     row: usize,
     column: usize,
 ) {
-    for slot in 0..2 {
+    for slot in 0..offsets.len() {
         if offsets[slot] == Some(index) {
             tracked[slot] = Some((row, column as u16));
         }

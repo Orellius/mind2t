@@ -46,7 +46,9 @@ pub enum ImageOp {
 pub struct Placement {
     pub image: u32,
     pub col: u16,
-    pub row: u16,
+    /// Signed: an anchor scrolled past the top keeps drawing its visible remainder at
+    /// a negative row (both backends clip per pixel); it drops once far enough gone.
+    pub row: i16,
     /// Cell span; 0 means "native pixel size", resolved by the renderer.
     pub cols: u16,
     pub rows: u16,
@@ -227,7 +229,7 @@ impl State {
         self.screen_mut().placements.push(Placement {
             image: id,
             col,
-            row,
+            row: row as i16,
             cols,
             rows,
         });

@@ -66,6 +66,14 @@ EXPECTED=(
   ruuah_host_link_at
   ruuah_host_next_event
   ruuah_host_free
+  ruuah_workflows_load
+  ruuah_workflows_free
+  ruuah_workflows_count
+  ruuah_workflows_errors
+  ruuah_workflow_field
+  ruuah_workflow_arg_count
+  ruuah_workflow_arg
+  ruuah_workflow_render
   ruuah_config_load
   ruuah_config_font_size
   ruuah_config_auto_direction

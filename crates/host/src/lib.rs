@@ -16,6 +16,7 @@
 use ruuah_vt as _;
 
 pub mod config;
+pub mod workflow;
 
 use std::ffi::{CStr, CString, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -825,6 +826,245 @@ pub unsafe extern "C" fn ruuah_host_wheel(
     }
 
     RuuahHostResult::Ignored
+}
+
+/// The state behind the opaque workflows handle: parsed templates plus the loader's
+/// error lines, joined for the one-string getter.
+pub struct RuuahWorkflows {
+    workflows: Vec<workflow::Workflow>,
+    errors: String,
+}
+
+/// Field selectors for `ruuah_workflow_field` / `ruuah_workflow_arg`.
+pub const RUUAH_WORKFLOW_NAME: u32 = 0;
+pub const RUUAH_WORKFLOW_DESCRIPTION: u32 = 1;
+pub const RUUAH_WORKFLOW_COMMAND: u32 = 2;
+pub const RUUAH_WORKFLOW_ARG_DEFAULT: u32 = 2;
+
+/// Copies `value` out through the row_text buffer protocol: NULL `out` sizes, a short
+/// buffer refuses with the needed length, and the copy carries no terminator.
+fn copy_out(value: &str, out: *mut u8, cap: usize, out_len: *mut usize) -> RuuahHostResult {
+    if out_len.is_null() {
+        return RuuahHostResult::InvalidValue;
+    }
+    unsafe { out_len.write(value.len()) };
+    if out.is_null() || cap < value.len() {
+        return if out.is_null() && cap == 0 {
+            RuuahHostResult::Success
+        } else {
+            RuuahHostResult::InvalidValue
+        };
+    }
+    unsafe { std::ptr::copy_nonoverlapping(value.as_ptr(), out, value.len()) };
+    RuuahHostResult::Success
+}
+
+/// Loads the workflow templates from `dir`, or from `~/.ruuah/workflows` when NULL.
+/// Broken files are skipped and their errors kept on the handle
+/// (`ruuah_workflows_errors`) -- one bad template never hides the rest. Returns NULL
+/// only when the out-param itself is unusable; an empty or missing directory is a
+/// valid, empty handle.
+///
+/// # Safety
+/// `dir`, if non-NULL, must be a NUL-terminated path; `out` must be valid for one write.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_workflows_load(
+    dir: *const c_char,
+    out: *mut *mut RuuahWorkflows,
+) -> RuuahHostResult {
+    if out.is_null() {
+        return RuuahHostResult::InvalidValue;
+    }
+    let dir = if dir.is_null() {
+        let Some(home) = std::env::var_os("HOME") else {
+            unsafe { out.write(std::ptr::null_mut()) };
+            return RuuahHostResult::InvalidValue;
+        };
+        Path::new(&home).join(".ruuah").join("workflows")
+    } else {
+        match unsafe { CStr::from_ptr(dir) }.to_str() {
+            Ok(path) => Path::new(path).to_path_buf(),
+            Err(_) => {
+                unsafe { out.write(std::ptr::null_mut()) };
+                return RuuahHostResult::InvalidValue;
+            }
+        }
+    };
+    let (workflows, errors) = workflow::load_dir(&dir);
+    let handle = Box::new(RuuahWorkflows { workflows, errors: errors.join("\n") });
+    unsafe { out.write(Box::into_raw(handle)) };
+    RuuahHostResult::Success
+}
+
+/// # Safety
+/// `handle` must be NULL or a live handle from `ruuah_workflows_load`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_workflows_free(handle: *mut RuuahWorkflows) {
+    if !handle.is_null() {
+        drop(unsafe { Box::from_raw(handle) });
+    }
+}
+
+/// # Safety
+/// `handle` must be a live handle from `ruuah_workflows_load`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_workflows_count(handle: *const RuuahWorkflows) -> u32 {
+    if handle.is_null() {
+        return 0;
+    }
+    unsafe { &*handle }.workflows.len() as u32
+}
+
+/// The loader's error lines, newline-joined; empty when every file parsed. The GUI
+/// shows this loudly, the config.rs posture.
+///
+/// # Safety
+/// `handle` live; `out`/`out_len` per the buffer protocol.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_workflows_errors(
+    handle: *const RuuahWorkflows,
+    out: *mut u8,
+    cap: usize,
+    out_len: *mut usize,
+) -> RuuahHostResult {
+    if handle.is_null() {
+        return RuuahHostResult::InvalidValue;
+    }
+    copy_out(&unsafe { &*handle }.errors, out, cap, out_len)
+}
+
+/// One workflow's field: 0 name, 1 description, 2 command. The buffer protocol is
+/// row_text's: NULL out sizes, short buffers refuse with the needed length.
+///
+/// # Safety
+/// `handle` live; `out`/`out_len` per the buffer protocol.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_workflow_field(
+    handle: *const RuuahWorkflows,
+    index: u32,
+    field: u32,
+    out: *mut u8,
+    cap: usize,
+    out_len: *mut usize,
+) -> RuuahHostResult {
+    if handle.is_null() {
+        return RuuahHostResult::InvalidValue;
+    }
+    let Some(workflow) = unsafe { &*handle }.workflows.get(index as usize) else {
+        return RuuahHostResult::InvalidValue;
+    };
+    let value = match field {
+        RUUAH_WORKFLOW_NAME => &workflow.name,
+        RUUAH_WORKFLOW_DESCRIPTION => &workflow.description,
+        RUUAH_WORKFLOW_COMMAND => &workflow.command,
+        _ => return RuuahHostResult::InvalidValue,
+    };
+    copy_out(value, out, cap, out_len)
+}
+
+/// # Safety
+/// `handle` must be a live handle from `ruuah_workflows_load`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_workflow_arg_count(
+    handle: *const RuuahWorkflows,
+    index: u32,
+) -> u32 {
+    if handle.is_null() {
+        return 0;
+    }
+    let Some(workflow) = unsafe { &*handle }.workflows.get(index as usize) else {
+        return 0;
+    };
+    workflow.args.len() as u32
+}
+
+/// One argument's field: 0 name, 1 description, 2 default. A missing default answers
+/// `Ignored` with length 0, distinct from an empty-string default -- the palette
+/// prefills one and prompts bare for the other.
+///
+/// # Safety
+/// `handle` live; `out`/`out_len` per the buffer protocol.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_workflow_arg(
+    handle: *const RuuahWorkflows,
+    index: u32,
+    arg_index: u32,
+    field: u32,
+    out: *mut u8,
+    cap: usize,
+    out_len: *mut usize,
+) -> RuuahHostResult {
+    if handle.is_null() {
+        return RuuahHostResult::InvalidValue;
+    }
+    let Some(arg) = unsafe { &*handle }
+        .workflows
+        .get(index as usize)
+        .and_then(|workflow| workflow.args.get(arg_index as usize))
+    else {
+        return RuuahHostResult::InvalidValue;
+    };
+    let value = match field {
+        RUUAH_WORKFLOW_NAME => &arg.name,
+        RUUAH_WORKFLOW_DESCRIPTION => &arg.description,
+        RUUAH_WORKFLOW_ARG_DEFAULT => match &arg.default {
+            Some(default) => default,
+            None => {
+                if !out_len.is_null() {
+                    unsafe { out_len.write(0) };
+                }
+                return RuuahHostResult::Ignored;
+            }
+        },
+        _ => return RuuahHostResult::InvalidValue,
+    };
+    copy_out(value, out, cap, out_len)
+}
+
+/// Renders one workflow's command with its placeholders substituted. `args_blob` is
+/// pairs of NUL-terminated strings (name, value, name, value...), `blob_len` its
+/// total byte length -- NUL separators because values may legally contain `=` or
+/// newlines. An unresolved placeholder refuses with `InvalidValue`: a command with a
+/// hole left in it must never reach the paste path.
+///
+/// # Safety
+/// `handle` live; `args_blob` readable for `blob_len` bytes when non-NULL;
+/// `out`/`out_len` per the buffer protocol.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_workflow_render(
+    handle: *const RuuahWorkflows,
+    index: u32,
+    args_blob: *const u8,
+    blob_len: usize,
+    out: *mut u8,
+    cap: usize,
+    out_len: *mut usize,
+) -> RuuahHostResult {
+    if handle.is_null() || (args_blob.is_null() && blob_len != 0) {
+        return RuuahHostResult::InvalidValue;
+    }
+    let Some(workflow) = unsafe { &*handle }.workflows.get(index as usize) else {
+        return RuuahHostResult::InvalidValue;
+    };
+    let blob = if blob_len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_blob, blob_len) }
+    };
+    let mut parts = blob.split(|&b| b == 0).filter(|part| !part.is_empty());
+    let mut values = Vec::new();
+    while let (Some(name), Some(value)) = (parts.next(), parts.next()) {
+        let (Ok(name), Ok(value)) =
+            (std::str::from_utf8(name), std::str::from_utf8(value))
+        else {
+            return RuuahHostResult::InvalidValue;
+        };
+        values.push((name.to_string(), value.to_string()));
+    }
+    match workflow::render(&workflow.command, &values) {
+        Ok(rendered) => copy_out(&rendered, out, cap, out_len),
+        Err(_) => RuuahHostResult::InvalidValue,
+    }
 }
 
 /// Scrolls the displayed view through scrollback: positive `rows` climbs into history,

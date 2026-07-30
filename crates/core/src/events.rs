@@ -25,6 +25,11 @@ pub enum Event {
     Notify { title: String, body: String },
     /// BEL, outside of any control string.
     Bell,
+    /// OSC 0 / OSC 2: the window/tab title the program asked for.
+    Title(String),
+    /// OSC 9;4 (ConEmu progress, the sequence CLIs use for work state):
+    /// state 0 = clear, 1 = value (0..100), 2 = error, 3 = indeterminate, 4 = paused.
+    Progress { state: u8, value: u8 },
 }
 
 /// Oldest events fall off first past this; see the module card for why.
@@ -53,8 +58,23 @@ impl State {
         }
     }
 
-    /// OSC 9 ; body -- iTerm2's one-argument notification.
+    /// OSC 9 ; body -- iTerm2's one-argument notification, EXCEPT `9;4;...`, which is
+    /// ConEmu's progress sequence (the collision is historical; every terminal that
+    /// supports both disambiguates exactly this way).
     pub(crate) fn osc_notify_9(&mut self, params: &[&[u8]]) {
+        if params.get(1).copied() == Some(b"4".as_slice()) {
+            let number = |field: Option<&&[u8]>| -> u8 {
+                field
+                    .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                    .and_then(|text| text.parse::<u16>().ok())
+                    .map(|value| value.min(255) as u8)
+                    .unwrap_or(0)
+            };
+            let state = number(params.get(2)).min(4);
+            let value = number(params.get(3)).min(100);
+            self.push_event(Event::Progress { state, value });
+            return;
+        }
         let body = join_fields(params.get(1..).unwrap_or_default());
         if !body.is_empty() {
             self.push_event(Event::Notify {
@@ -62,6 +82,13 @@ impl State {
                 body,
             });
         }
+    }
+
+    /// OSC 0 / OSC 2: set the title. 0 also names the icon; this core treats both as
+    /// the title, which is what every modern terminal does.
+    pub(crate) fn osc_title(&mut self, params: &[&[u8]]) {
+        let title = join_fields(params.get(1..).unwrap_or_default());
+        self.push_event(Event::Title(title));
     }
 
     /// OSC 777 ; notify ; title ; body -- the rxvt extension every terminal copied.
@@ -170,9 +197,13 @@ mod tests {
     #[test]
     fn bel_rings_but_an_osc_terminator_does_not() {
         let mut terminal = Terminal::new(10, 1);
-        // The first BEL terminates the OSC; only the second is a real bell.
+        // The first BEL terminates the OSC; only the second is a real bell. The OSC 0
+        // itself now yields a Title event -- that is the feature, not leakage.
         terminal.write(b"\x1b]0;title\x07\x07");
-        assert_eq!(terminal.take_events(), vec![Event::Bell]);
+        assert_eq!(
+            terminal.take_events(),
+            vec![Event::Title("title".into()), Event::Bell]
+        );
     }
 
     #[test]
@@ -188,6 +219,41 @@ mod tests {
             events.last(),
             Some(&Event::ClipboardSet(b"z".to_vec())),
             "the newest survived; the oldest fell off"
+        );
+    }
+}
+
+#[cfg(test)]
+mod indicator_tests {
+    use super::Event;
+    use crate::terminal::Terminal;
+
+    #[test]
+    fn titles_and_progress_arrive_as_events() {
+        let mut terminal = Terminal::new(10, 1);
+        terminal.write(b"\x1b]2;building the thing\x07\x1b]9;4;1;50\x07\x1b]9;4;0;0\x07");
+        assert_eq!(
+            terminal.take_events(),
+            vec![
+                Event::Title("building the thing".into()),
+                Event::Progress { state: 1, value: 50 },
+                Event::Progress { state: 0, value: 0 },
+            ]
+        );
+    }
+
+    /// The 9;4 carve-out must not eat real OSC 9 notifications -- including a body
+    /// that merely STARTS with 4.
+    #[test]
+    fn the_progress_carveout_leaves_notifications_alone() {
+        let mut terminal = Terminal::new(10, 1);
+        terminal.write(b"\x1b]9;40 done\x07");
+        assert_eq!(
+            terminal.take_events(),
+            vec![Event::Notify {
+                title: String::new(),
+                body: "40 done".into()
+            }]
         );
     }
 }

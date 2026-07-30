@@ -622,7 +622,9 @@ pub unsafe extern "C" fn ruuah_host_set_font_size(
 ///
 /// Pops the next host-facing event: 0 = none pending, 1 = set the system clipboard to
 /// the payload bytes, 2 = post a notification (payload is `title\ntitle-less body` --
-/// the first newline separates title from body), 3 = bell (no payload).
+/// the first newline separates title from body), 3 = bell (no payload), 4 = the
+/// program set its title (payload = UTF-8 text), 5 = OSC 9;4 progress (payload = two
+/// bytes: state 0..4, value 0..100).
 ///
 /// One event per call, oldest first, exactly-once -- but an event is CONSUMED only
 /// when `cap` held its whole payload. A smaller `cap` (zero included) reports kind and
@@ -667,6 +669,8 @@ pub unsafe extern "C" fn ruuah_host_next_event(
             (2, payload)
         }
         Event::Bell => (3, Vec::new()),
+        Event::Title(title) => (4, title.clone().into_bytes()),
+        Event::Progress { state, value } => (5, vec![*state, *value]),
     };
     unsafe {
         kind.write(code);

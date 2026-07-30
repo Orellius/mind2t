@@ -39,6 +39,12 @@ final class Session {
     /// One OSC 133 class byte per grid row (RUUAH_ROW_*), from the last drawn frame.
     /// Empty until a shell with integration has marked something. The gutter's input.
     private(set) var rowClasses: [UInt8] = []
+    /// The caret's cell and visibility from the last polled frame (S4's ghost anchor).
+    private(set) var cursorCol = 0
+    private(set) var cursorRow = 0
+    private(set) var cursorVisible = false
+    /// Rows scrolled into history at last poll; ghosts only show at the live bottom.
+    private(set) var viewportOffset = 0
     private(set) var exited = false
 
     init?(
@@ -122,6 +128,10 @@ final class Session {
         if let semantics = frame.row_semantics, frame.row_count > 0 {
             rowClasses = Array(UnsafeBufferPointer(start: semantics, count: Int(frame.row_count)))
         }
+        cursorCol = Int(frame.cursor_col)
+        cursorRow = Int(frame.cursor_row)
+        cursorVisible = frame.cursor_visible
+        viewportOffset = Int(frame.viewport_offset)
         if frame.child_exited { exited = true }
         return fresh
     }
@@ -149,6 +159,8 @@ final class Session {
         case bell
         case title(String)
         case progress(state: UInt8)
+        /// OSC 133;C: execution began -- the typed command is final (S4 records it).
+        case commandStart
     }
 
     /// Drains every pending host-facing event, oldest first. The C contract consumes an
@@ -184,6 +196,7 @@ final class Session {
             case 3: drained.append(.bell)
             case 4: drained.append(.title(text))
             case 5: drained.append(.progress(state: payload.first ?? 0))
+            case 6: drained.append(.commandStart)
             default: break
             }
         }

@@ -47,7 +47,14 @@ impl State {
             b'P' => self.start_prompt(prompt_mark(params)),
             b'B' => self.start_input(false),
             b'I' => self.start_input(true),
-            b'C' => self.end_input(),
+            b'C' => {
+                self.end_input();
+                // Execution begins here, which is the ONE moment the typed command is
+                // final -- the event is how S4's history capture learns it without
+                // guessing from block geometry (adjacent prompt runs merge, and at
+                // the grid bottom a new prompt scrolls in on the SAME row).
+                self.push_event(crate::events::Event::CommandStart);
+            }
             b'D' => self.start_output(),
             b'L' => self.semantic_fresh_line(blank),
             _ => {}

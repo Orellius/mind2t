@@ -30,6 +30,9 @@ pub enum Event {
     /// OSC 9;4 (ConEmu progress, the sequence CLIs use for work state):
     /// state 0 = clear, 1 = value (0..100), 2 = error, 3 = indeterminate, 4 = paused.
     Progress { state: u8, value: u8 },
+    /// OSC 133;C: execution began, so the typed command is final. No payload -- the
+    /// embedder reads the input cells itself; this event is the WHEN.
+    CommandStart,
 }
 
 /// Oldest events fall off first past this; see the module card for why.

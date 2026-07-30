@@ -88,12 +88,20 @@ plain data, our format). Picking one fills the input with placeholders. Cheap,
 high daily value. Oracle: unit-test the placeholder substitution; palette
 exercised by hand (aesthetics = Orel).
 
-**S4 — History autosuggestions, then completions.** Fish-style ghost text from
-per-machine command history (host-side history store keyed by cwd — we see
-every `send`, or via shell integration precmd). Accept with →. Phase two:
-a completion engine consuming Fig's MIT spec JSON (our parser, our ranking).
-Oracle: deterministic history fixture → expected suggestion; specs round-trip
-tests. *Depends on S2's shell integration for clean command boundaries.*
+**S4 — History autosuggestions. PHASE ONE DONE 2026-07-30** (`s4-autosuggest`).
+Fish-style ghost text: `host/src/suggest.rs` (append-only store, 10k cap,
+consecutive-dupe collapse, PROPER-prefix most-recent-wins matcher — the
+deterministic fixture oracle, unit-tested both directions) behind 4 C exports
+(`ruuah_history_*`, 49 total; C-surface round-trip test incl. persistence
+across handles). History records when a NEW block appears below the last (the
+S2 OSC 133 rails — no shell integration, no suggestions, the named
+dependency). Ghost = dim CATextLayer at the caret (RuuahHostFrame grew
+cursor_col/row/visible), shown only at the live bottom with the caret at
+line end; bare right-arrow accepts by pasting the remainder. NOT keyed by
+cwd yet (needs OSC 7 tracking — future slice); multiline commands refused;
+Swift ghost visuals shipped [untested - needs your eyes] (window imaging
+went dark mid-tap — environment, documented in the PR). Phase two
+(Fig-spec completions) unstarted.
 
 **S5 — Worktree workspaces (the Superset/convoy shape).** "New workspace" =
 create a git worktree of the current repo + spawn a session (optionally

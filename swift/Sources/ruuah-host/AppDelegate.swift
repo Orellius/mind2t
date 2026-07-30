@@ -120,6 +120,18 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             session.paste(bytes)
         }
         view.onScroll = { [weak self] rows in self?.activeSession?.scroll(rows) }
+        view.onMouse = { [weak self] action, button, mods, x, y in
+            self?.activeSession?.mouse(action: action, button: button, mods: mods, x: x, y: y)
+                ?? false
+        }
+        view.onWheel = { [weak self] x, y, ticks, mods in
+            self?.activeSession?.wheel(x: x, y: y, ticks: ticks, mods: mods) ?? false
+        }
+        // Geometry goes to every session: it is per-host state, and a background
+        // session must not come to the front with a stale (or never-set) view size.
+        view.onMouseGeometry = { [weak self] width, height, inset in
+            self?.sessions.forEach { $0.mouseGeometry(width: width, height: height, inset: inset) }
+        }
         view.onNewSession = { [weak self] in self?.newSession() }
         view.onCloseSession = { [weak self] in
             guard let self, self.activeIndex >= 0 else { return }
@@ -231,6 +243,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             view.contentLayer.contents = image
         }
         applyBackground(of: session)
+        // Mouse geometry is per-host state; a session activated (or just spawned)
+        // after the last layout pass has never seen the view's size.
+        view.pushMouseGeometry()
         window.makeFirstResponder(view)
     }
 

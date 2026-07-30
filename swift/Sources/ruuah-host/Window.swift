@@ -31,6 +31,17 @@ final class TerminalView: NSView {
     /// Scrollback rows: positive climbs into history, Int32.min snaps to the bottom.
     /// The receiver forwards to the active session's host, which owns the clamping.
     var onScroll: ((Int32) -> Void)?
+    /// One pointer event for mouse reporting: (action, button, mods, x, y) in the
+    /// RUUAH_MOUSE_* vocabulary and surface pixels. Returns whether the terminal
+    /// consumed it; false hands the event back to AppKit's default handling.
+    var onMouse: ((UInt32, UInt32, UInt32, Float, Float) -> Bool)?
+    /// One wheel gesture: (x, y, whole ticks positive-up, mods). Returns whether the
+    /// terminal consumed it (mouse-mode report or alternate-scroll arrows); false
+    /// means the viewport scroll below is ours.
+    var onWheel: ((Float, Float, Int32, UInt32) -> Bool)?
+    /// The view's pixel geometry for the mouse encoder: (width, height, inset), all in
+    /// backing pixels. Fired from layout and backing-scale changes.
+    var onMouseGeometry: ((UInt32, UInt32, UInt32) -> Void)?
 
     /// The gutter (S2): one thin bar per block in the left margin, drawn from the
     /// shell's OSC 133 marks. Empty without shell integration -- the margin stays bare
@@ -53,6 +64,83 @@ final class TerminalView: NSView {
         contentLayer.frame = bounds.insetBy(
             dx: TerminalView.padding, dy: TerminalView.padding)
         layoutBars()
+        pushMouseGeometry()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        pushMouseGeometry()
+    }
+
+    /// Sends the current pixel geometry to whoever owns the hosts. Public because
+    /// geometry is PER-HOST state: session activation must re-send it to a host that
+    /// was spawned or backgrounded while another session owned the view.
+    func pushMouseGeometry() {
+        guard let scale = window?.backingScaleFactor, bounds.width > 0, bounds.height > 0
+        else { return }
+        onMouseGeometry?(
+            UInt32((bounds.width * scale).rounded()),
+            UInt32((bounds.height * scale).rounded()),
+            UInt32((TerminalView.padding * scale).rounded()))
+    }
+
+    /// A pointer location as the mouse encoder's surface pixels: view top-left origin
+    /// (AppKit grows upward, the grid downward), backing scale applied.
+    private func surfacePoint(_ event: NSEvent) -> (Float, Float)? {
+        guard let scale = window?.backingScaleFactor else { return nil }
+        let point = convert(event.locationInWindow, from: nil)
+        return (Float(point.x * scale), Float((bounds.height - point.y) * scale))
+    }
+
+    private static func mouseMods(_ flags: NSEvent.ModifierFlags) -> UInt32 {
+        var mods: UInt32 = 0
+        if flags.contains(.shift) { mods |= 1 }
+        if flags.contains(.control) { mods |= 2 }
+        if flags.contains(.option) { mods |= 4 }
+        return mods
+    }
+
+    /// NSEvent.buttonNumber to the protocol's codes, Ghostty's own macOS mapping:
+    /// 3/4 are back/forward (protocol 8/9), 7/8 the rare physical 4/5.
+    private static func protocolButton(_ number: Int) -> UInt32 {
+        switch number {
+        case 0: return 1  // left
+        case 1: return 3  // right
+        case 2: return 2  // middle
+        case 3: return 8
+        case 4: return 9
+        case 5: return 6
+        case 6: return 7
+        case 7: return 4
+        case 8: return 5
+        default: return 10  // unnamed in the protocol; bookkeeping only
+        }
+    }
+
+    /// Forwards one pointer event to mouse reporting. Motion without any pressed
+    /// button reports button "none" -- buttonNumber is meaningless on pure moves.
+    @discardableResult
+    private func forwardMouse(_ event: NSEvent, action: UInt32) -> Bool {
+        guard let (x, y) = surfacePoint(event) else { return false }
+        let button: UInt32 =
+            event.type == .mouseMoved ? 0 : TerminalView.protocolButton(event.buttonNumber)
+        return onMouse?(action, button, TerminalView.mouseMods(event.modifierFlags), x, y)
+            ?? false
+    }
+
+    /// Motion tracking for mode 1003 (and drag-outside delivery). Installed always:
+    /// with reporting off the host answers Ignored immediately, and the dedup state
+    /// keeps the traffic bounded while it is on.
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas {
+            removeTrackingArea(area)
+        }
+        addTrackingArea(
+            NSTrackingArea(
+                rect: .zero,
+                options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect],
+                owner: self))
     }
 
     /// Replaces the gutter with the active session's blocks. Cheap when nothing moved.
@@ -119,7 +207,68 @@ final class TerminalView: NSView {
         let rows = Int32(wheelRemainder.rounded(.towardZero))
         if rows != 0 {
             wheelRemainder -= CGFloat(rows)
+            // The terminal's precedence first (mouse-mode wheel reports, alternate
+            // scroll); the viewport is the fallback, exactly the host's contract.
+            if let (x, y) = surfacePoint(event),
+                onWheel?(x, y, rows, TerminalView.mouseMods(event.modifierFlags)) == true
+            {
+                return
+            }
             onScroll?(rows)
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if !forwardMouse(event, action: 1) {
+            super.mouseUp(with: event)
+        }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        if !forwardMouse(event, action: 2) {
+            super.mouseDragged(with: event)
+        }
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        if !forwardMouse(event, action: 2) {
+            super.mouseMoved(with: event)
+        }
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        if !forwardMouse(event, action: 0) {
+            super.rightMouseDown(with: event)
+        }
+    }
+
+    override func rightMouseUp(with event: NSEvent) {
+        if !forwardMouse(event, action: 1) {
+            super.rightMouseUp(with: event)
+        }
+    }
+
+    override func rightMouseDragged(with event: NSEvent) {
+        if !forwardMouse(event, action: 2) {
+            super.rightMouseDragged(with: event)
+        }
+    }
+
+    override func otherMouseDown(with event: NSEvent) {
+        if !forwardMouse(event, action: 0) {
+            super.otherMouseDown(with: event)
+        }
+    }
+
+    override func otherMouseUp(with event: NSEvent) {
+        if !forwardMouse(event, action: 1) {
+            super.otherMouseUp(with: event)
+        }
+    }
+
+    override func otherMouseDragged(with event: NSEvent) {
+        if !forwardMouse(event, action: 2) {
+            super.otherMouseDragged(with: event)
         }
     }
 
@@ -130,7 +279,11 @@ final class TerminalView: NSView {
             return
         }
         guard let block = block(at: point) else {
-            super.mouseDown(with: event)
+            // The app's own affordances (cmd+click links, the gutter) outrank
+            // reporting; past them the child's mouse protocol gets the click.
+            if !forwardMouse(event, action: 0) {
+                super.mouseDown(with: event)
+            }
             return
         }
         // The clicked bar flashes hot so the menu visibly belongs to it.

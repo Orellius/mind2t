@@ -22,6 +22,8 @@ final class TerminalView: NSView {
     var onKey: ((UInt32, UInt32, UInt32, UInt32, [UInt8], UInt32) -> Bool)?
     var onPaste: (([UInt8]) -> Void)?
     var onNewSession: (() -> Void)?
+    /// cmd+K: the receiver presents (or toggles) the command palette.
+    var onPalette: (() -> Void)?
     var onCloseSession: (() -> Void)?
     var onZoomIn: (() -> Void)?
     var onZoomOut: (() -> Void)?
@@ -338,6 +340,9 @@ final class TerminalView: NSView {
             return false
         case 17:  // kVK_ANSI_T
             onNewSession?()
+            return true
+        case 40:  // kVK_ANSI_K -- cmd+K, the command palette
+            onPalette?()
             return true
         case 13:  // kVK_ANSI_W
             onCloseSession?()

@@ -186,6 +186,11 @@ RuuahHostResult ruuah_host_wheel(RuuahHost *host, float x, float y, int32_t tick
  * Field selectors: 0 name, 1 description, 2 command (or 2 default for args). */
 typedef struct RuuahWorkflows RuuahWorkflows;
 
+#define RUUAH_WORKFLOW_NAME 0u
+#define RUUAH_WORKFLOW_DESCRIPTION 1u
+#define RUUAH_WORKFLOW_COMMAND 2u
+#define RUUAH_WORKFLOW_ARG_DEFAULT 2u
+
 /* dir NULL = ~/.ruuah/workflows. Broken files are skipped, their errors kept on the
  * handle; a missing directory is a valid empty handle. */
 RuuahHostResult ruuah_workflows_load(const char *dir, RuuahWorkflows **out);

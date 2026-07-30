@@ -115,6 +115,13 @@ impl Terminal {
         self.state.full_damage
     }
 
+    /// Enables screen-inspection reports (DECRQCRA checksums, XTERM_WINOPS size). Off by
+    /// default -- they let the child read screen state back, the security class of the
+    /// refused OSC 52 read. The esctest conformance harness is the intended caller.
+    pub fn enable_reports(&mut self, on: bool) {
+        self.state.reports_enabled = on;
+    }
+
     /// Whether the child enabled bracketed paste (DEC mode 2004).
     ///
     /// The host consults this before writing a paste: wrapped in `ESC[200~`/`ESC[201~`
@@ -158,6 +165,11 @@ pub(crate) struct State {
     pub(crate) events: Vec<crate::events::Event>,
     /// Protocol replies (DSR/DA) owed to the child, drained by the pump to the pty.
     pub(crate) replies: Vec<u8>,
+    /// Whether screen-inspection reports (DECRQCRA, XTERM_WINOPS size) answer. Off by
+    /// default: they let a child read screen state back, the same security class as the
+    /// refused OSC 52 read. The esctest harness turns them on; the app's posture is the
+    /// operator's call.
+    pub(crate) reports_enabled: bool,
     /// Kitty graphics: the image store and its op log (`graphics.rs`).
     pub(crate) graphics: crate::graphics::Graphics,
     /// The APC string being accumulated, if any; `true` when it overflowed and the
@@ -199,6 +211,7 @@ impl State {
             last_print: None,
             events: Vec::new(),
             replies: Vec::new(),
+            reports_enabled: false,
             graphics: crate::graphics::Graphics::default(),
             apc: Vec::new(),
             apc_overflow: false,
@@ -526,7 +539,37 @@ impl State {
     pub(crate) fn full_reset(&mut self) {
         let cols = self.screen().cols();
         let rows = self.screen().rows();
+        // The reports toggle survives: it is the EMBEDDER's capability grant, not
+        // terminal state -- a child must not be able to revoke it with a RIS (esctest
+        // would lose its screen readback mid-run).
+        let reports = self.reports_enabled;
         *self = State::new(cols, rows, self.max_scrollback);
+        self.reports_enabled = reports;
+        self.mark_full_damage();
+    }
+
+    /// DECSTR (CSI ! p), the soft reset. The oracle ignores the sequence entirely (no
+    /// `!` intermediate dispatch in its stream, v1.3.2), so this is a deliberate,
+    /// corpus-pinned divergence in xterm's direction: esctest2 runs DECSTR before every
+    /// test, and a terminal that ignores it carries state across test boundaries,
+    /// making every result order-dependent.
+    ///
+    /// Effects are xterm's core set: cursor visible (DECTCEM), origin mode off (DECOM),
+    /// autowrap ON -- xterm resets it to its resource default rather than the spec's
+    /// off, its own comment saying applications rely on it, and esctest re-sets it
+    /// after every DECSTR anyway -- margins reset, pen and saved pen to default,
+    /// pending wrap cancelled, saved cursor cleared. The grid is NOT touched: that is
+    /// RIS's job.
+    pub(crate) fn soft_reset(&mut self) {
+        self.cursor_visible = true;
+        self.origin = false;
+        self.autowrap = true;
+        self.pen = Style::DEFAULT;
+        self.saved_pen = None;
+        let screen = self.screen_mut();
+        screen.reset_scroll_region();
+        screen.pending_wrap = false;
+        screen.saved = None;
         self.mark_full_damage();
     }
 }

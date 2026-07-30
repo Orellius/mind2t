@@ -47,6 +47,54 @@ impl State {
     pub(crate) fn device_attributes_tertiary(&mut self) {
         self.replies.extend_from_slice(b"\x1bP!|00000000\x1b\\");
     }
+
+    /// DECRQCRA (CSI Pid;Pp;Pt;Pl;Pb;Pr * y) -> DCS Pid ! ~ XXXX ST.
+    ///
+    /// Modern xterm semantics, which is what esctest2 asserts against: the checksum of a
+    /// single plain cell IS its codepoint (esctest compares per-cell checksums to
+    /// `ord(expected_char)`), a blank cell counts as 0x20 the way xterm's screen stores
+    /// spaces, and the sum is 16-bit wrapping, reported as four uppercase hex digits.
+    /// Pre-279 xterm negated the sum; esctest carries a compatibility branch for that,
+    /// so the positive form is the current contract. Coordinates are 1-based inclusive,
+    /// clamped to the screen; missing or zero rect params mean the full screen. Gated on
+    /// `reports_enabled` -- a checksum lets the child read screen content back.
+    pub(crate) fn checksum_report(&mut self, id: u16, rect: [u16; 4]) {
+        if !self.reports_enabled {
+            return;
+        }
+        let screen = self.screen();
+        let (cols, rows) = (screen.cols(), screen.rows());
+        let top = rect[0].max(1).min(rows);
+        let left = rect[1].max(1).min(cols);
+        let bottom = if rect[2] == 0 { rows } else { rect[2].min(rows) };
+        let right = if rect[3] == 0 { cols } else { rect[3].min(cols) };
+
+        let mut sum: u16 = 0;
+        for y in (top - 1)..bottom {
+            for x in (left - 1)..right {
+                let cell = screen.grid.cell(screen.grid.index(x, y));
+                let codepoint = if cell.codepoint == 0 { 0x20 } else { cell.codepoint };
+                sum = sum.wrapping_add(codepoint as u16);
+            }
+        }
+
+        let reply = format!("\x1bP{id}!~{sum:04X}\x1b\\");
+        self.replies.extend_from_slice(reply.as_bytes());
+    }
+
+    /// XTERM_WINOPS reports (CSI Ps t). Only 18 -- the text area size in characters,
+    /// `CSI 8 ; rows ; cols t` -- because it is what esctest's `GetScreenSize` runs on
+    /// at init. The resize/move ops in the same namespace are refused outright (a child
+    /// moving the operator's window is not a feature), and the pixel reports wait for a
+    /// consumer. Gated with the checksum: both let the child inspect the screen.
+    pub(crate) fn window_report(&mut self, op: u16) {
+        if !self.reports_enabled || op != 18 {
+            return;
+        }
+        let screen = self.screen();
+        let reply = format!("\x1b[8;{};{}t", screen.rows(), screen.cols());
+        self.replies.extend_from_slice(reply.as_bytes());
+    }
 }
 
 #[cfg(test)]
@@ -90,6 +138,94 @@ mod tests {
     fn an_unknown_dsr_answers_nothing() {
         assert_eq!(replies_for(b"\x1b[7n"), b"");
         assert_eq!(replies_for(b"\x1b[n"), b"", "a missing parameter is 0, not 5");
+    }
+
+    fn reporting_terminal(bytes: &[u8]) -> Vec<u8> {
+        let mut terminal = Terminal::new(20, 10);
+        terminal.enable_reports(true);
+        terminal.write(bytes);
+        terminal.take_replies()
+    }
+
+    #[test]
+    fn a_single_cell_checksum_is_its_codepoint() {
+        // The exact per-cell contract esctest2 asserts: checksum == ord(char).
+        assert_eq!(
+            reporting_terminal(b"AB\x1b[1;1;1;1;1;1*y"),
+            format!("\x1bP1!~{:04X}\x1b\\", u32::from('A')).as_bytes()
+        );
+        assert_eq!(
+            reporting_terminal(b"AB\x1b[7;1;1;2;1;2*y"),
+            format!("\x1bP7!~{:04X}\x1b\\", u32::from('B')).as_bytes()
+        );
+    }
+
+    #[test]
+    fn a_blank_cell_checksums_as_a_space() {
+        // xterm's screen stores blanks as spaces; a zero here would make every esctest
+        // assertion over an erased region fail.
+        assert_eq!(
+            reporting_terminal(b"\x1b[1;1;5;1;5;1*y"),
+            b"\x1bP1!~0020\x1b\\"
+        );
+    }
+
+    #[test]
+    fn a_rect_checksum_sums_its_cells() {
+        let expected: u16 = (u32::from('h') + u32::from('i')) as u16;
+        assert_eq!(
+            reporting_terminal(b"hi\x1b[2;1;1;1;1;2*y"),
+            format!("\x1bP2!~{expected:04X}\x1b\\").as_bytes()
+        );
+    }
+
+    #[test]
+    fn the_size_report_answers_rows_then_cols() {
+        assert_eq!(reporting_terminal(b"\x1b[18t"), b"\x1b[8;10;20t");
+    }
+
+    #[test]
+    fn reports_are_silent_unless_enabled() {
+        // The gate, proven in the failing direction: the same queries on a default
+        // terminal answer NOTHING -- screen readback is opt-in (the OSC 52 posture).
+        assert_eq!(replies_for(b"\x1b[1;1;1;1;1;1*y"), b"");
+        assert_eq!(replies_for(b"\x1b[18t"), b"");
+    }
+
+    #[test]
+    fn other_winops_are_refused_even_when_enabled() {
+        // 2 = iconify, 3 = move: a child steering the operator's window is not a
+        // feature. 14/16 (pixel reports) wait for a consumer.
+        assert_eq!(reporting_terminal(b"\x1b[2t\x1b[3;0;0t\x1b[14t\x1b[16t"), b"");
+    }
+
+    #[test]
+    fn decstr_resets_state_but_never_the_grid() {
+        let mut terminal = Terminal::new(20, 10);
+        // Content on screen, cursor hidden, origin mode inside a region, red pen.
+        terminal.write(b"keepme\x1b[?25l\x1b[3;6r\x1b[?6h\x1b[31m\x1b[!p");
+
+        assert!(terminal.cursor().visible, "DECSTR shows the cursor (DECTCEM)");
+        let snapshot = terminal.snapshot();
+        assert_eq!(snapshot.row_text(0), "keepme", "the grid is RIS's job, not DECSTR's");
+
+        // Origin off and margins reset: absolute addressing reaches row 1 again, and
+        // the pen is back to default.
+        terminal.write(b"\x1b[1;8HX");
+        let snapshot = terminal.snapshot();
+        assert_eq!(snapshot.row_text(0), "keepme X");
+        let cell = &snapshot.grid[0].cells[7];
+        assert_eq!(cell.style, ruuah_vt_snapshot::Style::DEFAULT, "SGR was soft-reset");
+    }
+
+    #[test]
+    fn a_full_reset_keeps_the_embedders_reports_grant() {
+        // RIS resets terminal state; the reports toggle is the EMBEDDER's grant, and a
+        // child revoking it would break esctest's readback mid-run.
+        let mut terminal = Terminal::new(20, 10);
+        terminal.enable_reports(true);
+        terminal.write(b"\x1bc\x1b[18t");
+        assert_eq!(terminal.take_replies(), b"\x1b[8;10;20t");
     }
 
     #[test]

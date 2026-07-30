@@ -137,6 +137,24 @@ impl Terminal {
     pub fn bracketed_paste(&self) -> bool {
         self.state.bracketed_paste
     }
+
+    /// The derived mouse-reporting kind (modes 9/1000/1002/1003, last writer wins).
+    /// The host consults this to decide whether a pointer event becomes bytes; the
+    /// core itself never encodes a report -- it does no I/O.
+    pub fn mouse_event(&self) -> crate::mouse::MouseEvent {
+        self.state.mouse.event
+    }
+
+    /// The derived report encoding (modes 1005/1006/1015/1016; legacy X10 otherwise).
+    pub fn mouse_format(&self) -> crate::mouse::MouseFormat {
+        self.state.mouse.format
+    }
+
+    /// Whether wheel events become arrow keys on the alternate screen (mode 1007,
+    /// default ON). Routing itself is host policy; this is only the tracked state.
+    pub fn mouse_alternate_scroll(&self) -> bool {
+        self.state.mouse.alternate_scroll
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,6 +188,11 @@ pub(crate) struct State {
     /// resize: measured on the oracle, whose resize clears synchronized output even at
     /// unchanged cell dimensions (stream_terminal.zig test, v1.3.2).
     pub(crate) synchronized_output: bool,
+    /// The mouse-reporting modes (9/1000/1002/1003 events, 1005/1006/1015/1016 formats,
+    /// 1007 alternate scroll). Terminal-global like 2004; the core only TRACKS them --
+    /// encoding reports is the host's job, because the core does no I/O. `full_reset`
+    /// restores defaults via `State::new`, which is what re-enables 1007.
+    pub(crate) mouse: crate::mouse::MouseModes,
     /// Flat index of the last printed cell, so a following zero-width codepoint knows which
     /// cluster it belongs to. Cleared by anything that moves the cursor.
     pub(crate) last_print: Option<usize>,
@@ -222,6 +245,7 @@ impl State {
             cursor_visible: true,
             bracketed_paste: false,
             synchronized_output: false,
+            mouse: crate::mouse::MouseModes::default(),
             last_print: None,
             events: Vec::new(),
             replies: Vec::new(),
@@ -308,6 +332,15 @@ impl State {
             modes: ruuah_vt_snapshot::Modes {
                 bracketed_paste: self.bracketed_paste,
                 synchronized_output: self.synchronized_output,
+                mouse_event_x10: self.mouse.x10,
+                mouse_event_normal: self.mouse.normal,
+                mouse_event_button: self.mouse.button,
+                mouse_event_any: self.mouse.any,
+                mouse_format_utf8: self.mouse.utf8,
+                mouse_format_sgr: self.mouse.sgr,
+                mouse_format_urxvt: self.mouse.urxvt,
+                mouse_format_sgr_pixels: self.mouse.sgr_pixels,
+                mouse_alternate_scroll: self.mouse.alternate_scroll,
             },
             cursor: Cursor {
                 x: screen.x,

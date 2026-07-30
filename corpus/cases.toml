@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 136
+declared_cases = 148
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -1181,6 +1181,89 @@ expect = "diff"
 diff_paths = ["cell[1,0].style", "cursor.style"]
 bytes = "\u001B[2;5r\u001B[?6h\u001B[31m\u001B[!pX"
 note = "DECSTR (CSI ! p). The oracle has no ! intermediate dispatch at all (v1.3.2), so it keeps DECOM, the region and the red pen; this core soft-resets them, xterm's way -- esctest2 sends DECSTR before every test, and ignoring it makes every result order-dependent. Deliberate divergence where the oracle is silent, the sixel precedent."
+
+[[case]]
+name = "mouse-9-x10-tracking"
+expect = "diff"
+diff_paths = ["modes.mouse_event_x10"]
+bytes = "\u001B[?9h"
+note = "X10 mouse reporting. The raw bit is the observable (ghostty_terminal_mode_get); reports themselves are host output the differential cannot see. In as diff until the core routes the mouse family."
+
+[[case]]
+name = "mouse-1000-normal-tracking"
+expect = "diff"
+diff_paths = ["modes.mouse_event_normal"]
+bytes = "\u001B[?1000h"
+note = "Normal tracking (press+release). In as diff until the core routes the mouse family."
+
+[[case]]
+name = "mouse-1002-button-tracking"
+expect = "diff"
+diff_paths = ["modes.mouse_event_button"]
+bytes = "\u001B[?1002h"
+note = "Button-event tracking (adds drag motion). In as diff until the core routes the mouse family."
+
+[[case]]
+name = "mouse-1003-any-tracking"
+expect = "diff"
+diff_paths = ["modes.mouse_event_any"]
+bytes = "\u001B[?1003h"
+note = "Any-event tracking (motion without buttons). In as diff until the core routes the mouse family."
+
+[[case]]
+name = "mouse-1005-utf8-format"
+expect = "diff"
+diff_paths = ["modes.mouse_format_utf8"]
+bytes = "\u001B[?1005h"
+note = "UTF-8 coordinate format. In as diff until the core routes the mouse family."
+
+[[case]]
+name = "mouse-1006-sgr-format"
+expect = "diff"
+diff_paths = ["modes.mouse_format_sgr"]
+bytes = "\u001B[?1006h"
+note = "SGR format, the one every modern TUI asks for. In as diff until the core routes the mouse family."
+
+[[case]]
+name = "mouse-1015-urxvt-format"
+expect = "diff"
+diff_paths = ["modes.mouse_format_urxvt"]
+bytes = "\u001B[?1015h"
+note = "urxvt decimal format. In as diff until the core routes the mouse family."
+
+[[case]]
+name = "mouse-1016-sgr-pixels-format"
+expect = "diff"
+diff_paths = ["modes.mouse_format_sgr_pixels"]
+bytes = "\u001B[?1016h"
+note = "SGR-Pixels format. In as diff until the core routes the mouse family."
+
+[[case]]
+name = "mouse-raw-bits-are-independent"
+expect = "diff"
+diff_paths = ["modes.mouse_event_normal"]
+bytes = "\u001B[?1000h\u001B[?1002h\u001B[?1002l"
+note = "The trap this family carries: the oracle records every mode's RAW bit before deriving its last-writer event kind (stream_terminal.zig setMode), so after 1000h 1002h 1002l the 1000 bit is STILL SET (DECRQM answers 1) even though the derived kind dropped to none and reporting is off. A core that stores only 'the current mode' answers this wrong."
+
+[[case]]
+name = "mouse-1007-alternate-scroll-default-on"
+expect = "diff"
+diff_paths = ["modes.mouse_alternate_scroll"]
+bytes = "\u001B[?1007l"
+note = "Alternate scroll is the one mouse mode that DEFAULTS ON (modes.zig marks it .default = true). The 1007l pins BOTH halves at once: the shared on-default (a wrong candidate default would add a second path on every other mouse case) and the reset direction, which the unrouted core cannot follow yet -- measured 2026-07-30, oracle=false candidate=true. Promotion flips this when the core routes 1007."
+
+[[case]]
+name = "mouse-1007-restored-by-ris"
+expect = "match"
+bytes = "\u001B[?1007l\u001Bc"
+note = "RIS returns modes to their DEFAULTS, not to false: 1007 comes back ON after a reset. Green while both sides default on; guards full_reset once the core routes 1007."
+
+[[case]]
+name = "mouse-modes-survive-the-alt-screen"
+expect = "diff"
+diff_paths = ["modes.mouse_event_normal", "modes.mouse_format_sgr"]
+bytes = "\u001B[?1000h\u001B[?1006h\u001B[?1049h"
+note = "Mouse modes are terminal-global like 2004: entering the alternate screen keeps them. vim enables 1000/1006 and then 1049h -- clearing on the switch would kill its mouse support exactly when it starts."
 
 [[case]]
 name = "sync-2026-tracked"

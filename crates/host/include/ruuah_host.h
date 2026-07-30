@@ -104,6 +104,11 @@ typedef struct {
    * the pump after clamping, so it reports where the view actually IS -- draw scroll
    * indicators from this, never from accumulated deltas. */
   uint32_t viewport_offset;
+  /* The caret's cell in this frame, and whether it is shown. Ghost-suggestion
+   * overlays anchor here; never re-derive the caret from pixels. */
+  uint16_t cursor_col;
+  uint16_t cursor_row;
+  bool cursor_visible;
 } RuuahHostFrame;
 
 /* RuuahHostFrame.row_semantics values, and ruuah_host_row_text filters. */
@@ -214,6 +219,19 @@ RuuahHostResult ruuah_workflow_arg(const RuuahWorkflows *handle, uint32_t index,
 RuuahHostResult ruuah_workflow_render(const RuuahWorkflows *handle, uint32_t index,
                                       const uint8_t *args_blob, size_t blob_len,
                                       uint8_t *out, size_t cap, size_t *out_len);
+
+/* Command history for S4's ghost suggestions. path NULL = ~/.ruuah/history. Append
+ * records one EXECUTED command and persists (blank/multiline/consecutive-duplicate
+ * are dropped, answering IGNORED); suggest returns the most recent entry input is a
+ * PROPER prefix of via the buffer protocol, IGNORED with length 0 when none. */
+typedef struct RuuahHistory RuuahHistory;
+RuuahHostResult ruuah_history_load(const char *path, RuuahHistory **out);
+void ruuah_history_free(RuuahHistory *handle);
+RuuahHostResult ruuah_history_append(RuuahHistory *handle, const uint8_t *command,
+                                     size_t len);
+RuuahHostResult ruuah_history_suggest(const RuuahHistory *handle, const uint8_t *input,
+                                      size_t len, uint8_t *out, size_t cap,
+                                      size_t *out_len);
 
 /* Scrolls the displayed view through scrollback: positive rows climbs into history,
  * negative returns toward the live bottom, INT32_MIN snaps straight to it. Deltas

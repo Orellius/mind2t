@@ -137,6 +137,36 @@ impl Terminal {
     pub fn bracketed_paste(&self) -> bool {
         self.state.bracketed_paste
     }
+
+    /// The derived mouse-reporting kind (modes 9/1000/1002/1003, last writer wins).
+    /// The host consults this to decide whether a pointer event becomes bytes; the
+    /// core itself never encodes a report -- it does no I/O.
+    pub fn mouse_event(&self) -> crate::mouse::MouseEvent {
+        self.state.mouse.event
+    }
+
+    /// The derived report encoding (modes 1005/1006/1015/1016; legacy X10 otherwise).
+    pub fn mouse_format(&self) -> crate::mouse::MouseFormat {
+        self.state.mouse.format
+    }
+
+    /// Whether wheel events become arrow keys on the alternate screen (mode 1007,
+    /// default ON). Routing itself is host policy; this is only the tracked state.
+    pub fn mouse_alternate_scroll(&self) -> bool {
+        self.state.mouse.alternate_scroll
+    }
+
+    /// DECCKM (mode 1): application cursor keys. Selects `ESC O A` over `ESC [ A` in
+    /// the host's arrow and alternate-scroll encodings.
+    pub fn cursor_keys(&self) -> bool {
+        self.state.cursor_keys
+    }
+
+    /// Whether the alternate screen is active. The host's wheel routing needs it:
+    /// alternate scroll (1007) applies only there.
+    pub fn on_alternate_screen(&self) -> bool {
+        matches!(self.state.active, Active::Alternate)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -159,6 +189,10 @@ pub(crate) struct State {
     pub(crate) origin: bool,
     /// DECTCEM (mode 25).
     pub(crate) cursor_visible: bool,
+    /// DECCKM (mode 1). Application cursor keys: arrows encode `ESC O A` instead of
+    /// `ESC [ A`. The core only TRACKS it; the host's key and alternate-scroll paths
+    /// read it to pick the byte form, exactly as the oracle's Surface does.
+    pub(crate) cursor_keys: bool,
     /// Bracketed paste (mode 2004). Terminal-global, not per-screen: measured against the
     /// oracle, entering the alternate screen keeps it and only RIS or `2004l` clears it.
     /// The core only TRACKS it -- wrapping paste bytes is the host's job, because the
@@ -170,6 +204,11 @@ pub(crate) struct State {
     /// resize: measured on the oracle, whose resize clears synchronized output even at
     /// unchanged cell dimensions (stream_terminal.zig test, v1.3.2).
     pub(crate) synchronized_output: bool,
+    /// The mouse-reporting modes (9/1000/1002/1003 events, 1005/1006/1015/1016 formats,
+    /// 1007 alternate scroll). Terminal-global like 2004; the core only TRACKS them --
+    /// encoding reports is the host's job, because the core does no I/O. `full_reset`
+    /// restores defaults via `State::new`, which is what re-enables 1007.
+    pub(crate) mouse: crate::mouse::MouseModes,
     /// Flat index of the last printed cell, so a following zero-width codepoint knows which
     /// cluster it belongs to. Cleared by anything that moves the cursor.
     pub(crate) last_print: Option<usize>,
@@ -220,8 +259,10 @@ impl State {
             autowrap: true,
             origin: false,
             cursor_visible: true,
+            cursor_keys: false,
             bracketed_paste: false,
             synchronized_output: false,
+            mouse: crate::mouse::MouseModes::default(),
             last_print: None,
             events: Vec::new(),
             replies: Vec::new(),
@@ -308,6 +349,16 @@ impl State {
             modes: ruuah_vt_snapshot::Modes {
                 bracketed_paste: self.bracketed_paste,
                 synchronized_output: self.synchronized_output,
+                mouse_event_x10: self.mouse.x10,
+                mouse_event_normal: self.mouse.normal,
+                mouse_event_button: self.mouse.button,
+                mouse_event_any: self.mouse.any,
+                mouse_format_utf8: self.mouse.utf8,
+                mouse_format_sgr: self.mouse.sgr,
+                mouse_format_urxvt: self.mouse.urxvt,
+                mouse_format_sgr_pixels: self.mouse.sgr_pixels,
+                mouse_alternate_scroll: self.mouse.alternate_scroll,
+                cursor_keys: self.cursor_keys,
             },
             cursor: Cursor {
                 x: screen.x,
@@ -584,6 +635,8 @@ impl State {
         self.cursor_visible = true;
         self.origin = false;
         self.autowrap = true;
+        // xterm's DECSTR resets DECCKM to normal; part of the same xterm-shaped set.
+        self.cursor_keys = false;
         self.pen = Style::DEFAULT;
         self.saved_pen = None;
         let screen = self.screen_mut();

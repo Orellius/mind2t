@@ -76,6 +76,13 @@ impl Publisher {
         let cursor = terminal.cursor();
         let bracketed_paste = terminal.bracketed_paste();
         let synchronized_output = terminal.synchronized_output();
+        // The discriminants ARE the wire values (declaration order both sides); the
+        // frame accessors decode by the same table.
+        let mouse_event = terminal.mouse_event() as u8;
+        let mouse_format = terminal.mouse_format() as u8;
+        let mouse_alternate_scroll = terminal.mouse_alternate_scroll();
+        let alternate_screen = terminal.on_alternate_screen();
+        let cursor_keys = terminal.cursor_keys();
         let cluster = &mut self.cluster;
 
         // OSC 8: the core's link ids are table-wide; the frame carries only the links
@@ -175,6 +182,17 @@ impl Publisher {
             }
             if synchronized_output {
                 modes |= crate::frame::Frame::MODE_SYNCHRONIZED_OUTPUT;
+            }
+            modes |= (mouse_event as u64) << crate::frame::Frame::MODE_MOUSE_EVENT_SHIFT;
+            modes |= (mouse_format as u64) << crate::frame::Frame::MODE_MOUSE_FORMAT_SHIFT;
+            if mouse_alternate_scroll {
+                modes |= crate::frame::Frame::MODE_MOUSE_ALTERNATE_SCROLL;
+            }
+            if alternate_screen {
+                modes |= crate::frame::Frame::MODE_ALTERNATE_SCREEN;
+            }
+            if cursor_keys {
+                modes |= crate::frame::Frame::MODE_CURSOR_KEYS;
             }
             frame.modes(modes);
 

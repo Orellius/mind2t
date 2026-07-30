@@ -148,6 +148,24 @@ impl Frame {
     /// diagnostic on the reader side -- the pump already withholds publishes during a
     /// batch, so a frame carrying this bit is one the anti-stuck budget forced out.
     pub const MODE_SYNCHRONIZED_OUTPUT: u64 = 1 << 1;
+    /// Bits 2-4: the DERIVED mouse event kind (0 none, 1 x10, 2 normal, 3 button,
+    /// 4 any -- `ruuah_vt_core::mouse::MouseEvent` in declaration order). The frame
+    /// carries the derived pair rather than the nine raw bits because the derived
+    /// pair is what an embedder's routing consults; DECRQM owns the raw bits.
+    pub const MODE_MOUSE_EVENT_SHIFT: u64 = 2;
+    pub const MODE_MOUSE_EVENT_MASK: u64 = 0b111 << 2;
+    /// Bits 5-7: the derived report format (0 x10, 1 utf8, 2 sgr, 3 urxvt,
+    /// 4 sgr-pixels -- `MouseFormat` in declaration order).
+    pub const MODE_MOUSE_FORMAT_SHIFT: u64 = 5;
+    pub const MODE_MOUSE_FORMAT_MASK: u64 = 0b111 << 5;
+    /// Bit set while alternate scroll (DEC 1007, default ON) is enabled.
+    pub const MODE_MOUSE_ALTERNATE_SCROLL: u64 = 1 << 8;
+    /// Bit set while the ALTERNATE screen is active. Wheel routing needs it: 1007
+    /// converts wheel to arrows only there.
+    pub const MODE_ALTERNATE_SCREEN: u64 = 1 << 9;
+    /// Bit set while DECCKM (mode 1, application cursor keys) is on: arrows and
+    /// alternate-scroll wheel bytes take the `ESC O` form instead of `ESC [`.
+    pub const MODE_CURSOR_KEYS: u64 = 1 << 10;
 
     pub fn new() -> Frame {
         Frame::default()
@@ -161,6 +179,47 @@ impl Frame {
     /// Whether the child had synchronized output (DEC 2026) enabled at publish time.
     pub fn synchronized_output(&self) -> bool {
         self.modes & Frame::MODE_SYNCHRONIZED_OUTPUT != 0
+    }
+
+    /// The derived mouse event kind at publish time. An unknown bit pattern (a frame
+    /// from a newer writer) reads as `None`, which fails safe: no reports.
+    pub fn mouse_event(&self) -> ruuah_vt_core::mouse::MouseEvent {
+        use ruuah_vt_core::mouse::MouseEvent;
+        match (self.modes & Frame::MODE_MOUSE_EVENT_MASK) >> Frame::MODE_MOUSE_EVENT_SHIFT {
+            1 => MouseEvent::X10,
+            2 => MouseEvent::Normal,
+            3 => MouseEvent::Button,
+            4 => MouseEvent::Any,
+            _ => MouseEvent::None,
+        }
+    }
+
+    /// The derived mouse report format at publish time; unknown patterns read as the
+    /// legacy X10 encoding, the protocol's own fallback.
+    pub fn mouse_format(&self) -> ruuah_vt_core::mouse::MouseFormat {
+        use ruuah_vt_core::mouse::MouseFormat;
+        match (self.modes & Frame::MODE_MOUSE_FORMAT_MASK) >> Frame::MODE_MOUSE_FORMAT_SHIFT {
+            1 => MouseFormat::Utf8,
+            2 => MouseFormat::Sgr,
+            3 => MouseFormat::Urxvt,
+            4 => MouseFormat::SgrPixels,
+            _ => MouseFormat::X10,
+        }
+    }
+
+    /// Whether alternate scroll (DEC 1007) was on at publish time.
+    pub fn mouse_alternate_scroll(&self) -> bool {
+        self.modes & Frame::MODE_MOUSE_ALTERNATE_SCROLL != 0
+    }
+
+    /// Whether the alternate screen was active at publish time.
+    pub fn alternate_screen(&self) -> bool {
+        self.modes & Frame::MODE_ALTERNATE_SCREEN != 0
+    }
+
+    /// Whether DECCKM (application cursor keys) was on at publish time.
+    pub fn cursor_keys(&self) -> bool {
+        self.modes & Frame::MODE_CURSOR_KEYS != 0
     }
 
     pub(crate) fn resize(&mut self, cols: u16, rows: u16) {

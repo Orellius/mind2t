@@ -38,7 +38,23 @@ typedef enum {
   RUUAH_HOST_RENDER_FAILED = 4,
   /* Writing to the child failed (typically: the child is gone). */
   RUUAH_HOST_SEND_FAILED = 5,
+  /* The call was valid but the protocol produced nothing: mouse reporting off, motion
+   * deduplicated, or a wheel left to the embedder's viewport scroll. Not an error --
+   * the embedder's own handling of the event is next. */
+  RUUAH_HOST_IGNORED = 6,
 } RuuahHostResult;
+
+/* ruuah_host_mouse vocabularies. */
+#define RUUAH_MOUSE_PRESS 0u
+#define RUUAH_MOUSE_RELEASE 1u
+#define RUUAH_MOUSE_MOTION 2u
+#define RUUAH_MOUSE_BUTTON_NONE 0u
+#define RUUAH_MOUSE_BUTTON_LEFT 1u
+#define RUUAH_MOUSE_BUTTON_MIDDLE 2u
+#define RUUAH_MOUSE_BUTTON_RIGHT 3u
+#define RUUAH_MOUSE_MODS_SHIFT 1u
+#define RUUAH_MOUSE_MODS_CTRL 2u
+#define RUUAH_MOUSE_MODS_ALT 4u
 
 typedef struct {
   uint16_t cols;
@@ -122,6 +138,34 @@ RuuahHostResult ruuah_host_send(RuuahHost *host, const uint8_t *bytes, size_t le
  *
  * bytes may be NULL only when len is 0. */
 RuuahHostResult ruuah_host_paste(RuuahHost *host, const uint8_t *bytes, size_t len);
+
+/* Sets the view geometry mouse encoding converts through: surface size and content
+ * insets, in the same backing-pixel space the frame's pixels use. Call after layout
+ * changes (resize, zoom, inset change); until the first call, pointer events answer
+ * RUUAH_HOST_IGNORED. */
+RuuahHostResult ruuah_host_mouse_geometry(RuuahHost *host, uint32_t screen_width,
+                                          uint32_t screen_height, uint32_t padding_left,
+                                          uint32_t padding_top, uint32_t padding_right,
+                                          uint32_t padding_bottom);
+
+/* Feeds one pointer event to mouse reporting. action/button/mods use the RUUAH_MOUSE_*
+ * constants (buttons 4..9 are the protocol's wheel/aux codes); x/y are surface pixels
+ * from the view's top-left. Success means a report was written to the pty; IGNORED
+ * means the protocol produced nothing and the event is the embedder's again
+ * (selection, menus). Send press/release pairs even while reporting is off -- held-
+ * button bookkeeping happens on every call. Modes ride the last polled frame. */
+RuuahHostResult ruuah_host_mouse(RuuahHost *host, uint32_t action, uint32_t button,
+                                 uint32_t mods, float x, float y);
+
+/* Routes a wheel gesture through the terminal's precedence: active mouse mode ->
+ * wheel-button reports; else alternate screen + alternate scroll (1007, default on)
+ * -> arrow keys (ESC O form under DECCKM); else IGNORED, and the embedder scrolls its
+ * viewport. ticks is whole notches, positive up; the embedder owns fractional
+ * banking. Success includes a consumed wheel that encoded to nothing (X10 event mode
+ * cannot name wheel buttons) -- a program holding the mouse must not also have the
+ * view scrolled under it. */
+RuuahHostResult ruuah_host_wheel(RuuahHost *host, float x, float y, int32_t ticks,
+                                 uint32_t mods);
 
 /* Scrolls the displayed view through scrollback: positive rows climbs into history,
  * negative returns toward the live bottom, INT32_MIN snaps straight to it. Deltas

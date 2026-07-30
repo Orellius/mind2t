@@ -78,6 +78,13 @@ impl<S: Surface> Renderer<S> {
         }
     }
 
+    /// The pixel cell the grid is laid out on. The host's mouse encoder divides
+    /// pointer pixels by this, so it must come from the LIVE renderer -- a zoom
+    /// rebuild changes it.
+    pub fn cell_metrics(&self) -> crate::font::CellMetrics {
+        self.fonts.metrics()
+    }
+
     pub fn canvas(&self) -> &S {
         &self.canvas
     }

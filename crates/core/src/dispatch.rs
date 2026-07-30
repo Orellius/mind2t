@@ -31,6 +31,7 @@ impl State {
                 // DECOM homes the cursor, to the region origin when it is being enabled.
                 self.cursor_position(0, 0);
             }
+            1 => self.cursor_keys = on,
             7 => self.autowrap = on,
             25 => self.cursor_visible = on,
             47 => self.switch_screen(on, AltMode::M47),

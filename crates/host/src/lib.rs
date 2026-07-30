@@ -41,6 +41,10 @@ pub enum RuuahHostResult {
     ResizeRefused = 3,
     RenderFailed = 4,
     SendFailed = 5,
+    /// The call was valid but the protocol produced nothing: mouse reporting is off,
+    /// the event deduplicated away, or wheel routing left the event to the embedder
+    /// (viewport scroll). Not an error -- the embedder's own handling is next.
+    Ignored = 6,
 }
 
 /// Mirrors `RuuahHostOptions` in `ruuah_host.h`.
@@ -130,7 +134,29 @@ pub struct RuuahHost {
     /// Stable storage backing the borrowed `row_semantics` pointer, one byte per row.
     /// Rebuilt on every draw, same lifetime contract as `pixels`.
     row_semantics: Vec<u8>,
+    /// Mouse-reporting state the embedder cannot carry itself: view geometry (set via
+    /// `ruuah_host_mouse_geometry`), which buttons are down, and the motion-dedup cell.
+    mouse: HostMouse,
     exited: bool,
+}
+
+/// The host side of mouse reporting. Geometry arrives from the embedder because only
+/// it knows the view's pixel size and content insets; cell metrics come from the live
+/// renderer at encode time because zoom rebuilds change them.
+#[derive(Debug, Default)]
+struct HostMouse {
+    screen_width: u32,
+    screen_height: u32,
+    padding_left: u32,
+    padding_top: u32,
+    padding_right: u32,
+    padding_bottom: u32,
+    /// Buttons currently down, bit N for button code N. Updated BEFORE encoding (the
+    /// oracle records click_state first), so a release's own button is already clear
+    /// and `any_button_pressed` reflects what else is held.
+    buttons_held: u16,
+    /// Last reported cell for motion dedup, the encoder's cross-call state.
+    last_cell: Option<(u32, u32)>,
 }
 
 /// One row's shell-semantic class, derived from the per-cell OSC 133 marks the core
@@ -383,6 +409,7 @@ pub unsafe extern "C" fn ruuah_host_spawn(
         row_semantics: Vec::new(),
         images,
         pending_events: std::collections::VecDeque::new(),
+        mouse: HostMouse::default(),
         exited: false,
     });
     unsafe { out.write(Box::into_raw(handle)) };
@@ -490,6 +517,228 @@ pub unsafe extern "C" fn ruuah_host_paste(
         Ok(()) => RuuahHostResult::Success,
         Err(_) => RuuahHostResult::SendFailed,
     }
+}
+
+/// Builds the encoder geometry from embedder-set view pixels plus the LIVE renderer's
+/// cell metrics (zoom rebuilds move them). `None` until the embedder has called
+/// `ruuah_host_mouse_geometry`.
+fn mouse_size(host: &RuuahHost) -> Option<ruuah_vt_pty::mouse::Size> {
+    if host.mouse.screen_width == 0 || host.mouse.screen_height == 0 {
+        return None;
+    }
+    let cell = host.renderer.cell_metrics();
+    Some(ruuah_vt_pty::mouse::Size {
+        screen_width: host.mouse.screen_width,
+        screen_height: host.mouse.screen_height,
+        cell_width: cell.width,
+        cell_height: cell.height,
+        padding_left: host.mouse.padding_left,
+        padding_top: host.mouse.padding_top,
+        padding_right: host.mouse.padding_right,
+        padding_bottom: host.mouse.padding_bottom,
+    })
+}
+
+fn mouse_mods(mods: u32) -> ruuah_vt_pty::mouse::Mods {
+    ruuah_vt_pty::mouse::Mods {
+        shift: mods & 1 != 0,
+        ctrl: mods & 2 != 0,
+        alt: mods & 4 != 0,
+    }
+}
+
+/// Sets the view geometry mouse encoding converts through: the surface size in pixels
+/// and the content insets around the grid, both in the same backing-pixel space the
+/// frame's pixels use. Call after layout changes (resize, zoom, inset change); until
+/// the first call, pointer events answer `Ignored`.
+///
+/// # Safety
+/// `host` must be a live handle from `ruuah_host_spawn`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_host_mouse_geometry(
+    host: *mut RuuahHost,
+    screen_width: u32,
+    screen_height: u32,
+    padding_left: u32,
+    padding_top: u32,
+    padding_right: u32,
+    padding_bottom: u32,
+) -> RuuahHostResult {
+    if host.is_null() || screen_width == 0 || screen_height == 0 {
+        return RuuahHostResult::InvalidValue;
+    }
+    let host = unsafe { &mut *host };
+    host.mouse.screen_width = screen_width;
+    host.mouse.screen_height = screen_height;
+    host.mouse.padding_left = padding_left;
+    host.mouse.padding_top = padding_top;
+    host.mouse.padding_right = padding_right;
+    host.mouse.padding_bottom = padding_bottom;
+    RuuahHostResult::Success
+}
+
+/// Feeds one pointer event to the mouse-reporting protocol.
+///
+/// `action`: 0 press, 1 release, 2 motion. `button`: 0 none (motion with nothing
+/// held), 1 left, 2 middle, 3 right, 4..9 the protocol's wheel/aux buttons. `mods`:
+/// bit 0 shift, bit 1 ctrl, bit 2 alt. `x`/`y`: surface pixels from the view's
+/// top-left, the same space `ruuah_host_mouse_geometry` described.
+///
+/// Returns `Success` when a report was encoded and written to the pty, `Ignored` when
+/// the protocol produced nothing -- reporting off, motion deduplicated, position
+/// outside the viewport with nothing held, or a button the protocol cannot name. On
+/// `Ignored` the event is the embedder's again (selection, context menus). Button
+/// bookkeeping happens on every call either way, so press/release pairs must reach
+/// this function even while reporting is off.
+///
+/// The active modes ride the last polled frame, like `ruuah_host_paste`.
+///
+/// # Safety
+/// `host` must be a live handle from `ruuah_host_spawn`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_host_mouse(
+    host: *mut RuuahHost,
+    action: u32,
+    button: u32,
+    mods: u32,
+    x: f32,
+    y: f32,
+) -> RuuahHostResult {
+    if host.is_null() || action > 2 {
+        return RuuahHostResult::InvalidValue;
+    }
+    let host = unsafe { &mut *host };
+
+    use ruuah_vt_pty::mouse::{Action, Button, Event, Options};
+    let action = match action {
+        0 => Action::Press,
+        1 => Action::Release,
+        _ => Action::Motion,
+    };
+    let button_enum = match button {
+        0 => None,
+        1 => Some(Button::Left),
+        2 => Some(Button::Middle),
+        3 => Some(Button::Right),
+        4 => Some(Button::Four),
+        5 => Some(Button::Five),
+        6 => Some(Button::Six),
+        7 => Some(Button::Seven),
+        8 => Some(Button::Eight),
+        9 => Some(Button::Nine),
+        // Real hardware buttons the protocol has no code for still take part in the
+        // held bookkeeping below; the encoder answers silence for them.
+        _ => Some(Button::Other),
+    };
+
+    // Held-state first, the oracle's order: a release's own button is already clear
+    // when the encoder asks what else is held.
+    if button > 0 {
+        let bit = 1u16 << (button.min(15) as u16);
+        match action {
+            Action::Press => host.mouse.buttons_held |= bit,
+            Action::Release => host.mouse.buttons_held &= !bit,
+            Action::Motion => {}
+        }
+    }
+
+    let Some(size) = mouse_size(host) else {
+        return RuuahHostResult::Ignored;
+    };
+    let encoded = ruuah_vt_pty::mouse::encode(
+        Event { action, button: button_enum, mods: mouse_mods(mods), x, y },
+        Options {
+            event_mode: host.frame.mouse_event(),
+            format: host.frame.mouse_format(),
+            size,
+            any_button_pressed: host.mouse.buttons_held != 0,
+            last_cell: Some(&mut host.mouse.last_cell),
+        },
+    );
+    match encoded {
+        Some(bytes) => match host.host.send(&bytes) {
+            Ok(()) => RuuahHostResult::Success,
+            Err(_) => RuuahHostResult::SendFailed,
+        },
+        None => RuuahHostResult::Ignored,
+    }
+}
+
+/// Routes a wheel gesture through the terminal's three-way precedence, the oracle's
+/// own (`Surface.zig` scrollCallback): an active mouse mode gets wheel-button reports
+/// (64/65); otherwise the alternate screen with alternate scroll (1007, default on)
+/// gets arrow keys, `ESC O` form under DECCKM and `ESC [` otherwise; otherwise the
+/// event is `Ignored` and the embedder scrolls its viewport.
+///
+/// `ticks` is whole wheel notches, positive UP (toward history); the embedder owns
+/// fractional banking. Returns `Success` when the terminal consumed the gesture --
+/// including a mouse-mode wheel whose report encoded to nothing (X10 event mode
+/// cannot name wheel buttons), because a program that captured the mouse must not
+/// ALSO have the view scrolled under it.
+///
+/// # Safety
+/// `host` must be a live handle from `ruuah_host_spawn`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_host_wheel(
+    host: *mut RuuahHost,
+    x: f32,
+    y: f32,
+    ticks: i32,
+    mods: u32,
+) -> RuuahHostResult {
+    if host.is_null() {
+        return RuuahHostResult::InvalidValue;
+    }
+    let host = unsafe { &mut *host };
+    if ticks == 0 {
+        return RuuahHostResult::Ignored;
+    }
+
+    use ruuah_vt_pty::mouse::{Action, Button, Event, Options};
+    if host.frame.mouse_event() != ruuah_vt_core::mouse::MouseEvent::None {
+        let Some(size) = mouse_size(host) else {
+            return RuuahHostResult::Ignored;
+        };
+        let button = if ticks > 0 { Button::Four } else { Button::Five };
+        let mut out = Vec::new();
+        for _ in 0..ticks.unsigned_abs().min(64) {
+            if let Some(bytes) = ruuah_vt_pty::mouse::encode(
+                Event { action: Action::Press, button: Some(button), mods: mouse_mods(mods), x, y },
+                Options {
+                    event_mode: host.frame.mouse_event(),
+                    format: host.frame.mouse_format(),
+                    size,
+                    any_button_pressed: host.mouse.buttons_held != 0,
+                    last_cell: Some(&mut host.mouse.last_cell),
+                },
+            ) {
+                out.extend(bytes);
+            }
+        }
+        if !out.is_empty() && host.host.send(&out).is_err() {
+            return RuuahHostResult::SendFailed;
+        }
+        return RuuahHostResult::Success;
+    }
+
+    if host.frame.alternate_screen() && host.frame.mouse_alternate_scroll() {
+        let seq: &[u8] = match (host.frame.cursor_keys(), ticks > 0) {
+            (true, true) => b"\x1bOA",
+            (true, false) => b"\x1bOB",
+            (false, true) => b"\x1b[A",
+            (false, false) => b"\x1b[B",
+        };
+        let mut out = Vec::with_capacity(seq.len() * ticks.unsigned_abs().min(64) as usize);
+        for _ in 0..ticks.unsigned_abs().min(64) {
+            out.extend_from_slice(seq);
+        }
+        return match host.host.send(&out) {
+            Ok(()) => RuuahHostResult::Success,
+            Err(_) => RuuahHostResult::SendFailed,
+        };
+    }
+
+    RuuahHostResult::Ignored
 }
 
 /// Scrolls the displayed view through scrollback: positive `rows` climbs into history,

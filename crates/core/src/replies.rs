@@ -63,6 +63,7 @@ impl State {
             0
         } else {
             let tracked = match mode {
+                1 => Some(self.cursor_keys),
                 6 => Some(self.origin),
                 7 => Some(self.autowrap),
                 25 => Some(self.cursor_visible),

@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 148
+declared_cases = 150
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -1274,3 +1274,16 @@ name = "sync-2026-survives-alt-switch"
 expect = "match"
 bytes = "\u001B[?2026h\u001B[?1049halt"
 note = "2026 is terminal-global like 2004: entering the alternate screen keeps the batch open."
+
+[[case]]
+name = "mode-1-decckm-tracked"
+expect = "match"
+bytes = "\u001B[?1h"
+note = "DECCKM (application cursor keys). Tracked because the host arrow and alternate-scroll paths pick ESC O over ESC [ by it; the raw bit is the observable via ghostty_terminal_mode_get. Added with the SGR mouse slice 2026-07-30."
+
+[[case]]
+name = "mode-1-decckm-across-decstr"
+expect = "diff"
+diff_paths = ["modes.cursor_keys"]
+bytes = "\u001B[?1h\u001B[!p"
+note = "The DECSTR divergence seen through DECCKM: the oracle has no ! dispatch so it keeps mode 1 set; this core soft-resets it, xterm way (xterm DECSTR resets DECCKM). Same deliberate divergence as decstr-soft-reset-diverges, pinned on the one mode the wheel routing reads."

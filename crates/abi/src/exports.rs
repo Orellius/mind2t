@@ -322,6 +322,11 @@ pub unsafe extern "C" fn ghostty_terminal_mode_get(
             unsafe { *out_value = view.modes.mouse_alternate_scroll };
             GHOSTTY_SUCCESS
         }
+        // DECCKM, tracked for the host's arrow and alternate-scroll byte forms.
+        1 => {
+            unsafe { *out_value = view.modes.cursor_keys };
+            GHOSTTY_SUCCESS
+        }
         _ => GHOSTTY_INVALID_VALUE,
     }
 }

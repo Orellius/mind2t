@@ -22,9 +22,10 @@ use ruuah_vt_core::Terminal;
 use ruuah_vt_frame::{BaseDirection, Frame, Publisher, channel};
 use ruuah_vt_host::{
     DEFAULT_FONT_SIZE, RuuahConfig, RuuahHost, RuuahHostFrame, RuuahHostOptions, RuuahHostResult,
-    ruuah_config_error, ruuah_config_free, ruuah_config_load, ruuah_host_free, ruuah_host_paste,
-    ruuah_host_poll, ruuah_host_poll_skipping_row_for_testing, ruuah_host_resize,
-    ruuah_host_row_text, ruuah_host_scroll, ruuah_host_send, ruuah_host_spawn,
+    ruuah_config_error, ruuah_config_free, ruuah_config_load, ruuah_host_free, ruuah_host_mouse,
+    ruuah_host_mouse_geometry, ruuah_host_paste, ruuah_host_poll,
+    ruuah_host_poll_skipping_row_for_testing, ruuah_host_resize, ruuah_host_row_text,
+    ruuah_host_scroll, ruuah_host_send, ruuah_host_spawn, ruuah_host_wheel,
 };
 use ruuah_vt_render::{FontStack, Renderer};
 
@@ -432,6 +433,214 @@ fn a_paste_is_bare_when_the_child_did_not_enable_2004() {
     let matched = poll_until_pixels(host, &want);
     unsafe { ruuah_host_free(host) };
     assert!(matched, "the bare paste never echoed back as pixels");
+}
+
+/// The mouse path through the C boundary: the child enables 1000h+1006h, a press and a
+/// release at surface pixel (1,1) must reach it as `ESC[<0;1;1M` then `ESC[<0;1;1m`,
+/// which ECHOCTL echoes back as printable `^[[<0;1;1M^[[<0;1;1m` pixels. This crosses
+/// the WHOLE seam at once: the frame's mode bits (publisher -> seqlock -> host), the
+/// geometry conversion, the encoder, and the pty write.
+#[test]
+fn a_click_is_reported_when_the_child_enabled_sgr_mouse() {
+    let enable = b"\x1b[?1000h\x1b[?1006hREADY\r\n";
+    let (ready, ..) = reference_pixels_for(enable, BaseDirection::LeftToRight);
+    let after = b"\x1b[?1000h\x1b[?1006hREADY\r\n^[[<0;1;1M^[[<0;1;1m";
+    let (want, ..) = reference_pixels_for(after, BaseDirection::LeftToRight);
+
+    let command =
+        CString::new("printf '\\033[?1000h\\033[?1006hREADY\\n'; exec cat").expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+        config: ptr::null(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+
+    if !poll_until_pixels(host, &ready) {
+        unsafe { ruuah_host_free(host) };
+        panic!("the child's READY line never appeared, so the mode bits were never polled");
+    }
+
+    // Any generous screen works: only the CELL comes from the renderer's metrics, and
+    // pixel (1,1) is inside cell (0,0) at every font size.
+    assert_eq!(
+        unsafe { ruuah_host_mouse_geometry(host, 10_000, 10_000, 0, 0, 0, 0) },
+        RuuahHostResult::Success
+    );
+    assert_eq!(
+        unsafe { ruuah_host_mouse(host, 0, 1, 0, 1.0, 1.0) },
+        RuuahHostResult::Success,
+        "press"
+    );
+    assert_eq!(
+        unsafe { ruuah_host_mouse(host, 1, 1, 0, 1.0, 1.0) },
+        RuuahHostResult::Success,
+        "release"
+    );
+    let matched = poll_until_pixels(host, &want);
+    unsafe { ruuah_host_free(host) };
+    assert!(matched, "the SGR press/release pair never echoed back as pixels");
+}
+
+/// The control: a child that never asked for mouse reporting must see NOTHING from a
+/// click -- the call answers Ignored so the embedder knows the event is its own again.
+/// A host that encoded unconditionally answers Success here and fails; together with
+/// the test above this pins the frame's mode bits as the gate.
+#[test]
+fn a_click_is_ignored_when_the_child_never_asked_for_mouse() {
+    let (ready, ..) = reference_pixels_for(b"READY\r\n", BaseDirection::LeftToRight);
+
+    let command = CString::new("printf 'READY\\n'; exec cat").expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+        config: ptr::null(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+    if !poll_until_pixels(host, &ready) {
+        unsafe { ruuah_host_free(host) };
+        panic!("the child's READY line never appeared");
+    }
+    assert_eq!(
+        unsafe { ruuah_host_mouse_geometry(host, 10_000, 10_000, 0, 0, 0, 0) },
+        RuuahHostResult::Success
+    );
+    let verdict = unsafe { ruuah_host_mouse(host, 0, 1, 0, 1.0, 1.0) };
+    unsafe { ruuah_host_free(host) };
+    assert_eq!(verdict, RuuahHostResult::Ignored);
+}
+
+/// Wheel precedence, both live branches: on the alternate screen with 1007 at its
+/// default (on), two up-ticks become two `CSI A` arrows -- and after the child also
+/// enables DECCKM, the same wheel switches to the `ESC O A` application form. Off the
+/// alternate screen entirely (the control at the end) the wheel answers Ignored and
+/// the viewport is the embedder's.
+#[test]
+fn a_wheel_becomes_arrows_on_the_alternate_screen() {
+    let enable = b"\x1b[?1049hREADY\r\n";
+    let (ready, ..) = reference_pixels_for(enable, BaseDirection::LeftToRight);
+    let after_csi = b"\x1b[?1049hREADY\r\n^[[A^[[A";
+    let (want_csi, ..) = reference_pixels_for(after_csi, BaseDirection::LeftToRight);
+
+    let command = CString::new("printf '\\033[?1049hREADY\\n'; exec cat").expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+        config: ptr::null(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+    if !poll_until_pixels(host, &ready) {
+        unsafe { ruuah_host_free(host) };
+        panic!("the child's READY line never appeared");
+    }
+    assert_eq!(
+        unsafe { ruuah_host_mouse_geometry(host, 10_000, 10_000, 0, 0, 0, 0) },
+        RuuahHostResult::Success
+    );
+    assert_eq!(
+        unsafe { ruuah_host_wheel(host, 1.0, 1.0, 2, 0) },
+        RuuahHostResult::Success
+    );
+    let matched = poll_until_pixels(host, &want_csi);
+    unsafe { ruuah_host_free(host) };
+    assert!(matched, "the wheel's CSI A arrows never echoed back as pixels");
+}
+
+/// DECCKM flips the alternate-scroll byte form: with the child in application cursor
+/// keys mode the same wheel produces `ESC O B`, echoed as `^[OB`. Paired with the CSI
+/// form above, this pins that the host reads mode 1 off the frame rather than
+/// hardcoding either shape.
+#[test]
+fn a_wheel_takes_the_application_form_under_decckm() {
+    let enable = b"\x1b[?1049h\x1b[?1hREADY\r\n";
+    let (ready, ..) = reference_pixels_for(enable, BaseDirection::LeftToRight);
+    let after = b"\x1b[?1049h\x1b[?1hREADY\r\n^[OB";
+    let (want, ..) = reference_pixels_for(after, BaseDirection::LeftToRight);
+
+    let command =
+        CString::new("printf '\\033[?1049h\\033[?1hREADY\\n'; exec cat").expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+        config: ptr::null(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+    if !poll_until_pixels(host, &ready) {
+        unsafe { ruuah_host_free(host) };
+        panic!("the child's READY line never appeared");
+    }
+    assert_eq!(
+        unsafe { ruuah_host_mouse_geometry(host, 10_000, 10_000, 0, 0, 0, 0) },
+        RuuahHostResult::Success
+    );
+    assert_eq!(
+        unsafe { ruuah_host_wheel(host, 1.0, 1.0, -1, 0) },
+        RuuahHostResult::Success
+    );
+    let matched = poll_until_pixels(host, &want);
+    unsafe { ruuah_host_free(host) };
+    assert!(matched, "the DECCKM wheel never took the ESC O form");
+}
+
+/// The wheel's third branch: primary screen, no mouse mode -- the terminal refuses the
+/// event and the embedder's viewport scroll is next. This is what keeps scrollback
+/// usable in a plain shell.
+#[test]
+fn a_wheel_on_the_primary_screen_is_the_embedders() {
+    let (ready, ..) = reference_pixels_for(b"READY\r\n", BaseDirection::LeftToRight);
+    let command = CString::new("printf 'READY\\n'; exec cat").expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+        config: ptr::null(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+    if !poll_until_pixels(host, &ready) {
+        unsafe { ruuah_host_free(host) };
+        panic!("the child's READY line never appeared");
+    }
+    assert_eq!(
+        unsafe { ruuah_host_mouse_geometry(host, 10_000, 10_000, 0, 0, 0, 0) },
+        RuuahHostResult::Success
+    );
+    let verdict = unsafe { ruuah_host_wheel(host, 1.0, 1.0, 1, 0) };
+    unsafe { ruuah_host_free(host) };
+    assert_eq!(verdict, RuuahHostResult::Ignored);
 }
 
 /// S1's observable: a theme with a distinct background must recolor the grid AND the

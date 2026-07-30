@@ -62,9 +62,18 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
 5. **Mouse reporting (SGR 1006).** Claude Code, htop, lazygit all take clicks.
    Core tracks the modes; the window translates NSEvent to sequences; core stays
    I/O-free (encoding happens host-side, like keys — slice 5.6's rule).
-6. **Scrollback in the window.** The core HAS paged scrollback (slice 3); the
-   host exposes no way to view it. Needs a viewport offset in the frame readout
-   and scroll-wheel input in the window.
+6. **Scrollback in the window. DONE 2026-07-30** (`scrollback-viewport`). The
+   offset never enters the core: `Publisher::publish_scrolled` stitches history
+   above the active grid, the pump owns/clamps the offset and pins it to content
+   via `History::total_pushed`, `ruuah_host_scroll` + `viewport_offset` cross the
+   C surface, and the window wires wheel + cmd+PageUp/PageDown/Home/End with
+   snap-on-typing. No oracle exists (libghostty-vt has no viewport surface) --
+   unit/pty/host-gated, mutants seen red. Named v1 boundaries: OSC 8 links in
+   scrolled-back rows are not clickable (link ids don't survive the page
+   readout); resize snaps to the bottom (reflow-riding viewport anchor = future
+   slice, images-v2's class); the whole frame repaints while scrolled; on the
+   alt screen the wheel does nothing yet (alternate scroll mode 1007 = future,
+   pairs with item 5's mouse work).
 7. **Kitty keyboard protocol (progressive enhancement).** 2026 CLIs (Claude Code
    included) request it for shift+enter and friends; without it they fall back
    silently. Mode negotiation in core, encoding host-side.

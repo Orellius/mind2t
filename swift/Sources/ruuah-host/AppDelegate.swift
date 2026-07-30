@@ -271,10 +271,14 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         if let image = session.poll() {
             view.contentLayer.contents = image
             applyBackground(of: session)
-            view.updateGutter(
-                blocks: computeBlocks(session.rowClasses),
-                cellHeightDevice: session.cellHeight)
         }
+        // Outside the new-frame branch deliberately: a child that prints once and goes
+        // quiet never yields another image, and a view left at cellHeight 0 has no
+        // wheel handling at all (found by the SGR-mouse live tap). updateGutter's own
+        // change guard makes the every-tick call free.
+        view.updateGutter(
+            blocks: computeBlocks(session.rowClasses),
+            cellHeightDevice: session.cellHeight)
         if !windowSized && session.cellWidth != 0 {
             windowSized = true
             sizeWindowToGrid(session)

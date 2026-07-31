@@ -16,6 +16,7 @@
 use ruuah_vt as _;
 
 pub mod config;
+pub mod cwd;
 pub mod suggest;
 pub mod workflow;
 
@@ -622,17 +623,24 @@ pub unsafe extern "C" fn ruuah_history_free(handle: *mut RuuahHistory) {
 /// save answers SendFailed but keeps the in-memory entry (suggestions still work
 /// this session).
 ///
+/// `cwd` is the RAW OSC 7 report (event kind 7), or NULL. It is normalized here rather
+/// than by the caller: the core stores what the child sent, undecoded, so exactly one
+/// place should know how to turn `file:///My%20Code` into a directory.
+///
 /// # Safety
-/// `handle` live; `command` readable for `len` bytes.
+/// `handle` live; `command` readable for `len` bytes; `cwd` readable for `cwd_len`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ruuah_history_append(
     handle: *mut RuuahHistory,
     command: *const u8,
     len: usize,
+    cwd: *const u8,
+    cwd_len: usize,
 ) -> RuuahHostResult {
     if handle.is_null() || (command.is_null() && len != 0) {
         return RuuahHostResult::InvalidValue;
     }
+    let cwd = unsafe { normalized_cwd(cwd, cwd_len) };
     let handle = unsafe { &mut *handle };
     let bytes = if len == 0 {
         &[][..]
@@ -643,7 +651,7 @@ pub unsafe extern "C" fn ruuah_history_append(
         return RuuahHostResult::InvalidValue;
     };
     let before = handle.history.len();
-    handle.history.append(command);
+    handle.history.append(command, cwd.as_deref());
     if handle.history.len() == before {
         return RuuahHostResult::Ignored;
     }
@@ -656,13 +664,19 @@ pub unsafe extern "C" fn ruuah_history_append(
 /// The most recent history entry `input` is a proper prefix of, via the buffer
 /// protocol; `Ignored` with length 0 when nothing matches.
 ///
+/// `cwd` is the RAW OSC 7 report, or NULL. A match made in that directory is preferred;
+/// with no match there, or no directory at all, the newest match anywhere wins.
+///
 /// # Safety
-/// `handle` live; `input` readable for `len` bytes; `out`/`out_len` per the protocol.
+/// `handle` live; `input` readable for `len` bytes; `cwd` readable for `cwd_len`;
+/// `out`/`out_len` per the protocol.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ruuah_history_suggest(
     handle: *const RuuahHistory,
     input: *const u8,
     len: usize,
+    cwd: *const u8,
+    cwd_len: usize,
     out: *mut u8,
     cap: usize,
     out_len: *mut usize,
@@ -670,6 +684,7 @@ pub unsafe extern "C" fn ruuah_history_suggest(
     if handle.is_null() || (input.is_null() && len != 0) {
         return RuuahHostResult::InvalidValue;
     }
+    let cwd = unsafe { normalized_cwd(cwd, cwd_len) };
     let bytes = if len == 0 {
         &[][..]
     } else {
@@ -678,7 +693,7 @@ pub unsafe extern "C" fn ruuah_history_suggest(
     let Ok(input) = std::str::from_utf8(bytes) else {
         return RuuahHostResult::InvalidValue;
     };
-    match unsafe { &*handle }.history.suggest(input) {
+    match unsafe { &*handle }.history.suggest(input, cwd.as_deref()) {
         Some(suggestion) => copy_out(suggestion, out, cap, out_len),
         None => {
             if !out_len.is_null() {
@@ -687,6 +702,17 @@ pub unsafe extern "C" fn ruuah_history_suggest(
             RuuahHostResult::Ignored
         }
     }
+}
+
+/// A raw OSC 7 report as a directory key, or `None` for NULL, empty, or unusable input.
+///
+/// # Safety
+/// `raw` readable for `len` bytes, or NULL when `len` is 0.
+unsafe fn normalized_cwd(raw: *const u8, len: usize) -> Option<String> {
+    if raw.is_null() || len == 0 {
+        return None;
+    }
+    crate::cwd::normalize(unsafe { std::slice::from_raw_parts(raw, len) })
 }
 
 /// Builds the encoder geometry from embedder-set view pixels plus the LIVE renderer's

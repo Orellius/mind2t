@@ -33,6 +33,23 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
+**cwd-keyed ghost history, 2026-07-31 (`s4-cwd-history`).** History entries carry the
+directory they ran in; a suggestion PREFERS a match from the current directory and falls
+back to the newest match anywhere (fish's rule -- requiring the directory would make the
+ghost vanish the moment you `cd`). The shell integration now emits OSC 7 itself, because
+nothing else does in our windows: macOS installs `update_terminal_cwd` only when
+`$TERM_PROGRAM` is `Apple_Terminal`, which we never set. The host normalizes the URI, so
+the raw report crosses the C surface untouched and exactly one place knows how to decode
+percent-escapes. Old history files load unchanged (a line with no tab is a command with no
+directory -- the pre-cwd format).
+
+Two traps worth keeping: `path` is a SPECIAL variable in zsh (tied to `$PATH` as an
+array), so the first encoder reported `file://host%2F` for every directory; and the
+emitter/decoder pair is pinned by a test carrying the exact bytes a real zsh produced,
+because they are two implementations in two languages that nothing else compares.
+`[tested]` through the C surface with a real zsh and its control (an unintegrated shell
+reports nothing); the Swift pass-through is `[untested - needs your eyes]`.
+
 **images-v3, `[tested]` 2026-07-31, in two slices.**
 
 **v3a, z-index** (`images-v3a-zindex`): three layers -- under the cell background, under

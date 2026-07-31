@@ -347,6 +347,11 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
                 // Execution began: the input line seen on the LAST tick is the final
                 // typed command. Reading the row now would race the shell's redraw.
                 recordExecutedCommand(of: session)
+            case .pwd:
+                // The session already stored it (`pwdRaw`); nothing to do here. Kept as
+                // an explicit case so a future consumer -- a tab showing the directory --
+                // has an obvious place to hang, rather than a silent default.
+                break
             }
         }
         if chromeChanged {
@@ -543,9 +548,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// The event half: OSC 133;C fired, so the last tick's input line IS the command.
     private func recordExecutedCommand(of session: Session) {
         guard session === activeSession, !lastInputLine.isEmpty else { return }
-        _ = Array(lastInputLine.utf8).withUnsafeBufferPointer { pointer in
-            ruuah_history_append(historyStore, pointer.baseAddress, pointer.count)
-        }
+        session.recordCommand(historyStore, command: lastInputLine)
         lastInputLine = ""
     }
 
@@ -569,22 +572,11 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
                 ).count
         else { return hideGhost() }
 
-        var length = 0
-        let inputBytes = Array(input.utf8)
-        let sized = inputBytes.withUnsafeBufferPointer { pointer in
-            ruuah_history_suggest(historyStore, pointer.baseAddress, pointer.count, nil, 0, &length)
+        // Keyed by the directory the session last reported (OSC 7): a command run HERE
+        // outranks a newer one run elsewhere, and the host does the decoding.
+        guard let suggestion = session.suggestion(historyStore, for: input) else {
+            return hideGhost()
         }
-        guard sized == RUUAH_HOST_SUCCESS, length > 0 else { return hideGhost() }
-        var buffer = [UInt8](repeating: 0, count: length)
-        let copied = inputBytes.withUnsafeBufferPointer { pointer in
-            buffer.withUnsafeMutableBufferPointer { outPointer in
-                ruuah_history_suggest(
-                    historyStore, pointer.baseAddress, pointer.count,
-                    outPointer.baseAddress, length, &length)
-            }
-        }
-        guard copied == RUUAH_HOST_SUCCESS else { return hideGhost() }
-        let suggestion = String(decoding: buffer, as: UTF8.self)
         let remainder = String(suggestion.dropFirst(input.count))
         guard !remainder.isEmpty else { return hideGhost() }
 

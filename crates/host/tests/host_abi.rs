@@ -738,7 +738,7 @@ fn history_appends_suggests_and_persists_through_the_c_surface() {
         RuuahHostResult::Success
     );
     let append = |handle: *mut RuuahHistory, text: &str| unsafe {
-        ruuah_history_append(handle, text.as_ptr(), text.len())
+        ruuah_history_append(handle, text.as_ptr(), text.len(), ptr::null(), 0)
     };
     assert_eq!(append(handle, "git status"), RuuahHostResult::Success);
     assert_eq!(append(handle, "git status"), RuuahHostResult::Ignored, "consecutive dupe");
@@ -751,14 +751,14 @@ fn history_appends_suggests_and_persists_through_the_c_surface() {
     let mut length = 0usize;
     assert_eq!(
         unsafe {
-            ruuah_history_suggest(handle, input.as_ptr(), input.len(), ptr::null_mut(), 0, &mut length)
+            ruuah_history_suggest(handle, input.as_ptr(), input.len(), ptr::null(), 0, ptr::null_mut(), 0, &mut length)
         },
         RuuahHostResult::Success
     );
     let mut out = vec![0u8; length];
     assert_eq!(
         unsafe {
-            ruuah_history_suggest(handle, input.as_ptr(), input.len(), out.as_mut_ptr(), length, &mut length)
+            ruuah_history_suggest(handle, input.as_ptr(), input.len(), ptr::null(), 0, out.as_mut_ptr(), length, &mut length)
         },
         RuuahHostResult::Success
     );
@@ -767,7 +767,7 @@ fn history_appends_suggests_and_persists_through_the_c_surface() {
     let miss = b"cargo";
     assert_eq!(
         unsafe {
-            ruuah_history_suggest(handle, miss.as_ptr(), miss.len(), ptr::null_mut(), 0, &mut length)
+            ruuah_history_suggest(handle, miss.as_ptr(), miss.len(), ptr::null(), 0, ptr::null_mut(), 0, &mut length)
         },
         RuuahHostResult::Ignored
     );
@@ -783,7 +783,7 @@ fn history_appends_suggests_and_persists_through_the_c_surface() {
     let mut length = 0usize;
     assert_eq!(
         unsafe {
-            ruuah_history_suggest(reopened, input.as_ptr(), input.len(), ptr::null_mut(), 0, &mut length)
+            ruuah_history_suggest(reopened, input.as_ptr(), input.len(), ptr::null(), 0, ptr::null_mut(), 0, &mut length)
         },
         RuuahHostResult::Success,
         "appends persisted across handles"
@@ -1720,4 +1720,98 @@ fn a_unicode_placeholder_reaches_the_polled_pixels() {
         host,
         format!("no placeholder pixels reached the window (reddest score {reddest})"),
     );
+}
+
+/// Directory-keyed history, through the C surface.
+///
+/// The store's own rules are unit-tested; this proves the RAW OSC 7 bytes survive the
+/// boundary and are normalized on the far side. Passing an undecoded `file://` URI here
+/// and getting the local match back is the whole contract in one call -- an embedder that
+/// had to decode it itself would be the second copy of that logic.
+#[test]
+fn history_prefers_the_directory_a_command_was_run_in() {
+    use ruuah_vt_host::{
+        RuuahHistory, ruuah_history_append, ruuah_history_free, ruuah_history_load,
+        ruuah_history_suggest,
+    };
+    let dir = std::env::temp_dir().join(format!("ruuah-hist-cwd-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let path = CString::new(dir.join("history").to_str().expect("utf8")).expect("cstr");
+
+    let mut handle: *mut RuuahHistory = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_history_load(path.as_ptr(), &mut handle) },
+        RuuahHostResult::Success
+    );
+
+    // Two directories, and the one we will ask from holds the OLDER command.
+    let here = b"file://mac.local/tmp/ruuah%20work";
+    let there = b"file:///tmp/other";
+    let append = |command: &str, cwd: &[u8]| unsafe {
+        ruuah_history_append(
+            handle,
+            command.as_ptr(),
+            command.len(),
+            cwd.as_ptr(),
+            cwd.len(),
+        )
+    };
+    assert_eq!(append("cargo test --workspace", here), RuuahHostResult::Success);
+    assert_eq!(append("cargo build --release", there), RuuahHostResult::Success);
+
+    let suggest = |cwd: &[u8]| -> Option<String> {
+        let input = b"cargo ";
+        let mut length = 0usize;
+        let sized = unsafe {
+            ruuah_history_suggest(
+                handle,
+                input.as_ptr(),
+                input.len(),
+                cwd.as_ptr(),
+                cwd.len(),
+                ptr::null_mut(),
+                0,
+                &mut length,
+            )
+        };
+        if sized != RuuahHostResult::Success {
+            return None;
+        }
+        let mut out = vec![0u8; length];
+        assert_eq!(
+            unsafe {
+                ruuah_history_suggest(
+                    handle,
+                    input.as_ptr(),
+                    input.len(),
+                    cwd.as_ptr(),
+                    cwd.len(),
+                    out.as_mut_ptr(),
+                    length,
+                    &mut length,
+                )
+            },
+            RuuahHostResult::Success
+        );
+        Some(String::from_utf8(out).expect("utf8"))
+    };
+
+    // The URI is percent-encoded and carries a host; both are the host's problem, and
+    // getting the local match back is the proof it dealt with them.
+    assert_eq!(
+        suggest(here).as_deref(),
+        Some("cargo test --workspace"),
+        "the older command wins because it was run in this directory"
+    );
+    assert_eq!(suggest(there).as_deref(), Some("cargo build --release"));
+    // An unknown directory still suggests -- falling back is what keeps the ghost alive
+    // after a cd into somewhere new.
+    assert_eq!(
+        suggest(b"file:///tmp/never-seen").as_deref(),
+        Some("cargo build --release"),
+        "no local match falls back to the newest anywhere"
+    );
+
+    unsafe { ruuah_history_free(handle) };
+    std::fs::remove_dir_all(&dir).ok();
 }

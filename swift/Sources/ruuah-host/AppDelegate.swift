@@ -564,12 +564,19 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     private func updateGhost(_ session: Session, input: String) {
         // Only at the live bottom, with a visible caret parked at the END of the
         // typed line -- a ghost mid-line would suggest an edit we cannot make.
+        //
+        // AT OR PAST the end, not exactly at it. `ruuah_host_row_text` ends with
+        // `trim_end_matches(' ')`, so spaces the operator actually typed are
+        // invisible here: typing `echo ` puts the caret at column 7 against a
+        // reported length of 6 and the old equality hid the ghost. Measured by
+        // live tap 2026-07-31 -- `echo a` suggested, `echo ` did not, which made
+        // the trailing space the single most common way to see nothing, since a
+        // space is what you type before an argument.
+        let rowText = session.rowText(
+            UInt16(session.cursorRow), semantic: UInt8(RUUAH_TEXT_ALL))
         guard session.viewportOffset == 0, session.cursorVisible,
             session.cellWidth > 0, !input.isEmpty,
-            session.cursorCol
-                == session.rowText(
-                    UInt16(session.cursorRow), semantic: UInt8(RUUAH_TEXT_ALL)
-                ).count
+            session.cursorCol >= rowText.count
         else { return hideGhost() }
 
         // Keyed by the directory the session last reported (OSC 7): a command run HERE
@@ -577,7 +584,16 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         guard let suggestion = session.suggestion(historyStore, for: input) else {
             return hideGhost()
         }
-        let remainder = String(suggestion.dropFirst(input.count))
+        var remainder = String(suggestion.dropFirst(input.count))
+        // Those same invisible spaces have to come off the FRONT of the remainder,
+        // or the ghost redraws a space the caret is already sitting past and the
+        // line reads `echo  alpha-here`. Bounded by how many the caret implies, so
+        // a suggestion whose own next character is a space is not eaten.
+        var typedSpaces = session.cursorCol - rowText.count
+        while typedSpaces > 0, remainder.first == " " {
+            remainder.removeFirst()
+            typedSpaces -= 1
+        }
         guard !remainder.isEmpty else { return hideGhost() }
 
         ghostRemainder = Array(remainder.utf8)

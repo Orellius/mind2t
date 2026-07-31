@@ -74,6 +74,15 @@ impl Terminal {
         std::mem::take(&mut self.state.events)
     }
 
+    /// The working directory the child last reported via OSC 7, raw and undecoded.
+    ///
+    /// Empty means never reported or cleared: the oracle has no third state, because an
+    /// empty report clears the buffer outright. Decoding the `file://` URI is the
+    /// caller's job by design; see `pwd.rs`.
+    pub fn pwd(&self) -> &[u8] {
+        &self.state.pwd
+    }
+
     /// Drains the protocol replies (DSR/DA) owed to the child, in order. The pump
     /// writes these to the pty; the core never does I/O.
     pub fn take_replies(&mut self) -> Vec<u8> {
@@ -273,6 +282,10 @@ pub(crate) struct State {
     /// The link newly printed cells are stamped with, as a `link_table` index.
     pub(crate) cursor_link: Option<u16>,
     pub(crate) max_scrollback: usize,
+    /// OSC 7: the working directory the child last reported, raw. Terminal-global like
+    /// the oracle's own (`Terminal.zig`), so a screen switch cannot disturb it and RIS
+    /// clears it for free by rebuilding this struct. Empty is the only "unset".
+    pub(crate) pwd: Vec<u8>,
     /// Something changed that no per-row flag can express, so the whole frame is stale.
     ///
     /// Four triggers, each confirmed in upstream's `Terminal.zig` as the places that set its
@@ -304,6 +317,7 @@ impl State {
             mouse: crate::mouse::MouseModes::default(),
             last_print: None,
             events: Vec::new(),
+            pwd: Vec::new(),
             replies: Vec::new(),
             reports_enabled: false,
             graphics: crate::graphics::Graphics::default(),
@@ -412,7 +426,7 @@ impl State {
             grid: screen.grid.to_rows(),
             history: screen.history.to_rows(),
             damage: None,
-            pwd: Vec::new(),
+            pwd: self.pwd.clone(),
         }
     }
 
@@ -788,6 +802,7 @@ impl Perform for State {
     fn osc_dispatch(&mut self, params: &[&[u8]], _bell_terminated: bool) {
         match params.first().copied() {
             Some(b"0") | Some(b"2") => self.osc_title(params),
+            Some(b"7") => self.osc_pwd(params),
             Some(b"8") => self.osc_hyperlink(params),
             Some(b"52") => self.osc_clipboard(params),
             Some(b"9") => self.osc_notify_9(params),

@@ -23,6 +23,7 @@ mod hyperlink;
 pub mod kitty_keys;
 pub mod mouse;
 pub mod page;
+mod pwd;
 pub mod reflow;
 mod replies;
 pub mod resize;

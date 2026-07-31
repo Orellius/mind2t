@@ -33,6 +33,14 @@ pub enum Event {
     /// OSC 133;C: execution began, so the typed command is final. No payload -- the
     /// embedder reads the input cells itself; this event is the WHEN.
     CommandStart,
+    /// OSC 7: the child reported its working directory. Raw bytes, exactly as sent --
+    /// usually a `file://` URI, never decoded here (see `pwd.rs`). Empty means cleared.
+    ///
+    /// Unlike the other events this one MIRRORS state the terminal also stores, because
+    /// the oracle does the same (`getPwd` plus a `pwd_changed` callback): the snapshot is
+    /// what the differential compares, and the event is how a host learns without polling
+    /// a string on every frame.
+    Pwd(Vec<u8>),
 }
 
 /// Oldest events fall off first past this; see the module card for why.

@@ -18,6 +18,12 @@
 #   3. re-mark whatever PS1 the theme just produced instead of fighting it, restoring
 #      the saved clean copy first so marks never stack.
 #
+# This file also emits OSC 7 (the working directory), because NOTHING ELSE DOES in our
+# windows: macOS defines update_terminal_cwd in /etc/zshrc_Apple_Terminal and /etc/zshrc
+# sources that file only when $TERM_PROGRAM is Apple_Terminal, which we never set
+# (verified 2026-07-31). The host keys command history by it, so a shell without this
+# integration simply gets the global history it always had.
+#
 # Not covered yet: PS2 continuation marks, and the zle-invoked-precmd edge Ghostty's
 # cl=line option exists for. Both are documented gaps, not oversights.
 
@@ -60,6 +66,10 @@ _ruuah_precmd() {
         precmd_functions=(${precmd_functions:#_ruuah_precmd} _ruuah_precmd)
     fi
 
+    # Every prompt, not only on chpwd: a command may cd without the hook (a subshell that
+    # exits, `popd` inside a function), and one report per prompt is cheap.
+    _ruuah_report_pwd
+
     # Re-mark from the PS1 the theme just produced. If PS1 still wears our marks from
     # last cycle (nothing touched it), strip back to the saved clean copy first.
     if [[ -n "$_ruuah_marked_ps1" && "$PS1" == "$_ruuah_marked_ps1" ]]; then
@@ -75,4 +85,27 @@ _ruuah_precmd() {
 _ruuah_preexec() {
     _ruuah_report_exit=1
     builtin print -n "\e]133;C\a"
+}
+
+# OSC 7: report the working directory as a file:// URI.
+#
+# The path is percent-encoded because a directory may contain spaces, quotes, or any byte
+# that is not a slash -- an unencoded report of "/Users/orel/My Code" is a malformed URI,
+# and the receiving side cannot tell where the path ended. zsh's own ${var//pattern/repl}
+# cannot do this per byte, so the encoding walks the string; paths are short and this runs
+# once per directory change, not once per keystroke.
+_ruuah_report_pwd() {
+    # NOT named `path`: in zsh that identifier is tied to $PATH as an array, so
+    # ${path[i]} indexes PATH entries and ${#path} counts them. Measured -- the first
+    # version of this function reported "file://host%2F" for every directory.
+    builtin local cwd="$PWD" encoded="" i char
+    for (( i = 1; i <= ${#cwd}; i++ )); do
+        char="${cwd[i]}"
+        case "$char" in
+            # RFC 3986 unreserved, plus the separator itself.
+            [A-Za-z0-9._~/-]) encoded+="$char" ;;
+            *) encoded+="$(builtin printf '%%%02X' "'$char")" ;;
+        esac
+    done
+    builtin print -n "\e]7;file://${HOST}${encoded}\a"
 }

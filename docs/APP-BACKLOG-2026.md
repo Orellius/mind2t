@@ -103,8 +103,16 @@ Swift ghost visuals shipped [untested - needs your eyes] (window imaging
 went dark mid-tap — environment, documented in the PR). Phase two
 (Fig-spec completions) unstarted.
 
-**The cwd dependency is now DISCHARGED on the core side (2026-07-31,
-`osc7-cwd`).** OSC 7 is tracked, corpus-pinned against the real oracle, and
+**DONE 2026-07-31 (`s4-cwd-history`): history is keyed by directory.** Entries
+carry the directory they ran in, and a suggestion PREFERS a match made in the
+current one, falling back to the newest match anywhere — fish's rule, and the
+fallback is what stops the ghost vanishing the moment you `cd` somewhere new.
+The shell integration now emits OSC 7 itself (nothing else does in our windows);
+the host normalizes the URI, so the raw report crosses the C surface untouched
+and exactly one place knows how to decode it. Old history files load unchanged:
+a line with no tab is a command with no directory, which is the pre-cwd format.
+
+**Original note, for the record:** OSC 7 is tracked, corpus-pinned against the real oracle, and
 crosses the C surface as event kind 7 carrying the RAW report. What remains
 for cwd-keyed history is entirely host-side and is its own slice: consume
 kind 7 per session, percent-decode and strip the `file://host` prefix THERE

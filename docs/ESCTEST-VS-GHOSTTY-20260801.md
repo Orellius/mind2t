@@ -9,6 +9,7 @@ its own pty host (`crates/pty/tests/esctest.rs`). Same log grammar parsed both t
 |---|---|---|---|
 | Ghostty  | 141 | 383 | 44 |
 | ruuah-vt | 120 | 403 | 45 |
+| ruuah-vt (after VPR/HPR, same day) | **126** | 397 | 45 |
 
 Overlap: **104 both pass · 37 only Ghostty · 16 only ruuah-vt**.
 
@@ -40,8 +41,12 @@ no `!` intermediate dispatch at all (the divergence already corpus-pinned in CLA
 - 1 CHTTests
 - 1 BSTests
 
-Twelve of the thirty-seven are plain cursor-movement edges (CNL, CPL, CR, HPR, CUF,
-CUB, CHT, BS, VPR) - the cheapest wins in the list. The colour OSC family (8) and the
+**Correction, 2026-08-01 02:5x:** the cursor-movement cluster is FIFTEEN, not twelve -
+I miscounted off the class histogram. Worse, the label was wrong: classifying each test
+by whether its body calls `DECLRMM`/`DECSLRM` shows **10 of the 15 require left and right
+margins**, a feature this core does not have. They were never edge cases; they are one
+missing feature wearing ten test names. Only 5 were reachable without it (VPR x3, HPR x2),
+and those are now closed - see below. The colour OSC family (8) and the
 DECRQSS/DECRQM query pair (8) are the two real features behind it.
 
 ## Tests only Ghostty passes
@@ -102,3 +107,24 @@ HPATests.test_HPA_StopsAtRightEdge
 HVPTests.test_HVP_OutOfBoundsParams
 TBCTests.test_TBC_Default
 TBCTests.test_TBC_NoOp```
+
+
+## Update, 2026-08-01: VPR and HPR closed
+
+`CSI Ps e` and `CSI Ps a` did not exist in the dispatch table at all. Both now route
+through the ABSOLUTE positioning path rather than the relative movers, mirroring the
+oracle (`stream_terminal.zig:223` - `setCursorPos(y + 1, x + 1 +| value)`). That routing
+is the entire substance: through `cursor_down`/`cursor_right` they would be fenced by the
+scroll region, where `setCursorPos` clamps to the screen.
+
+**120 -> 126.** Six tests, one more than the gap listed, because `HPR_StopsAtRightEdge`
+fails in Ghostty too - so that one is not closing a gap, it is opening one the other way.
+
+Ghostty fails both `IgnoresOriginMode` variants, and its source says why: it feeds an
+absolute cursor row back into a setter that re-applies the origin offset. Matching the
+oracle keeps parity there rather than inventing a third behaviour.
+
+**The remaining 10 are a DECLRMM slice**, not a cleanup pass: mode 69 plus `DECSLRM`, and
+then left/right margins have to be honoured by CR, BS, CUF, CUB, CNL, CPL, CHT, printing,
+wrapping and erase. That is a feature with a real blast radius, and these 10 tests are its
+ready-made acceptance gate.

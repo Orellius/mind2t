@@ -121,6 +121,8 @@ pub fn apply(screen: &mut Screen, cols: u16, rows: u16, mode: Mode) {
                 row: row as i16,
                 cols: source.cols,
                 rows: source.rows,
+                // Reflow moves a placement; it never re-layers it.
+                z: source.z,
             });
         }
     }

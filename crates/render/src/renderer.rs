@@ -179,25 +179,46 @@ impl<S: Surface> Renderer<S> {
     /// Paints one row. A pure function of `(frame, y)` -- nothing here reads or writes state
     /// that outlives the call except the glyph cache, which cannot change what is drawn.
     fn draw_row(&mut self, frame: &Frame, y: u16) {
+        self.draw_row_parts(frame, y, Parts::Both, &[]);
+    }
+
+    /// One row, or half of one.
+    ///
+    /// `Parts::Both` is the ordinary path and is byte-for-byte what this function always
+    /// did: per cell, background then ink, interleaved. The split halves exist only for
+    /// the layered path, where an image has to land BETWEEN all the backgrounds and all
+    /// the text. Splitting is deliberately NOT the default -- interleaved, a later cell's
+    /// background erases the previous cell's glyph overhang, and separating the passes
+    /// keeps that overhang. Both are defensible; only one is what every existing pixel
+    /// test was written against.
+    ///
+    /// `bg_skip` names cell spans lying over a below-background image, where the DEFAULT
+    /// background must not be painted or the image it sits on would never be visible. A
+    /// cell carrying a real background colour still paints: the child asked for that.
+    fn draw_row_parts(&mut self, frame: &Frame, y: u16, parts: Parts, bg_skip: &[CellRect]) {
         let cell = self.fonts.metrics();
         let top = i32::from(y) * cell.height as i32;
 
         // The row is cleared first, so a shorter line of text does not leave the tail of a
         // longer one behind it.
-        self.canvas.fill(
-            0,
-            top,
-            cell.width * u32::from(self.cols),
-            cell.height,
-            self.palette.default_background,
-        );
+        if parts.backgrounds() {
+            for (start, span) in unskipped_spans(self.cols, y, bg_skip) {
+                self.canvas.fill(
+                    i32::from(start) * cell.width as i32,
+                    top,
+                    cell.width * u32::from(span),
+                    cell.height,
+                    self.palette.default_background,
+                );
+            }
+        }
 
         for run in frame.runs(y) {
             let drawn = self.palette.draw(&run.style);
             // Ligature pass: plan which segments of this run form ligatures. Ink for
             // their cells is skipped below and blitted from the plan afterwards;
             // backgrounds and decorations stay per-cell.
-            let plans = if self.ligatures && drawn.ink {
+            let plans = if self.ligatures && drawn.ink && parts.ink() {
                 self.ligature_plan(&run)
             } else {
                 Vec::new()
@@ -209,13 +230,22 @@ impl<S: Surface> Renderer<S> {
                     continue;
                 }
                 let left = i32::from(column) * cell.width as i32;
-                self.canvas.fill(
-                    left,
-                    top,
-                    cell.width * u32::from(width),
-                    cell.height,
-                    drawn.background,
-                );
+                // A default background over a below-background image is the ONE fill that
+                // yields; anything the child actually coloured still covers the image.
+                let yields = drawn.background == self.palette.default_background
+                    && covers(bg_skip, y, column, width);
+                if parts.backgrounds() && !yields {
+                    self.canvas.fill(
+                        left,
+                        top,
+                        cell.width * u32::from(width),
+                        cell.height,
+                        drawn.background,
+                    );
+                }
+                if !parts.ink() {
+                    continue;
+                }
                 let ligated = plans
                     .iter()
                     .any(|(start, count, _)| index >= *start && index < start + count);
@@ -226,7 +256,7 @@ impl<S: Surface> Renderer<S> {
                 self.draw_decorations(&drawn, left, top, width);
             }
             // The ligature ink goes over the freshly painted backgrounds.
-            for (start, _, glyphs) in &plans {
+            for (start, _, glyphs) in plans.iter().filter(|_| parts.ink()) {
                 let origin = i32::from(run.column_of(*start)) * cell.width as i32;
                 let baseline = top + cell.baseline;
                 for placed in glyphs {
@@ -244,7 +274,9 @@ impl<S: Surface> Renderer<S> {
             }
         }
 
-        self.draw_cursor(frame, y);
+        if parts.ink() {
+            self.draw_cursor(frame, y);
+        }
     }
 
     /// Plans ligature segments for one run: maximal stretches of single-codepoint
@@ -475,6 +507,96 @@ impl<S: Surface> Renderer<S> {
         }
     }
 
+    /// Draws a whole frame in the three kitty z layers, for frames that need it.
+    ///
+    /// Returns the rows painted, which is always all of them: an image sitting under the
+    /// text spans rows the damage tracker has no reason to consider stale, so a partial
+    /// repaint would leave the previous frame's text sitting on top of it. Paying a full
+    /// repaint whenever a below-text placement exists keeps the incremental-equals-full
+    /// invariant true instead of quietly making it false, and such placements are rare.
+    ///
+    /// `resolved` is indexed in lockstep with `placements` -- the caller resolved the
+    /// pixels, so this cannot reorder the list (and it must not: `placements` arrives in
+    /// draw order from the publisher).
+    pub fn draw_layered(
+        &mut self,
+        frame: &Frame,
+        placements: &[ruuah_vt_frame::FramePlacement],
+        resolved: &[Option<(u32, u32, std::sync::Arc<Vec<u8>>)>],
+    ) -> usize {
+        let layer_of = |index: usize| placements[index].layer();
+
+        // Layer 0 first, and its covered cells are collected on the way: a default
+        // background painted over them would hide the very image they belong to.
+        let mut bg_skip = Vec::new();
+        for index in (0..placements.len()).filter(|i| layer_of(*i) == 0) {
+            if let Some(rect) = self.blit_placement(&placements[index], resolved[index].as_ref()) {
+                bg_skip.push(rect);
+            }
+        }
+
+        for y in 0..frame.rows {
+            self.draw_row_parts(frame, y, Parts::Backgrounds, &bg_skip);
+        }
+        for index in (0..placements.len()).filter(|i| layer_of(*i) == 1) {
+            self.blit_placement(&placements[index], resolved[index].as_ref());
+        }
+        for y in 0..frame.rows {
+            self.draw_row_parts(frame, y, Parts::Ink, &bg_skip);
+        }
+        for index in (0..placements.len()).filter(|i| layer_of(*i) == 2) {
+            self.blit_placement(&placements[index], resolved[index].as_ref());
+        }
+
+        self.drawn = frame.generation;
+        usize::from(frame.rows)
+    }
+
+    /// Scales and blits ONE placement, returning the cell box it covers.
+    ///
+    /// The cell box is what the below-background layer needs, and it is derived from the
+    /// pixels actually drawn rather than re-derived from the placement, so the two can
+    /// never disagree about where the image is.
+    fn blit_placement(
+        &mut self,
+        placement: &ruuah_vt_frame::FramePlacement,
+        image: Option<&(u32, u32, std::sync::Arc<Vec<u8>>)>,
+    ) -> Option<CellRect> {
+        let metrics = self.fonts.metrics();
+        let (width, height, rgba) = image?;
+        let (target_width, target_height) = if placement.cols > 0 && placement.rows > 0 {
+            (
+                u32::from(placement.cols) * metrics.width,
+                u32::from(placement.rows) * metrics.height,
+            )
+        } else {
+            (*width, *height)
+        };
+        if target_width == 0 || target_height == 0 || *width == 0 || *height == 0 {
+            return None;
+        }
+        let scaled = self.image_cache.get_or_scale(
+            placement.image,
+            *width,
+            *height,
+            rgba,
+            target_width,
+            target_height,
+        );
+        let x = i32::from(placement.col) * metrics.width as i32;
+        let y = i32::from(placement.row) * metrics.height as i32; // negative = clipped top
+        self.canvas
+            .blend_image(x, y, target_width, target_height, &scaled);
+
+        // Ceiling division: a cell the image only partly covers is still covered.
+        Some(CellRect {
+            col: placement.col,
+            row: placement.row,
+            cols: target_width.div_ceil(metrics.width.max(1)) as u16,
+            rows: target_height.div_ceil(metrics.height.max(1)) as u16,
+        })
+    }
+
     /// Blits kitty placements over the drawn grid, through the same `blend_image` op
     /// emoji use -- CPU==GPU holds because both backends receive identical pre-scaled
     /// bytes (the P0.2 rule). `lookup` resolves an image id to (width, height, pixels);
@@ -557,4 +679,73 @@ impl<S: Surface> Renderer<S> {
         let cell = frame.cell(frame.cursor.x, y);
         self.draw_cell(cell, left, top, cell_width(cell), drawn.background, mirrored);
     }
+}
+
+/// Which half of a row a draw pass paints.
+///
+/// `Both` is the ordinary interleaved path; the halves exist so a below-text image can be
+/// blitted between all the backgrounds and all the glyphs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Parts {
+    Both,
+    Backgrounds,
+    Ink,
+}
+
+impl Parts {
+    fn backgrounds(self) -> bool {
+        matches!(self, Parts::Both | Parts::Backgrounds)
+    }
+    fn ink(self) -> bool {
+        matches!(self, Parts::Both | Parts::Ink)
+    }
+}
+
+/// A cell-space box covered by a below-background placement.
+#[derive(Clone, Copy, Debug)]
+struct CellRect {
+    col: u16,
+    /// Signed like the placement it came from: an image scrolled past the top covers
+    /// rows starting above the screen, and clamping that to 0 would shield the wrong ones.
+    row: i16,
+    cols: u16,
+    rows: u16,
+}
+
+/// Whether a cell span at `(y, col..col+width)` lies over any below-background image.
+fn covers(rects: &[CellRect], y: u16, col: u16, width: u16) -> bool {
+    rects.iter().any(|rect| {
+        let top = i32::from(rect.row);
+        let bottom = top + i32::from(rect.rows);
+        let left = i32::from(rect.col);
+        let right = left + i32::from(rect.cols);
+        let row = i32::from(y);
+        let (start, end) = (i32::from(col), i32::from(col) + i32::from(width));
+        row >= top && row < bottom && start < right && end > left
+    })
+}
+
+/// The column spans of row `y` NOT covered by any below-background image, left to right.
+///
+/// Used for the row-clear fill, which would otherwise paint the default background across
+/// the whole width and bury the image before a single glyph was drawn.
+fn unskipped_spans(cols: u16, y: u16, rects: &[CellRect]) -> Vec<(u16, u16)> {
+    if rects.is_empty() {
+        return vec![(0, cols)];
+    }
+    let mut spans = Vec::new();
+    let mut start: Option<u16> = None;
+    for column in 0..cols {
+        if covers(rects, y, column, 1) {
+            if let Some(from) = start.take() {
+                spans.push((from, column - from));
+            }
+        } else if start.is_none() {
+            start = Some(column);
+        }
+    }
+    if let Some(from) = start {
+        spans.push((from, cols - from));
+    }
+    spans
 }

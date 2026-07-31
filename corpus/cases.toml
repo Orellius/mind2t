@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 163
+declared_cases = 164
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -1366,3 +1366,9 @@ name = "osc7-ris-clears"
 expect = "match"
 bytes = "\u001B]7;file:///tmp\u001B\\\u001Bc"
 note = "RIS clears the pwd (fullReset). Same shape as the empty case: vacuous today, load-bearing after the core tracks it."
+
+[[case]]
+name = "osc9-9-conemu-sets-the-pwd"
+expect = "match"
+bytes = "\u001B]9;9;/Users/orel/from-conemu\u001B\\"
+note = "ConEmu CurrentDir feeds the SAME pwd as OSC 7 (measured against the oracle 2026-07-31). Pinned because before this the sequence fell through to the notification branch and popped a desktop notification reading '9;/Users/orel/from-conemu'. Payload is a bare path here, not a URI; the core stores either verbatim."

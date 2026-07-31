@@ -78,10 +78,17 @@ fn it_renders_vim() {
     let mut command = std::process::Command::new("/usr/bin/vim");
     // -u NONE -N: no user config, but not vi-compatible either, so this renders the same on
     // any machine rather than whatever the local vimrc happens to say.
+    // -n: no swap file. The host is killed rather than quit, so vim leaves through its
+    // emergency path and PRESERVES the swap -- which the next run then reports as
+    // `E325: ATTENTION`, pages at `-- More --`, and never draws the buffer. Measured
+    // 2026-07-31: a passing run planted the file that made the following run time out at
+    // ten seconds, so the gate was red on every second invocation for a reason that had
+    // nothing to do with the renderer.
     command
         .arg("-u")
         .arg("NONE")
         .arg("-N")
+        .arg("-n")
         .arg(&source)
         .env("TERM", "xterm-256color")
         .env("LANG", "en_US.UTF-8");
@@ -143,10 +150,12 @@ fn it_renders_vim_in_hebrew() {
     .expect("fixture");
 
     let mut command = std::process::Command::new("/usr/bin/vim");
+    // -n for the same reason as the fixture test above: a killed vim keeps its swap file.
     command
         .arg("-u")
         .arg("NONE")
         .arg("-N")
+        .arg("-n")
         .arg(&source)
         .env("TERM", "xterm-256color")
         .env("LANG", "en_US.UTF-8");

@@ -82,6 +82,11 @@ struct Shared {
     /// shared image store the pump maintains).
     placements: Box<[AtomicU64]>,
     placement_len: AtomicU64,
+    /// Virtual (kitty U=1) placements: image id plus the CELL GRID the image is divided
+    /// into. They draw nothing themselves -- placeholder cells in the grid address them --
+    /// so they carry no position, which is exactly why they cannot share the table above.
+    virtuals: Box<[AtomicU64]>,
+    virtual_len: AtomicU64,
     capacity: (u16, u16),
     style_capacity: usize,
 }
@@ -94,6 +99,7 @@ const STYLE_WORDS: usize = 2;
 pub const LINK_SLOTS: usize = 64;
 /// Visible kitty placements per frame; past this the newest are dropped for the frame.
 pub const PLACEMENT_SLOTS: usize = 16;
+pub const VIRTUAL_SLOTS: usize = 16;
 const PLACEMENT_WORDS: usize = 2;
 const LINK_WORDS: usize = 32;
 /// The longest URI a slot can carry; longer ones are truncated at a char boundary by
@@ -129,6 +135,8 @@ pub fn channel(cols: u16, rows: u16) -> (FrameWriter, FrameReader) {
         link_len: AtomicU64::new(0),
         placements: zeroed(PLACEMENT_SLOTS * PLACEMENT_WORDS),
         placement_len: AtomicU64::new(0),
+        virtuals: zeroed(VIRTUAL_SLOTS),
+        virtual_len: AtomicU64::new(0),
         capacity: (cols, rows),
         style_capacity,
     });
@@ -325,6 +333,21 @@ impl Publish<'_> {
         }
     }
 
+    /// Writes the virtual (U=1) placements: image id and the cell grid it is divided into.
+    ///
+    /// One word each -- there is no position to carry. The placeholder cells in the grid
+    /// are the position, which is the whole point of the feature.
+    pub fn virtuals(&mut self, table: impl ExactSizeIterator<Item = (u32, u16, u16)>) {
+        let len = table.len().min(VIRTUAL_SLOTS);
+        self.shared.virtual_len.store(len as u64, Ordering::Relaxed);
+        for (slot, (image, cols, rows)) in table.take(len).enumerate() {
+            self.shared.virtuals[slot].store(
+                u64::from(image) | (u64::from(cols) << 32) | (u64::from(rows) << 48),
+                Ordering::Relaxed,
+            );
+        }
+    }
+
     /// Writes the interned style table. Entries past the buffer are dropped, which the
     /// channel's sizing makes unreachable for a table the core produced.
     pub fn styles(&mut self, table: impl ExactSizeIterator<Item = [u64; 2]>) {
@@ -462,6 +485,17 @@ impl FrameReader {
                 cols: b as u16,
                 rows: (b >> 16) as u16,
                 z: (b >> 32) as u32 as i32,
+            });
+        }
+
+        let virtual_len = (shared.virtual_len.load(Ordering::Relaxed) as usize).min(VIRTUAL_SLOTS);
+        frame.virtuals.clear();
+        for slot in 0..virtual_len {
+            let word = shared.virtuals[slot].load(Ordering::Relaxed);
+            frame.virtuals.push(crate::frame::FrameVirtual {
+                image: word as u32,
+                cols: (word >> 32) as u16,
+                rows: (word >> 48) as u16,
             });
         }
 

@@ -126,6 +126,9 @@ pub struct Frame {
     /// Kitty graphics placements visible this frame. Pixels live in the shared image
     /// store; this is only where they anchor.
     pub placements: Vec<FramePlacement>,
+    /// Virtual (kitty U=1) placements: an image and the cell grid it is divided into.
+    /// They have no position -- the placeholder cells in the grid are the position.
+    pub virtuals: Vec<FrameVirtual>,
 }
 
 /// One kitty placement as it crosses the thread boundary.
@@ -143,6 +146,17 @@ pub struct FramePlacement {
     /// a renderer may walk it start to finish and a layered one may cut it into the three
     /// contiguous bands (`FramePlacement::BELOW_BACKGROUND`, then below 0, then the rest).
     pub z: i32,
+}
+
+/// A kitty virtual placement: an image, and the cell grid the placeholder cells
+/// address it through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameVirtual {
+    pub image: u32,
+    /// The image's size in CELLS. Zero means the image's native pixel size, resolved
+    /// renderer-side like an ordinary placement's.
+    pub cols: u16,
+    pub rows: u16,
 }
 
 impl FramePlacement {
@@ -507,6 +521,7 @@ mod tests {
             styles,
             links: Vec::new(),
             placements: Vec::new(),
+            virtuals: Vec::new(),
         }
     }
 

@@ -2,7 +2,7 @@
 # The corpus law in both directions: a line here failing is a regression; a test
 # passing without a line here must be promoted by adding it. Re-triage after suite
 # updates: cargo test -p ruuah-vt-pty --test esctest -- --ignored print_esctest --nocapture
-# Suite pin: esctest.lock. Baseline 2026-07-30 (post-DECRQM): 120 pass / 403 fail / 45 skip of 568 (DECCKM promoted by the SGR mouse slice; DECNKM by the kitty keyboard slice, which tracks mode 66). Note: DECSCL_Level2DoesntSupportDECRQM passed only while DECRQM did not exist at all (vacuous level-gating); answering DECRQM un-passed it, and DECSCL level tracking is its own future item.
+# Suite pin: esctest.lock. Baseline 2026-08-01 (post-VPR/HPR): 126 pass / 397 fail / 45 skip of 568 (DECCKM promoted by the SGR mouse slice; DECNKM by the kitty keyboard slice, which tracks mode 66). Note: DECSCL_Level2DoesntSupportDECRQM passed only while DECRQM did not exist at all (vacuous level-gating); answering DECRQM un-passed it, and DECSCL level tracking is its own future item.
 BSTests.test_BS_Basic
 BSTests.test_BS_InitialReverseWraparound
 BSTests.test_BS_MovesLeftWhenLeftOfLeftMargin
@@ -96,6 +96,9 @@ HPATests.test_HPA_DefaultParams
 HPATests.test_HPA_DoesNotChangeRow
 HPATests.test_HPA_IgnoresOriginMode
 HPATests.test_HPA_StopsAtRightEdge
+HPRTests.test_HPR_DefaultParams
+HPRTests.test_HPR_DoesNotChangeRow
+HPRTests.test_HPR_StopsAtRightEdge
 HTSTests.test_HTS_Basic
 HVPTests.test_HVP_ColumnOnly
 HVPTests.test_HVP_DefaultParams
@@ -122,4 +125,7 @@ VPATests.test_VPA_DefaultParams
 VPATests.test_VPA_DoesNotChangeColumn
 VPATests.test_VPA_IgnoresOriginMode
 VPATests.test_VPA_StopsAtBottomEdge
+VPRTests.test_VPR_DefaultParams
+VPRTests.test_VPR_DoesNotChangeColumn
+VPRTests.test_VPR_StopsAtBottomEdge
 VTTests.test_VT_Basic

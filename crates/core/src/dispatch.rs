@@ -328,6 +328,21 @@ impl State {
                 let x = self.cursor_x();
                 self.cursor_position(arg(params, 0) - 1, x);
             }
+            // HPR / VPR: relative moves that go through the ABSOLUTE positioning path,
+            // not through cursor_right/cursor_down. Measured from the oracle
+            // (stream_terminal.zig:223 -- `setCursorPos(y + 1, x + 1 +| value)`), and the
+            // distinction is the whole reason these had no tests passing: routing them
+            // through the relative movers would clamp them to the scroll region and honour
+            // pending-wrap state, where setCursorPos clamps to the screen (or, under DECOM,
+            // to the region as an ORIGIN rather than as a fence).
+            'a' => {
+                let (x, y) = (self.cursor_x().saturating_add(arg(params, 0)), self.cursor_y());
+                self.cursor_position(y, x);
+            }
+            'e' => {
+                let (x, y) = (self.cursor_x(), self.cursor_y().saturating_add(arg(params, 0)));
+                self.cursor_position(y, x);
+            }
             'H' | 'f' => self.cursor_position(arg(params, 0) - 1, arg(params, 1) - 1),
 
             'I' => self.tab_forward(arg(params, 0)),
@@ -443,4 +458,57 @@ fn zero_arg(params: &Params, index: usize) -> u16 {
         .nth(index)
         .and_then(|values| values.first().copied())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod relative_position_tests {
+    use crate::terminal::Terminal;
+
+    /// Writes `bytes` to a 20x10 terminal and returns the cursor as (col, row), 0-based.
+    fn cursor_after(bytes: &[u8]) -> (u16, u16) {
+        let mut terminal = Terminal::new(20, 10);
+        terminal.write(bytes);
+        let cursor = terminal.cursor();
+        (cursor.x, cursor.y)
+    }
+
+    /// HPR (CSI a) and VPR (CSI e), the five esctest cases they own.
+    ///
+    /// Both go through the ABSOLUTE positioning path rather than cursor_right /
+    /// cursor_down, mirroring the oracle (stream_terminal.zig:223). That is the whole
+    /// substance of the commands: routed through the relative movers they would clamp to
+    /// the scroll region instead of the screen, which is a different answer whenever a
+    /// region is set.
+    #[test]
+    fn hpr_moves_right_without_changing_the_row() {
+        // CUP to row 6 col 5 (1-based), then HPR with no parameter: right by one.
+        assert_eq!(cursor_after(b"\x1b[6;5H\x1b[a"), (5, 5));
+        // An explicit count, and the row must not move.
+        assert_eq!(cursor_after(b"\x1b[6;5H\x1b[3a"), (7, 5));
+    }
+
+    #[test]
+    fn vpr_moves_down_without_changing_the_column() {
+        assert_eq!(cursor_after(b"\x1b[6;5H\x1b[e"), (4, 6));
+        assert_eq!(cursor_after(b"\x1b[6;5H\x1b[2e"), (4, 7));
+    }
+
+    #[test]
+    fn the_relative_moves_saturate_at_the_screen_edge() {
+        // Far past the bottom: lands on the last row, column untouched.
+        assert_eq!(cursor_after(b"\x1b[6;5H\x1b[100e"), (4, 9));
+        assert_eq!(cursor_after(b"\x1b[6;5H\x1b[100a"), (19, 5));
+        // And the u16 arithmetic itself must not wrap on a hostile parameter.
+        assert_eq!(cursor_after(b"\x1b[6;5H\x1b[65535e"), (4, 9));
+        assert_eq!(cursor_after(b"\x1b[6;5H\x1b[65535a"), (19, 5));
+    }
+
+    /// The control that pins WHICH path they take. With a scroll region set and the
+    /// cursor inside it, a relative-mover implementation would stop at the region's
+    /// bottom margin; the absolute path walks past it to the screen edge, which is what
+    /// the oracle does and what xterm's VPR tests expect.
+    #[test]
+    fn vpr_is_not_fenced_by_the_scroll_region() {
+        assert_eq!(cursor_after(b"\x1b[3;6r\x1b[4;5H\x1b[100e"), (4, 9));
+    }
 }

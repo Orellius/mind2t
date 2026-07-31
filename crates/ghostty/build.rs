@@ -65,6 +65,9 @@ fn main() {
         .allowlist_type("Ghostty(PointTag|StyleColorTag)")
         .allowlist_type("GhosttyRenderState(Data|Dirty|RowData|Option|RowOption)?")
         .allowlist_type("Ghostty(SgrUnderline)")
+        // GHOSTTY_TERMINAL_DATA_PWD and _TITLE answer through this; no allowlisted
+        // function names it, so bindgen would not pull it in on its own.
+        .allowlist_type("GhosttyString")
         .layout_tests(true)
         .generate()
         .expect("bindgen failed against the vendored libghostty-vt headers");

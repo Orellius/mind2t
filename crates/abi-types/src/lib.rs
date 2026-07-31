@@ -45,6 +45,7 @@ pub const GHOSTTY_TERMINAL_DATA_CURSOR_PENDING_WRAP: GhosttyTerminalData = 5;
 pub const GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN: GhosttyTerminalData = 6;
 pub const GHOSTTY_TERMINAL_DATA_CURSOR_VISIBLE: GhosttyTerminalData = 7;
 pub const GHOSTTY_TERMINAL_DATA_CURSOR_STYLE: GhosttyTerminalData = 10;
+pub const GHOSTTY_TERMINAL_DATA_PWD: GhosttyTerminalData = 13;
 pub const GHOSTTY_TERMINAL_DATA_TOTAL_ROWS: GhosttyTerminalData = 14;
 pub const GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS: GhosttyTerminalData = 15;
 
@@ -190,6 +191,20 @@ pub union GhosttyPointValue {
 pub struct GhosttyPoint {
     pub tag: GhosttyPointTag,
     pub value: GhosttyPointValue,
+}
+
+/// A borrowed, non-owning string: pointer plus byte length, never NUL-terminated by
+/// contract (`types.h`).
+///
+/// The producer documents how long the bytes stay valid. For
+/// `GHOSTTY_TERMINAL_DATA_PWD` that is "until the next `vt_write` or `reset`", which is
+/// exactly the lifetime of this library's cached view -- so the pointer aims into the
+/// cache rather than at a fresh allocation the caller would have to free.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct GhosttyString {
+    pub ptr: *const u8,
+    pub len: usize,
 }
 
 /// A resolved position in the grid.

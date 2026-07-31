@@ -98,10 +98,29 @@ S2 OSC 133 rails — no shell integration, no suggestions, the named
 dependency). Ghost = dim CATextLayer at the caret (RuuahHostFrame grew
 cursor_col/row/visible), shown only at the live bottom with the caret at
 line end; bare right-arrow accepts by pasting the remainder. NOT keyed by
-cwd yet (needs OSC 7 tracking — future slice); multiline commands refused;
+cwd yet; multiline commands refused;
 Swift ghost visuals shipped [untested - needs your eyes] (window imaging
 went dark mid-tap — environment, documented in the PR). Phase two
 (Fig-spec completions) unstarted.
+
+**The cwd dependency is now DISCHARGED on the core side (2026-07-31,
+`osc7-cwd`).** OSC 7 is tracked, corpus-pinned against the real oracle, and
+crosses the C surface as event kind 7 carrying the RAW report. What remains
+for cwd-keyed history is entirely host-side and is its own slice: consume
+kind 7 per session, percent-decode and strip the `file://host` prefix THERE
+(the core must never decode — it stores what the child sent, and so does the
+oracle), key the history store by the decoded path, and decide the fallback
+when a directory has no history yet.
+
+**The shell dependency, verified rather than assumed (2026-07-31): nothing
+will emit OSC 7 into our windows today.** On macOS the emitter is
+`update_terminal_cwd` in `/etc/zshrc_Apple_Terminal` (defined line 16, hooked
+to `precmd` line 43), and `/etc/zshrc:74` sources that file only when
+`$TERM_PROGRAM` is `Apple_Terminal`. We do not set `TERM_PROGRAM` at all, so
+the hook never installs. `ruuah-integration.zsh` therefore has to emit OSC 7
+itself, the same way it already emits the OSC 133 marks — which is good news
+for the consumer slice, because it means the reported format is ours to fix
+(`file://$HOST$PWD`, percent-encoded) rather than something to sniff.
 
 **S5 — Worktree workspaces (the Superset/convoy shape).** "New workspace" =
 create a git worktree of the current repo + spawn a session (optionally

@@ -170,6 +170,55 @@ final class Session {
     /// The last OSC 7 report this session made, raw. History is keyed by it.
     private(set) var pwdRaw: [UInt8] = []
 
+    /// Records a command under the directory this session last reported.
+    ///
+    /// Both history calls live here rather than inline at the view layer because
+    /// `pwdRaw` is the argument that makes them correct, and getting it wrong is
+    /// SILENT: an empty cwd falls back to global history and looks exactly like the
+    /// feature not existing. Keeping them on the session is what lets
+    /// `--smoke-history` drive the same code the window runs, instead of a copy of it.
+    func recordCommand(_ store: OpaquePointer?, command: String) {
+        let bytes = Array(command.utf8)
+        _ = bytes.withUnsafeBufferPointer { pointer in
+            pwdRaw.withUnsafeBufferPointer { cwdPointer in
+                ruuah_history_append(
+                    store, pointer.baseAddress, pointer.count,
+                    cwdPointer.baseAddress, pwdRaw.count)
+            }
+        }
+    }
+
+    /// The whole suggested command for `input` (not the remainder), or nil when the
+    /// store has nothing. A match made in this directory outranks a newer one made
+    /// elsewhere -- the preference is the host's, and `pwdRaw` is how it learns where
+    /// "here" is.
+    func suggestion(_ store: OpaquePointer?, for input: String) -> String? {
+        let inputBytes = Array(input.utf8)
+        var length = 0
+        let sized = inputBytes.withUnsafeBufferPointer { pointer in
+            pwdRaw.withUnsafeBufferPointer { cwdPointer in
+                ruuah_history_suggest(
+                    store, pointer.baseAddress, pointer.count,
+                    cwdPointer.baseAddress, pwdRaw.count, nil, 0, &length)
+            }
+        }
+        guard sized == RUUAH_HOST_SUCCESS, length > 0 else { return nil }
+
+        var buffer = [UInt8](repeating: 0, count: length)
+        let copied = inputBytes.withUnsafeBufferPointer { pointer in
+            pwdRaw.withUnsafeBufferPointer { cwdPointer in
+                buffer.withUnsafeMutableBufferPointer { outPointer in
+                    ruuah_history_suggest(
+                        store, pointer.baseAddress, pointer.count,
+                        cwdPointer.baseAddress, pwdRaw.count,
+                        outPointer.baseAddress, length, &length)
+                }
+            }
+        }
+        guard copied == RUUAH_HOST_SUCCESS else { return nil }
+        return String(decoding: buffer, as: UTF8.self)
+    }
+
     /// Drains every pending host-facing event, oldest first. The C contract consumes an
     /// event only when the buffer held it, so size-then-fetch loses nothing.
     func drainEvents() -> [HostEvent] {

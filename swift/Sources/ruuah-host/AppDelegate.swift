@@ -548,14 +548,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// The event half: OSC 133;C fired, so the last tick's input line IS the command.
     private func recordExecutedCommand(of session: Session) {
         guard session === activeSession, !lastInputLine.isEmpty else { return }
-        let cwd = session.pwdRaw
-        _ = Array(lastInputLine.utf8).withUnsafeBufferPointer { pointer in
-            cwd.withUnsafeBufferPointer { cwdPointer in
-                ruuah_history_append(
-                    historyStore, pointer.baseAddress, pointer.count,
-                    cwdPointer.baseAddress, cwd.count)
-            }
-        }
+        session.recordCommand(historyStore, command: lastInputLine)
         lastInputLine = ""
     }
 
@@ -579,32 +572,11 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
                 ).count
         else { return hideGhost() }
 
-        var length = 0
-        let inputBytes = Array(input.utf8)
-        // The directory the session last reported (OSC 7), raw: a command run HERE
+        // Keyed by the directory the session last reported (OSC 7): a command run HERE
         // outranks a newer one run elsewhere, and the host does the decoding.
-        let cwd = session.pwdRaw
-        let sized = inputBytes.withUnsafeBufferPointer { pointer in
-            cwd.withUnsafeBufferPointer { cwdPointer in
-                ruuah_history_suggest(
-                    historyStore, pointer.baseAddress, pointer.count,
-                    cwdPointer.baseAddress, cwd.count, nil, 0, &length)
-            }
+        guard let suggestion = session.suggestion(historyStore, for: input) else {
+            return hideGhost()
         }
-        guard sized == RUUAH_HOST_SUCCESS, length > 0 else { return hideGhost() }
-        var buffer = [UInt8](repeating: 0, count: length)
-        let copied = inputBytes.withUnsafeBufferPointer { pointer in
-            cwd.withUnsafeBufferPointer { cwdPointer in
-                buffer.withUnsafeMutableBufferPointer { outPointer in
-                    ruuah_history_suggest(
-                        historyStore, pointer.baseAddress, pointer.count,
-                        cwdPointer.baseAddress, cwd.count,
-                        outPointer.baseAddress, length, &length)
-                }
-            }
-        }
-        guard copied == RUUAH_HOST_SUCCESS else { return hideGhost() }
-        let suggestion = String(decoding: buffer, as: UTF8.self)
         let remainder = String(suggestion.dropFirst(input.count))
         guard !remainder.isEmpty else { return hideGhost() }
 

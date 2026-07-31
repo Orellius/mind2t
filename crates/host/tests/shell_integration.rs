@@ -241,3 +241,101 @@ fn without_the_integration_nothing_is_marked() {
     );
     unsafe { ruuah_host_free(host) };
 }
+
+/// OSC 7 reaches the event seam from a REAL zsh running our integration.
+///
+/// The unit tests prove the decoder and the store; the pairing test in `cwd.rs` pins the
+/// exact bytes a zsh produced ONCE, by hand. Neither notices if the integration stops
+/// emitting -- and nothing else in our windows emits OSC 7 at all, because macOS installs
+/// `update_terminal_cwd` only when $TERM_PROGRAM is Apple_Terminal, which we never set.
+/// So this drives the real shell and waits for the real event.
+///
+/// The control is the other half of the pair below: without the integration, no report
+/// ever arrives, which is what proves the report comes from our file and not from zsh.
+#[test]
+fn the_integration_reports_the_working_directory() {
+    use ruuah_vt_host::ruuah_host_next_event;
+
+    let host = spawn_zsh(true);
+    let deadline = Instant::now() + PATIENCE;
+    let mut seen: Option<Vec<u8>> = None;
+    while Instant::now() < deadline && seen.is_none() {
+        let mut polled = empty_frame();
+        assert_eq!(
+            unsafe { ruuah_host_poll(host, &mut polled) },
+            RuuahHostResult::Success
+        );
+        loop {
+            let (mut kind, mut len) = (0u32, 0usize);
+            assert_eq!(
+                unsafe { ruuah_host_next_event(host, &mut kind, ptr::null_mut(), 0, &mut len) },
+                RuuahHostResult::Success
+            );
+            if kind == 0 {
+                break;
+            }
+            let mut buffer = vec![0u8; len.max(1)];
+            let mut fetched = 0u32;
+            assert_eq!(
+                unsafe {
+                    ruuah_host_next_event(host, &mut fetched, buffer.as_mut_ptr(), len, &mut len)
+                },
+                RuuahHostResult::Success
+            );
+            if kind == 7 && len > 0 {
+                seen = Some(buffer[..len].to_vec());
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    unsafe { ruuah_host_free(host) };
+
+    let report = seen.expect("the integration never reported a working directory");
+    let text = String::from_utf8(report).expect("the report is UTF-8");
+    assert!(
+        text.starts_with("file://"),
+        "OSC 7 must report a file:// URI, got {text:?}"
+    );
+    assert!(
+        text.contains('/'),
+        "the URI must carry a path, got {text:?}"
+    );
+    // Percent-encoded, so a directory with a space in it survives the trip. The encoder
+    // is exercised by whatever HOME the harness runs under; this pins the SHAPE.
+    assert!(
+        !text.contains(' '),
+        "a raw space means the path was not encoded: {text:?}"
+    );
+}
+
+/// The control: no integration, no report. Without it the test above would pass on a
+/// terminal where something else -- a system rc, a theme -- happened to emit OSC 7, and
+/// prove nothing about our file.
+#[test]
+fn without_the_integration_no_working_directory_is_reported() {
+    use ruuah_vt_host::ruuah_host_next_event;
+
+    let host = spawn_zsh(false);
+    // Long enough for several prompt cycles; the positive case finds its event well
+    // inside this window.
+    let deadline = Instant::now() + Duration::from_secs(4);
+    while Instant::now() < deadline {
+        let mut polled = empty_frame();
+        assert_eq!(
+            unsafe { ruuah_host_poll(host, &mut polled) },
+            RuuahHostResult::Success
+        );
+        let (mut kind, mut len) = (0u32, 0usize);
+        assert_eq!(
+            unsafe { ruuah_host_next_event(host, &mut kind, ptr::null_mut(), 0, &mut len) },
+            RuuahHostResult::Success
+        );
+        if kind == 7 {
+            unsafe { ruuah_host_free(host) };
+            panic!("an unintegrated zsh reported a working directory");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    unsafe { ruuah_host_free(host) };
+}

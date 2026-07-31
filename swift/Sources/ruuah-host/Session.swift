@@ -161,7 +161,14 @@ final class Session {
         case progress(state: UInt8)
         /// OSC 133;C: execution began -- the typed command is final (S4 records it).
         case commandStart
+        /// OSC 7: the working directory, RAW and undecoded. Kept as bytes because the
+        /// host normalizes it (percent-escapes, the file:// host) and doing it twice in
+        /// two languages is how the two copies drift apart.
+        case pwd([UInt8])
     }
+
+    /// The last OSC 7 report this session made, raw. History is keyed by it.
+    private(set) var pwdRaw: [UInt8] = []
 
     /// Drains every pending host-facing event, oldest first. The C contract consumes an
     /// event only when the buffer held it, so size-then-fetch loses nothing.
@@ -197,6 +204,11 @@ final class Session {
             case 4: drained.append(.title(text))
             case 5: drained.append(.progress(state: payload.first ?? 0))
             case 6: drained.append(.commandStart)
+            case 7:
+                // Held on the session as well as delivered: a suggestion is asked for on
+                // ticks where no event arrived, and it still needs to know where it is.
+                pwdRaw = payload
+                drained.append(.pwd(payload))
             default: break
             }
         }

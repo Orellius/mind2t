@@ -347,6 +347,11 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
                 // Execution began: the input line seen on the LAST tick is the final
                 // typed command. Reading the row now would race the shell's redraw.
                 recordExecutedCommand(of: session)
+            case .pwd:
+                // The session already stored it (`pwdRaw`); nothing to do here. Kept as
+                // an explicit case so a future consumer -- a tab showing the directory --
+                // has an obvious place to hang, rather than a silent default.
+                break
             }
         }
         if chromeChanged {
@@ -543,8 +548,13 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// The event half: OSC 133;C fired, so the last tick's input line IS the command.
     private func recordExecutedCommand(of session: Session) {
         guard session === activeSession, !lastInputLine.isEmpty else { return }
+        let cwd = session.pwdRaw
         _ = Array(lastInputLine.utf8).withUnsafeBufferPointer { pointer in
-            ruuah_history_append(historyStore, pointer.baseAddress, pointer.count)
+            cwd.withUnsafeBufferPointer { cwdPointer in
+                ruuah_history_append(
+                    historyStore, pointer.baseAddress, pointer.count,
+                    cwdPointer.baseAddress, cwd.count)
+            }
         }
         lastInputLine = ""
     }
@@ -571,16 +581,26 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
         var length = 0
         let inputBytes = Array(input.utf8)
+        // The directory the session last reported (OSC 7), raw: a command run HERE
+        // outranks a newer one run elsewhere, and the host does the decoding.
+        let cwd = session.pwdRaw
         let sized = inputBytes.withUnsafeBufferPointer { pointer in
-            ruuah_history_suggest(historyStore, pointer.baseAddress, pointer.count, nil, 0, &length)
+            cwd.withUnsafeBufferPointer { cwdPointer in
+                ruuah_history_suggest(
+                    historyStore, pointer.baseAddress, pointer.count,
+                    cwdPointer.baseAddress, cwd.count, nil, 0, &length)
+            }
         }
         guard sized == RUUAH_HOST_SUCCESS, length > 0 else { return hideGhost() }
         var buffer = [UInt8](repeating: 0, count: length)
         let copied = inputBytes.withUnsafeBufferPointer { pointer in
-            buffer.withUnsafeMutableBufferPointer { outPointer in
-                ruuah_history_suggest(
-                    historyStore, pointer.baseAddress, pointer.count,
-                    outPointer.baseAddress, length, &length)
+            cwd.withUnsafeBufferPointer { cwdPointer in
+                buffer.withUnsafeMutableBufferPointer { outPointer in
+                    ruuah_history_suggest(
+                        historyStore, pointer.baseAddress, pointer.count,
+                        cwdPointer.baseAddress, cwd.count,
+                        outPointer.baseAddress, length, &length)
+                }
             }
         }
         guard copied == RUUAH_HOST_SUCCESS else { return hideGhost() }

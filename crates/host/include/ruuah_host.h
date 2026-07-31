@@ -227,11 +227,15 @@ RuuahHostResult ruuah_workflow_render(const RuuahWorkflows *handle, uint32_t ind
 typedef struct RuuahHistory RuuahHistory;
 RuuahHostResult ruuah_history_load(const char *path, RuuahHistory **out);
 void ruuah_history_free(RuuahHistory *handle);
+/* `cwd` is the RAW OSC 7 report (event kind 7), or NULL. The host normalizes it --
+ * percent-escapes and the file:// host -- so an embedder passes the bytes through
+ * untouched. A command is recorded against the directory it ran in, and a suggestion
+ * PREFERS a match made in the current one, falling back to the newest match anywhere. */
 RuuahHostResult ruuah_history_append(RuuahHistory *handle, const uint8_t *command,
-                                     size_t len);
+                                     size_t len, const uint8_t *cwd, size_t cwd_len);
 RuuahHostResult ruuah_history_suggest(const RuuahHistory *handle, const uint8_t *input,
-                                      size_t len, uint8_t *out, size_t cap,
-                                      size_t *out_len);
+                                      size_t len, const uint8_t *cwd, size_t cwd_len,
+                                      uint8_t *out, size_t cap, size_t *out_len);
 
 /* Scrolls the displayed view through scrollback: positive rows climbs into history,
  * negative returns toward the live bottom, INT32_MIN snaps straight to it. Deltas

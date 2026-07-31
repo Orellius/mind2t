@@ -147,17 +147,40 @@ pub struct Host {
 /// Reading it back works from either end. Linux accepts both, so this is the portable order
 /// rather than a workaround. Opening the slave transiently is safe -- the child holds its own
 /// descriptor, so this one is never the last.
-/// Opens, grants and unlocks a fresh pty master, CLOEXEC set. One unit so the transient
-/// -retry in `spawn` re-runs the WHOLE acquisition -- a grantpt that failed halfway
-/// leaves a master worth abandoning, not resuming. The CLOEXEC matters because without
-/// it the child inherits the master and the pty never reports EOF: one end stays open
-/// in a process that is not reading it.
-fn open_master() -> Result<OwnedFd, Errno> {
+/// Opens, grants and unlocks a fresh pty master, CLOEXEC set, and resolves its slave
+/// path. One unit so the transient-retry in `spawn` re-runs the WHOLE acquisition -- a
+/// grantpt that failed halfway leaves a master worth abandoning, not resuming. The
+/// CLOEXEC matters because without it the child inherits the master and the pty never
+/// reports EOF: one end stays open in a process that is not reading it.
+///
+/// `ptsname` belongs INSIDE this unit, and used not to be. It is the other call that
+/// can answer ENXIO under churn, and with it outside the retry the loop guarded four
+/// of the five steps -- which is why the flake survived the retry that was meant to
+/// end it (measured 2026-07-31: still roughly one full-suite run in three).
+fn open_master() -> Result<(OwnedFd, CString), Errno> {
     let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY)?;
     grantpt(&master)?;
     unlockpt(&master)?;
     fcntl_setfd(&master, FdFlags::CLOEXEC)?;
-    Ok(master)
+    let pts = ptsname(&master, Vec::new())?;
+    Ok((master, pts))
+}
+
+/// Whether a pty acquisition failure is worth retrying rather than reporting.
+///
+/// Compares the ABSOLUTE raw value, which looks paranoid and is not. Measured
+/// 2026-07-31 by instrumenting the retry loop: the errno arriving from this path on
+/// Darwin is raw **-6**, while `Errno::NXIO` is raw **6**, so the original
+/// `matches!(errno, Errno::NXIO | Errno::AGAIN)` matched nothing and the loop reported
+/// `attempt=0` at every single give-up. The retry added on 2026-07-30 had therefore
+/// never run, and the "0 failures in 5 runs" that accepted it was luck at a rate that
+/// fails about one run in four.
+///
+/// The lesson is the reusable part: a guard is not proven by the absence of the thing
+/// it suppresses. This one needed to be seen FIRING, and was not.
+fn is_transient(errno: Errno) -> bool {
+    let raw = errno.raw_os_error().abs();
+    raw == Errno::NXIO.raw_os_error() || raw == Errno::AGAIN.raw_os_error()
 }
 
 fn set_winsize(pts: &CStr, size: Geometry) -> Result<(), Errno> {
@@ -185,14 +208,12 @@ impl Host {
         // of 11470ca's fork EAGAIN, which the C layer already retries). Acquisition
         // happens before the fork and touches nothing else, so retrying HERE is safe
         // for every caller; genuine exhaustion still fails, 75ms later.
-        let master = {
+        let (master, pts) = {
             let mut attempt = 0;
             loop {
                 match open_master() {
-                    Ok(master) => break master,
-                    Err(errno)
-                        if attempt < 3 && matches!(errno, Errno::NXIO | Errno::AGAIN) =>
-                    {
+                    Ok(acquired) => break acquired,
+                    Err(errno) if attempt < 3 && is_transient(errno) => {
                         attempt += 1;
                         thread::sleep(std::time::Duration::from_millis(25));
                     }
@@ -200,8 +221,6 @@ impl Host {
                 }
             }
         };
-
-        let pts = ptsname(&master, Vec::new()).map_err(SpawnError::Pty)?;
 
         let slave = rustix::fs::open(pts.as_c_str(), OFlags::RDWR | OFlags::NOCTTY, Mode::empty())
             .map_err(SpawnError::Slave)?;
@@ -554,5 +573,33 @@ fn pump(
             Err(Errno::INTR) | Err(Errno::AGAIN) => continue,
             Err(_) => break,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The predicate that decides whether a pty acquisition is retried.
+    ///
+    /// This exists because the retry it guards was dead for a day: the errno this path
+    /// produces on Darwin arrives NEGATED, so a `matches!` against `Errno::NXIO` was
+    /// false every time and the loop gave up at `attempt=0`. Asserting the negative
+    /// form directly is what makes the guard proven rather than assumed -- the raw
+    /// value below is the one an instrumented run actually printed on 2026-07-31.
+    #[test]
+    fn the_retry_predicate_accepts_the_negated_errno_darwin_reports() {
+        assert!(
+            is_transient(Errno::from_raw_os_error(-6)),
+            "raw -6 is the ENXIO this pty path really reports; refusing it is what made \
+             the retry dead code"
+        );
+        // Both signs, so a platform reporting the ordinary positive form still retries.
+        assert!(is_transient(Errno::NXIO));
+        assert!(is_transient(Errno::AGAIN));
+        assert!(is_transient(Errno::from_raw_os_error(-35)));
+        // And it must still refuse what is not transient, or it would retry real errors.
+        assert!(!is_transient(Errno::NOTTY));
+        assert!(!is_transient(Errno::PERM));
     }
 }

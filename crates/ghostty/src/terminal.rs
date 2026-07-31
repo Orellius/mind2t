@@ -140,7 +140,29 @@ impl Terminal {
             grid,
             history,
             damage: None,
+            pwd: self.pwd()?,
         })
+    }
+
+    /// The working directory the child last reported, as raw bytes.
+    ///
+    /// The library stores whatever the shell emitted without parsing it
+    /// (`stream_terminal.zig`, `reportPwd`), so this is the URI for OSC 7 and typically a
+    /// bare path for the other sources. Empty means "never set, or cleared" -- the ABI has
+    /// no third state, because `setPwd("")` clears the buffer outright.
+    ///
+    /// The pointer is borrowed and documented as valid only until the next write or reset,
+    /// so it is copied here rather than held.
+    ///
+    /// Bytes, not a `String`: a path is not required to be UTF-8, and decoding lossily on
+    /// both sides of a differential would make two different payloads compare equal.
+    pub fn pwd(&self) -> Result<Vec<u8>, Error> {
+        let raw: sys::GhosttyString =
+            unsafe { self.get(sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_PWD, "PWD") }?;
+        if raw.ptr.is_null() || raw.len == 0 {
+            return Ok(Vec::new());
+        }
+        Ok(unsafe { std::slice::from_raw_parts(raw.ptr, raw.len) }.to_vec())
     }
 
     /// Reads a DEC private mode's current state.

@@ -412,6 +412,7 @@ impl State {
             grid: screen.grid.to_rows(),
             history: screen.history.to_rows(),
             damage: None,
+            pwd: Vec::new(),
         }
     }
 

@@ -235,6 +235,17 @@ pub unsafe extern "C" fn ghostty_terminal_get(
                 *out.cast::<usize>() = view.history.len() + usize::from(view.rows)
             }
             GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS => *out.cast::<usize>() = view.history.len(),
+            // Borrowed, exactly as the header specifies: the bytes live in the cached view
+            // and the contract's "valid until the next vt_write or reset" is that cache's
+            // own lifetime, since a write invalidates it. Empty answers with a NULL pointer
+            // and zero length -- the oracle's own "no pwd has been set" state, and the
+            // reason `pwd` is never `Option` on either side of the harness.
+            GHOSTTY_TERMINAL_DATA_PWD => {
+                *out.cast::<GhosttyString>() = GhosttyString {
+                    ptr: if view.pwd.is_empty() { std::ptr::null() } else { view.pwd.as_ptr() },
+                    len: view.pwd.len(),
+                }
+            }
             _ => return GHOSTTY_INVALID_VALUE,
         }
     }

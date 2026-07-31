@@ -7,7 +7,7 @@
 //! Test strategy: unit tests below, covering agreement, each field class, and the
 //!   short-circuit when dimensions disagree.
 
-use crate::grid::{Cell, Row, Snapshot, Style, describe_style};
+use crate::grid::{Cell, Row, Snapshot, Style, describe_bytes, describe_style};
 
 /// One named disagreement between two snapshots.
 ///
@@ -58,6 +58,14 @@ pub fn diff(oracle: &Snapshot, candidate: &Snapshot) -> Vec<Difference> {
             "screen",
             format!("{:?}", oracle.screen),
             format!("{:?}", candidate.screen),
+        ));
+    }
+
+    if oracle.pwd != candidate.pwd {
+        out.push(Difference::new(
+            "pwd",
+            describe_bytes(&oracle.pwd),
+            describe_bytes(&candidate.pwd),
         ));
     }
 
@@ -361,6 +369,7 @@ mod tests {
             modes: crate::grid::Modes::default(),
             history: Vec::new(),
             damage: None,
+            pwd: Vec::new(),
         }
     }
 
@@ -406,6 +415,39 @@ mod tests {
         let found = diff(&a, &b);
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].path, "modes.bracketed_paste");
+    }
+
+    /// Same law again, and the reason this file changed at all for OSC 7: the pwd leaves
+    /// no mark on the grid, so before this comparison existed a core that ignored OSC 7
+    /// entirely scored a perfect MATCH on every case that reports one.
+    #[test]
+    fn a_pwd_disagreement_is_reported() {
+        let a = snapshot(4, 2);
+        let mut b = a.clone();
+        b.pwd = b"file:///tmp".to_vec();
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "pwd");
+        assert_eq!(found[0].oracle, "<empty>");
+        assert_eq!(found[0].candidate, "\"file:///tmp\"");
+    }
+
+    /// The payload is compared as BYTES. Two values that differ only outside UTF-8 -- or
+    /// only in percent-encoding, which a helpful implementation might "normalise" away --
+    /// must still be reported, so the comparison cannot be satisfied by decoding both
+    /// sides into the same string.
+    #[test]
+    fn a_pwd_that_differs_only_in_non_utf8_bytes_is_reported() {
+        let mut a = snapshot(4, 2);
+        let mut b = a.clone();
+        a.pwd = b"file:///tmp/\xff".to_vec();
+        b.pwd = b"file:///tmp/\xfe".to_vec();
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "pwd");
+        assert_ne!(found[0].oracle, found[0].candidate);
     }
 
     /// Same law as bracketed paste: no grid effect, so only this control guards the

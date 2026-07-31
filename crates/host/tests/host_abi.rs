@@ -1650,3 +1650,74 @@ fn scrolling_through_the_c_surface_shows_scrollback_pixels() {
 
     unsafe { ruuah_host_free(host) };
 }
+
+/// Unicode placeholders reach the window, through the C surface.
+///
+/// The render-layer tests prove the crop and the run rules; NONE of them prove the host
+/// actually calls the placeholder pass. That wiring is its own seam and its failure mode
+/// is silent -- every pixel test stays green while the app shows nothing, which is the
+/// SCAR-014 shape one layer down. So this drives a real child through a real pty and looks
+/// for the image's colour in the polled pixels.
+///
+/// The child registers a virtual placement (U=1) for a solid RED 1x1 image spanning 2x2
+/// cells, then prints two placeholder cells. Red is not in the default palette's
+/// background or foreground, so finding a strongly red pixel is unambiguous.
+#[test]
+fn a_unicode_placeholder_reaches_the_polled_pixels() {
+    // \x1b_G a=T,f=32,s=1,v=1,i=42,c=2,r=2,U=1 ; <one red RGBA pixel> \x1b\
+    // then U+10EEEE with row/col diacritics U+0305 U+0305, and a bare one to widen the run.
+    // OCTAL escapes, not \u: the spawned shell is macOS /bin/sh (bash 3.2), whose printf
+    // has no \u at all, so a \u form emits the literal text and the terminal never sees a
+    // placeholder. Measured, after this test failed for exactly that reason.
+    // U+10EEEE = f4 8e bb ae, U+0305 = cc 85 -- MEASURED with `printf | xxd`, not computed:
+    // a mental conversion put 8d there and cost a diagnostic round, because the wrong
+    // byte decodes to a real codepoint (U+10DEEE) that simply is not the placeholder.
+    let command = CString::new(concat!(
+        "printf '\\033_Ga=T,f=32,s=1,v=1,i=42,c=2,r=2,U=1;/wAA/w==\\033\\\\';",
+        "printf '\\033[38;5;42m\\364\\216\\273\\256\\314\\205\\314\\205\\364\\216\\273\\256';",
+        "sleep 8"
+    ))
+    .expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+        config: ptr::null(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+
+    let deadline = Instant::now() + PATIENCE;
+    let mut reddest = 0i32;
+    while Instant::now() < deadline {
+        let mut polled = empty_frame();
+        assert_eq!(
+            unsafe { ruuah_host_poll(host, &mut polled) },
+            RuuahHostResult::Success
+        );
+        if !polled.pixels.is_null() {
+            let len = polled.width as usize * polled.height as usize * 4;
+            let pixels = unsafe { std::slice::from_raw_parts(polled.pixels, len) };
+            for chunk in pixels.chunks_exact(4) {
+                // "Red enough that nothing in the palette could be mistaken for it."
+                let score = i32::from(chunk[0]) - i32::from(chunk[1]) - i32::from(chunk[2]);
+                reddest = reddest.max(score);
+            }
+            if reddest > 150 {
+                unsafe { ruuah_host_free(host) };
+                return;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    die(
+        host,
+        format!("no placeholder pixels reached the window (reddest score {reddest})"),
+    );
+}

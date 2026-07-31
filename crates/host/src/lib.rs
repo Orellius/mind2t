@@ -261,6 +261,23 @@ fn poll_impl(host: &mut RuuahHost, mode: DrawMode) -> RuuahHostFrame {
                 .draw_images(&placements, move |_| cursor.next().flatten());
             }
         }
+        // Unicode placeholders are re-resolved every polled frame rather than tracked:
+        // they live in the grid, so any row repaint erases the picture on that row and it
+        // has to go back on top. The scan costs a pass over the cells only when the child
+        // has actually printed placeholder cells; `virtual_runs` bails on the first cell
+        // of every ordinary row.
+        if !host.frame.virtuals.is_empty() {
+            let store = host.images.lock().expect("image store");
+            let images: std::collections::HashMap<u32, (u32, u32, std::sync::Arc<Vec<u8>>)> =
+                host.frame
+                    .virtuals
+                    .iter()
+                    .filter_map(|v| store.get(&v.image).cloned().map(|found| (v.image, found)))
+                    .collect();
+            drop(store);
+            host.renderer
+                .draw_placeholders(&host.frame, |id| images.get(&id).cloned());
+        }
         host.drawn_generation = host.frame.generation;
         host.pixels = host.renderer.pixels();
         // Rebuilt with the pixels so the two borrowed views always describe one frame.

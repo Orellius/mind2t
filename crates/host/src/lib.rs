@@ -211,7 +211,27 @@ fn poll_impl(host: &mut RuuahHost, mode: DrawMode) -> RuuahHostFrame {
 
     let mut drew = false;
     if host.frame.is_valid() && host.frame.generation > host.drawn_generation {
-        match mode {
+        // A placement UNDER the text has to be blitted between the backgrounds and the
+        // glyphs, which the damage-driven row path cannot express -- so such a frame takes
+        // the layered path and repaints wholly. Checked before the ordinary draw so the
+        // grid is not painted twice. Everything else, including every image drawn ON TOP,
+        // keeps the incremental path it has always had.
+        let layered = host.frame.placements.iter().any(|p| p.z < 0)
+            && !matches!(mode, DrawMode::SkipRow(_));
+        if layered {
+            let resolved: Vec<_> = {
+                let store = host.images.lock().expect("image store");
+                host.frame
+                    .placements
+                    .iter()
+                    .map(|placement| store.get(&placement.image).cloned())
+                    .collect()
+            };
+            let placements = host.frame.placements.clone();
+            host.renderer
+                .draw_layered(&host.frame, &placements, &resolved);
+        } else {
+            match mode {
             // The very first paint covers every row: rows the child never touched carry no
             // damage stamp, and only `draw_all` gives them their background.
             DrawMode::Full if host.drawn_generation == 0 => {
@@ -239,6 +259,7 @@ fn poll_impl(host: &mut RuuahHost, mode: DrawMode) -> RuuahHostFrame {
             let mut cursor = resolved.into_iter();
             host.renderer
                 .draw_images(&placements, move |_| cursor.next().flatten());
+            }
         }
         host.drawn_generation = host.frame.generation;
         host.pixels = host.renderer.pixels();

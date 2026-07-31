@@ -12,7 +12,9 @@
 //!     answers `ENOTSUPPORTED`, which is what tells icat to fall back.
 //!   - formats: f=32 (RGBA), f=24 (RGB), f=100 (PNG via the `png` crate -- icat's
 //!     default wire format; GATE 01 weighed, decode is pure and deterministic).
-//!   - no unicode placeholders, no z-index, no animation, no source-rect cropping.
+//!   - no unicode placeholders, no animation, no source-rect cropping.
+//!   - z-index IS supported (`Placement::z`, three layers); it is the one signed key,
+//!     and the draw ORDER it implies is applied by the publisher, not here.
 //!   - a placement WITHOUT explicit `c,r` spans the image's native pixels; the renderer
 //!     computes the cell box (the core is deliberately pixel-cell-ignorant) and the
 //!     cursor does not move. With `c,r` given, the cursor steps past the placement the
@@ -52,6 +54,13 @@ pub struct Placement {
     /// Cell span; 0 means "native pixel size", resolved by the renderer.
     pub cols: u16,
     pub rows: u16,
+    /// Kitty `z=`: which layer this placement draws in, and its order within it.
+    ///
+    /// Three bands, read from the oracle's renderer (`../ruuah/src/renderer/image.zig`,
+    /// `bg_limit = i32::MIN / 2`): below `i32::MIN / 2` draws under the cell background,
+    /// `i32::MIN / 2 .. 0` draws under the text but over the background, and `>= 0` draws
+    /// over everything. Ties break by image id, then by the order they were placed.
+    pub z: i32,
 }
 
 const BUDGET_BYTES: usize = 128 * 1024 * 1024;
@@ -70,6 +79,10 @@ pub(crate) struct PendingTransmit {
     display: bool,
     cols: u16,
     rows: u16,
+    /// Kept from the FIRST chunk with the rest of the metadata: kitty sends the control
+    /// keys once and later chunks carry only `m=` and payload, so a z read off the final
+    /// chunk would always be 0.
+    z: i32,
     data: Vec<u8>,
 }
 
@@ -95,6 +108,26 @@ struct Keys {
     delete: u8,
     cols: u16,
     rows: u16,
+    z: i32,
+}
+
+/// Parses a SIGNED protocol value, saturating rather than wrapping.
+///
+/// Only `z` needs this. Out-of-range saturates because the layer a placement lands in is
+/// decided by comparisons against 0 and `i32::MIN / 2`, and a wrapping parse would move a
+/// hugely-negative z to the top of the stack -- the exact opposite of what it asked for.
+fn signed(bytes: &[u8]) -> i32 {
+    std::str::from_utf8(bytes)
+        .ok()
+        .map(str::trim)
+        .and_then(|text| match text.parse::<i64>() {
+            Ok(value) => Some(value.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32),
+            // A value too large even for i64 still has a readable sign.
+            Err(_) if text.starts_with('-') => Some(i32::MIN),
+            Err(_) if text.chars().next().is_some_and(|c| c.is_ascii_digit()) => Some(i32::MAX),
+            Err(_) => None,
+        })
+        .unwrap_or(0)
 }
 
 fn parse_keys(control: &[u8]) -> Keys {
@@ -127,6 +160,10 @@ fn parse_keys(control: &[u8]) -> Keys {
             b"d" => keys.delete = value.first().copied().unwrap_or(b'a'),
             b"c" => keys.cols = number(value) as u16,
             b"r" => keys.rows = number(value) as u16,
+            // z is the one SIGNED key in the protocol, and `number` cannot express it:
+            // an unsigned parse turns z=-1 into 0, which is the difference between
+            // "behind the text" and "in front of it".
+            b"z" => keys.z = signed(value),
             _ => {}
         }
     }
@@ -173,6 +210,7 @@ impl State {
                 display,
                 cols: keys.cols,
                 rows: keys.rows,
+                z: keys.z,
                 data: Vec::new(),
             },
         };
@@ -212,7 +250,7 @@ impl State {
         self.graphics_reply(keys, "OK");
 
         if pending.display {
-            self.place_at_cursor(pending.id, pending.cols, pending.rows, &image);
+            self.place_at_cursor(pending.id, pending.cols, pending.rows, pending.z, &image);
         }
     }
 
@@ -220,11 +258,11 @@ impl State {
         let Some(image) = self.graphics.images.get(&keys.id).cloned() else {
             return self.graphics_reply(keys, "ENOENT:image");
         };
-        self.place_at_cursor(keys.id, keys.cols, keys.rows, &image);
+        self.place_at_cursor(keys.id, keys.cols, keys.rows, keys.z, &image);
         self.graphics_reply(keys, "OK");
     }
 
-    fn place_at_cursor(&mut self, id: u32, cols: u16, rows: u16, _image: &Image) {
+    fn place_at_cursor(&mut self, id: u32, cols: u16, rows: u16, z: i32, _image: &Image) {
         let (col, row) = (self.screen().x, self.screen().y);
         self.screen_mut().placements.push(Placement {
             image: id,
@@ -232,6 +270,7 @@ impl State {
             row: row as i16,
             cols,
             rows,
+            z,
         });
         // Every row the placement MIGHT cover is stale. With an explicit span that is
         // exact; native-size spans are resolved renderer-side, so the whole frame is
@@ -257,7 +296,8 @@ impl State {
             .get(&id)
             .cloned()
             .expect("placed immediately after insert");
-        self.place_at_cursor(id, 0, 0, &image);
+        // Sixel has no z surface of its own; it lands in the default layer, over the text.
+        self.place_at_cursor(id, 0, 0, 0, &image);
     }
 
     fn graphics_delete(&mut self, keys: Keys) {
@@ -446,6 +486,7 @@ mod tests {
                 row: 1,
                 cols: 4,
                 rows: 2
+                ,z: 0
             }]
         );
         assert_eq!(terminal.cursor().x, 6, "cursor stepped past the placement");

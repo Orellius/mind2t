@@ -1406,6 +1406,10 @@ pub unsafe extern "C" fn ruuah_host_next_event(
         Event::Title(title) => (4, title.clone().into_bytes()),
         Event::Progress { state, value } => (5, vec![*state, *value]),
         Event::CommandStart => (6, Vec::new()),
+        // OSC 7. The payload is the raw report, usually a file:// URI: the host decodes
+        // it, because percent-decoding here would diverge from the core's stored value
+        // and from the oracle, and the seam's job is delivery rather than interpretation.
+        Event::Pwd(pwd) => (7, pwd.clone()),
     };
     unsafe {
         kind.write(code);

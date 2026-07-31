@@ -27,6 +27,18 @@ pub struct Config {
     pub auto_direction: Option<bool>,
     /// Command line for new sessions, run via `/bin/sh -c`. `None` means the login $SHELL.
     pub shell: Option<String>,
+    /// Whether the core answers screen-INSPECTION queries: DECRQCRA checksums and the
+    /// WINOPS 18 size report.
+    ///
+    /// Defaults to FALSE and the default is the point. These let a program read back
+    /// what is on screen, which is the same posture question as OSC 52 clipboard
+    /// reads: a remote process on the other end of an ssh session can ask what your
+    /// terminal is displaying. The esctest harness grants it because measuring
+    /// conformance requires it; an interactive window should not, unless its operator
+    /// decides otherwise -- which is what this key is for.
+    ///
+    /// An embedder grant, so RIS cannot revoke it and a program cannot turn it on.
+    pub reports: bool,
     /// Lead font: an absolute path to a font file, or a name matched against installed
     /// font file stems (spaces/dashes ignored -- no CoreText name lookup, documented
     /// boundary). `None` keeps the built-in Menlo-led stack. A name that resolves to
@@ -48,6 +60,7 @@ impl Default for Config {
         Config {
             font_size: 0.0,
             auto_direction: None,
+            reports: false,
             shell: None,
             font_family: None,
             font_ligatures: true,
@@ -67,6 +80,7 @@ struct RawConfig {
     #[serde(rename = "auto-direction")]
     auto_direction: Option<bool>,
     shell: Option<String>,
+    reports: Option<bool>,
     #[serde(rename = "font-family")]
     font_family: Option<String>,
     #[serde(rename = "font-ligatures")]
@@ -125,6 +139,7 @@ impl Config {
         }
         config.auto_direction = raw.auto_direction;
         config.shell = raw.shell.filter(|shell| !shell.is_empty());
+        config.reports = raw.reports.unwrap_or(false);
         if let Some(family) = raw.font_family.filter(|family| !family.is_empty()) {
             if ruuah_vt_render::FontStack::family_resolves(&family) {
                 config.font_family = Some(family);
@@ -227,6 +242,30 @@ mod tests {
         assert_eq!(config.font_size, 0.0);
         assert!(config.error.is_none());
         assert_eq!(config.palette.default_background, Palette::default().default_background);
+    }
+
+    /// Both directions, because the DEFAULT is the security posture and a key that
+    /// silently defaulted the other way would be indistinguishable from working.
+    #[test]
+    fn reports_are_off_unless_the_config_asks_for_them() {
+        let absent = tempdir();
+        assert!(!Config::load(Some(&absent)).reports, "no config file must not grant");
+
+        let quiet = tempdir();
+        write(&quiet, "config.toml", "font-size = 14\n");
+        let quiet = Config::load(Some(&quiet));
+        assert_eq!(quiet.error, None);
+        assert!(!quiet.reports, "a config that never mentions reports must not grant");
+
+        let off = tempdir();
+        write(&off, "config.toml", "reports = false\n");
+        assert!(!Config::load(Some(&off)).reports);
+
+        let on = tempdir();
+        write(&on, "config.toml", "reports = true\n");
+        let on = Config::load(Some(&on));
+        assert_eq!(on.error, None);
+        assert!(on.reports, "an explicit grant must be honoured, or the key is decoration");
     }
 
     #[test]

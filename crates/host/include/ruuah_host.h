@@ -323,6 +323,13 @@ bool ruuah_config_auto_direction(const RuuahConfig *config, bool fallback);
  * ruuah_config_free on the same handle. */
 const char *ruuah_config_shell(const RuuahConfig *config);
 
+/* Whether the operator granted screen-inspection replies -- DECRQCRA checksums and
+ * the WINOPS 18 size report (config `reports = true`). FALSE by default and for a
+ * NULL handle: these let a program read back what is on screen, the same posture
+ * question as OSC 52 clipboard reads. The grant itself travels through
+ * RuuahHostOptions.config at spawn; this is for showing the posture. */
+bool ruuah_config_reports(const RuuahConfig *config);
+
 /* The configured lead font family (config font-family), or NULL when unset.
  * Borrowed: valid until ruuah_config_free. */
 const char *ruuah_config_font_family(const RuuahConfig *config);

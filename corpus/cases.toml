@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 155
+declared_cases = 163
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -1318,3 +1318,57 @@ expect = "diff"
 diff_paths = ["modes.keypad_keys"]
 bytes = "\u001B=\u001B[!p"
 note = "The DECSTR divergence seen through the keypad: the oracle has no ! dispatch and keeps mode 66 set; this core soft-resets it (VT510 DECSTR table lists the keypad returning to numeric). Same deliberate divergence family as decstr-soft-reset-diverges and the DECCKM pin."
+
+[[case]]
+name = "osc7-reports-the-pwd"
+expect = "diff"
+diff_paths = ["pwd"]
+bytes = "\u001B]7;file:///Users/orel/src\u001B\\"
+note = "OSC 7 working directory. Observable via GHOSTTY_TERMINAL_DATA_PWD, so unlike OSC 8 or OSC 52 this has a real oracle. Filed diff BEFORE the core tracked anything; the promotion to match is the evidence."
+
+[[case]]
+name = "osc7-bel-terminated"
+expect = "diff"
+diff_paths = ["pwd"]
+bytes = "\u001B]7;file:///tmp\u0007"
+note = "BEL is what zsh's precmd actually emits; a parser accepting only ST looks green in every test and dies on every real prompt."
+
+[[case]]
+name = "osc7-payload-is-stored-raw"
+expect = "diff"
+diff_paths = ["pwd"]
+bytes = "\u001B]7;file:///Users/orel/My%20Code\u001B\\"
+note = "Percent-encoding is NOT decoded and the value is never validated (stream_terminal.zig reportPwd stores it raw). A helpful decoder diverges on every path containing a space."
+
+[[case]]
+name = "osc7-not-a-uri-is-stored-anyway"
+expect = "diff"
+diff_paths = ["pwd"]
+bytes = "\u001B]7;/plain/path\u001B\\"
+note = "The oracle validates nothing, so a bare path is stored as-is. This is the case that kills a 'reject anything without file://' implementation."
+
+[[case]]
+name = "osc7-second-report-replaces-the-first"
+expect = "diff"
+diff_paths = ["pwd"]
+bytes = "\u001B]7;file:///one\u001B\\\u001B]7;file:///two\u001B\\"
+note = "Last writer wins and there is no history. Kills an implementation that appends or keeps the first."
+
+[[case]]
+name = "osc7-survives-the-alternate-screen"
+expect = "diff"
+diff_paths = ["pwd"]
+bytes = "\u001B]7;file:///primary\u001B\\\u001B[?1049h"
+note = "The pwd lives on Terminal, not Screen, so a buffer switch cannot disturb it. Pins terminal-global storage, the same shape as modes 2004 and 2026."
+
+[[case]]
+name = "osc7-empty-clears"
+expect = "match"
+bytes = "\u001B]7;file:///tmp\u001B\\\u001B]7;\u001B\\"
+note = "An empty payload clears the pwd (Terminal.zig setPwd). Both sides read empty today so this matches vacuously; it becomes a real assertion the moment tracking lands, which is why it is pinned now rather than after."
+
+[[case]]
+name = "osc7-ris-clears"
+expect = "match"
+bytes = "\u001B]7;file:///tmp\u001B\\\u001Bc"
+note = "RIS clears the pwd (fullReset). Same shape as the empty case: vacuous today, load-bearing after the core tracks it."

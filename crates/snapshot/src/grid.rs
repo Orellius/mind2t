@@ -248,6 +248,14 @@ pub struct Snapshot {
     /// `None` on both sides for every case that does not, which is how the pre-slice-5
     /// corpus stays untouched.
     pub damage: Option<Damage>,
+    /// The working directory the child last reported (OSC 7), stored as the raw bytes it
+    /// emitted -- typically a `file://` URI, never parsed or decoded.
+    ///
+    /// Empty is the only "unset": the oracle's `setPwd("")` clears the buffer, so a cleared
+    /// pwd and one never set are the same observable state. Bytes rather than a `String`
+    /// because a path need not be UTF-8 and lossy decoding would make two different
+    /// payloads compare equal.
+    pub pwd: Vec<u8>,
 }
 
 impl Style {
@@ -477,6 +485,37 @@ pub fn describe_style(style: &Style) -> String {
     } else {
         parts.join(" ")
     }
+}
+
+/// Renders a raw byte payload for a difference report: readable when it is text, and
+/// unambiguous when it is not.
+///
+/// A pwd is usually a URI and usually short, but it is never guaranteed to be either, so a
+/// long value is elided in the middle -- the head and tail are what identify it, and a
+/// 4096-byte difference message helps nobody.
+pub fn describe_bytes(bytes: &[u8]) -> String {
+    const HEAD: usize = 48;
+    const TAIL: usize = 16;
+
+    if bytes.is_empty() {
+        return "<empty>".to_string();
+    }
+    let render = |slice: &[u8]| {
+        slice
+            .iter()
+            .flat_map(|&b| std::ascii::escape_default(b))
+            .map(char::from)
+            .collect::<String>()
+    };
+    if bytes.len() <= HEAD + TAIL {
+        return format!("\"{}\"", render(bytes));
+    }
+    format!(
+        "\"{}\"..{} more..\"{}\"",
+        render(&bytes[..HEAD]),
+        bytes.len() - HEAD - TAIL,
+        render(&bytes[bytes.len() - TAIL..]),
+    )
 }
 
 pub fn describe_color(color: Color) -> String {

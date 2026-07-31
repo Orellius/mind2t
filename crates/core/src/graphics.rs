@@ -12,7 +12,12 @@
 //!     answers `ENOTSUPPORTED`, which is what tells icat to fall back.
 //!   - formats: f=32 (RGBA), f=24 (RGB), f=100 (PNG via the `png` crate -- icat's
 //!     default wire format; GATE 01 weighed, decode is pure and deterministic).
-//!   - no unicode placeholders, no animation, no source-rect cropping.
+//!   - no animation, no explicit source-rect cropping (`x,y,w,h`); a unicode placeholder
+//!     crops by CELL, which is a different mechanism.
+//!   - unicode placeholders ARE supported: `U=1` registers a virtual placement here and
+//!     `frame::placeholder` decodes the cells that address it. Placement ids (the
+//!     underline-colour half) are decoded for run-splitting but not otherwise tracked:
+//!     one virtual placement per image, last writer wins.
 //!   - z-index IS supported (`Placement::z`, three layers); it is the one signed key,
 //!     and the draw ORDER it implies is applied by the publisher, not here.
 //!   - a placement WITHOUT explicit `c,r` spans the image's native pixels; the renderer
@@ -83,6 +88,8 @@ pub(crate) struct PendingTransmit {
     /// keys once and later chunks carry only `m=` and payload, so a z read off the final
     /// chunk would always be 0.
     z: i32,
+    /// Same reason as `z`: U=1 arrives with the first chunk only.
+    virtual_placement: bool,
     data: Vec<u8>,
 }
 
@@ -109,6 +116,9 @@ struct Keys {
     cols: u16,
     rows: u16,
     z: i32,
+    /// kitty `U=1`: a VIRTUAL placement. It draws nothing where the cursor is; the
+    /// placeholder cells printed into the grid are what put it on screen.
+    virtual_placement: bool,
 }
 
 /// Parses a SIGNED protocol value, saturating rather than wrapping.
@@ -164,6 +174,7 @@ fn parse_keys(control: &[u8]) -> Keys {
             // an unsigned parse turns z=-1 into 0, which is the difference between
             // "behind the text" and "in front of it".
             b"z" => keys.z = signed(value),
+            b"U" => keys.virtual_placement = number(value) == 1,
             _ => {}
         }
     }
@@ -211,6 +222,7 @@ impl State {
                 cols: keys.cols,
                 rows: keys.rows,
                 z: keys.z,
+                virtual_placement: keys.virtual_placement,
                 data: Vec::new(),
             },
         };
@@ -250,7 +262,11 @@ impl State {
         self.graphics_reply(keys, "OK");
 
         if pending.display {
-            self.place_at_cursor(pending.id, pending.cols, pending.rows, pending.z, &image);
+            if pending.virtual_placement {
+                self.place_virtual(pending.id, pending.cols, pending.rows);
+            } else {
+                self.place_at_cursor(pending.id, pending.cols, pending.rows, pending.z, &image);
+            }
         }
     }
 
@@ -258,8 +274,29 @@ impl State {
         let Some(image) = self.graphics.images.get(&keys.id).cloned() else {
             return self.graphics_reply(keys, "ENOENT:image");
         };
-        self.place_at_cursor(keys.id, keys.cols, keys.rows, keys.z, &image);
+        if keys.virtual_placement {
+            self.place_virtual(keys.id, keys.cols, keys.rows);
+        } else {
+            self.place_at_cursor(keys.id, keys.cols, keys.rows, keys.z, &image);
+        }
         self.graphics_reply(keys, "OK");
+    }
+
+    /// Registers a virtual (U=1) placement: the image and the cell grid it is divided
+    /// into.
+    ///
+    /// Nothing is drawn and the cursor does not move. The image appears only where
+    /// placeholder cells (U+10EEEE) are printed, which is what lets it scroll, reflow and
+    /// get erased exactly like the text around it -- the reason the feature exists.
+    ///
+    /// Keyed by image, last writer wins: kitty allows one virtual placement per image per
+    /// placement id, and this core does not track placement ids (named in the module card).
+    fn place_virtual(&mut self, id: u32, cols: u16, rows: u16) {
+        self.virtuals.retain(|(image, _, _)| *image != id);
+        self.virtuals.push((id, cols, rows));
+        // Placeholder cells may already be on screen from a previous frame, and their
+        // image just changed size.
+        self.mark_full_damage();
     }
 
     fn place_at_cursor(&mut self, id: u32, cols: u16, rows: u16, z: i32, _image: &Image) {

@@ -79,6 +79,12 @@ impl Terminal {
     /// Empty means never reported or cleared: the oracle has no third state, because an
     /// empty report clears the buffer outright. Decoding the `file://` URI is the
     /// caller's job by design; see `pwd.rs`.
+    /// Kitty virtual (U=1) placements: (image, cols, rows). The renderer pairs these
+    /// with the placeholder cells that address them.
+    pub fn virtuals(&self) -> &[(u32, u16, u16)] {
+        &self.state.virtuals
+    }
+
     pub fn pwd(&self) -> &[u8] {
         &self.state.pwd
     }
@@ -286,6 +292,10 @@ pub(crate) struct State {
     /// the oracle's own (`Terminal.zig`), so a screen switch cannot disturb it and RIS
     /// clears it for free by rebuilding this struct. Empty is the only "unset".
     pub(crate) pwd: Vec<u8>,
+    /// Kitty virtual (U=1) placements: (image, cols, rows). Terminal-global rather than
+    /// per-screen, because a placeholder cell can be printed on either buffer and the
+    /// image it names is one image either way.
+    pub(crate) virtuals: Vec<(u32, u16, u16)>,
     /// Something changed that no per-row flag can express, so the whole frame is stale.
     ///
     /// Four triggers, each confirmed in upstream's `Terminal.zig` as the places that set its
@@ -318,6 +328,7 @@ impl State {
             last_print: None,
             events: Vec::new(),
             pwd: Vec::new(),
+            virtuals: Vec::new(),
             replies: Vec::new(),
             reports_enabled: false,
             graphics: crate::graphics::Graphics::default(),

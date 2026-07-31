@@ -33,6 +33,36 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
+**images-v3, `[tested]` 2026-07-31, in two slices.**
+
+**v3a, z-index** (`images-v3a-zindex`): three layers -- under the cell background, under
+the text, over everything -- sorted by `(z, image id)` IN THE PUBLISHER, because the host
+resolves image pixels positionally and a renderer that re-sorted would pair placements
+with the wrong bytes. z rides free bits in the placement word pair, so the channel did not
+grow. The row pass had to split (`Parts`): `draw_row` painted background and ink together
+per cell, and an image under the text lands between them. The interleaved path stays the
+default -- splitting also stops a later cell's background erasing the previous glyph's
+overhang, which is defensible but not what the existing pixel tests were written against.
+A frame carrying a below-text placement **repaints wholly**, because such an image spans
+rows the damage tracker has no reason to call stale; that keeps incremental-equals-full
+true rather than quietly false.
+
+**v3b, unicode placeholders** (`images-v3b-placeholders`): `U=1` registers a VIRTUAL
+placement that draws nothing, and U+10EEEE cells in the grid address it -- image id in the
+foreground colour, row and column in the combining marks. The point is structural: the
+image IS the text, so it scrolls, reflows and erases with no anchor to keep in step.
+`frame/src/placeholder.rs` ports the oracle's `graphics_unicode.zig` (297-entry diacritic
+table, `canAppend` run rules); the renderer crops per run, so a run showing the middle of a
+scrolled image draws the middle of it rather than the top.
+
+Gates: **541 tests / difftest 164/164 / 14 + 49 exports / Swift smoke**. Mutants seen red:
+publisher not sorting, every placement claiming the top layer, the background skip removed,
+and the crop offset ignored. Three z-order tests failed FIRST on my own bugs (a sized
+placement steps the cursor past itself, so back-to-back placements never overlapped) and
+the placeholder C-surface test failed on a UTF-8 byte computed in my head rather than
+measured -- U+10EEEE is `f4 8e bb ae`, and the wrong byte decodes to a real codepoint, so
+nothing errored and the test simply found nothing.
+
 **OSC 7 working directory, `[tested]` 2026-07-31 (`osc7-cwd`).** The core tracks the
 pwd the child reports: stored RAW and undecoded, terminal-global, cleared by an empty
 report and by RIS but not by DECSTR. It has a real oracle -- the ABI answers

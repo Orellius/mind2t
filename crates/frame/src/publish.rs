@@ -262,6 +262,11 @@ impl Publisher {
                 .collect::<Vec<_>>();
             placements.sort_by_key(|&(image, _, _, _, _, z)| (z, image));
             frame.placements(placements.into_iter());
+
+            // Virtual placements carry no position, so they are published whole and
+            // unsorted: the placeholder cells decide where and in what order anything is
+            // drawn from them.
+            frame.virtuals(terminal.virtuals().iter().copied());
         })?;
 
         self.last_offset = offset;

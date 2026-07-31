@@ -395,14 +395,17 @@ pub unsafe extern "C" fn ruuah_host_spawn(
     };
     // The theme rides the config handle; NULL keeps the built-in scheme. Cloned out
     // because the handle's lifetime is the caller's -- freeing it after spawn is legal.
-    let (palette, font_family, ligatures) = if options.config.is_null() {
-        (Palette::default(), None, true)
+    let (palette, font_family, ligatures, reports) = if options.config.is_null() {
+        // No config handle means no grant. Screen-inspection replies stay OFF for an
+        // embedder that never opted in, which is the safe direction to be wrong in.
+        (Palette::default(), None, true, false)
     } else {
         let config = &unsafe { &*options.config }.config;
         (
             config.palette.clone(),
             config.font_family.clone(),
             config.font_ligatures,
+            config.reports,
         )
     };
 
@@ -421,7 +424,14 @@ pub unsafe extern "C" fn ruuah_host_spawn(
     // pty -- fail identically on every attempt and still surface, 50ms later.
     let mut attempt = 0;
     let (host, reader) = loop {
-        match Host::spawn(command, Options::new(options.cols, options.rows)) {
+        match Host::spawn(command, {
+            // Screen-inspection replies are an EMBEDDER grant, off unless the
+            // operator's config.toml says otherwise -- a program cannot ask for
+            // them and RIS cannot revoke them.
+            let mut spawn_options = Options::new(options.cols, options.rows);
+            spawn_options.reports = reports;
+            spawn_options
+        }) {
             Ok(spawned) => break spawned,
             Err(_) if attempt < 2 => {
                 attempt += 1;
@@ -1669,6 +1679,22 @@ pub unsafe extern "C" fn ruuah_config_auto_direction(
         return fallback;
     }
     unsafe { &*config }.config.auto_direction.unwrap_or(fallback)
+}
+
+/// Whether the operator granted screen-inspection replies (DECRQCRA, WINOPS 18).
+///
+/// FALSE unless `config.toml` says `reports = true`, and false for a NULL handle.
+/// Exposed so an embedder can show the posture rather than guess it; the grant
+/// itself travels through `RuuahHostOptions.config` at spawn, not through this.
+///
+/// # Safety
+/// `config` must be NULL or a live handle from `ruuah_config_load`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_config_reports(config: *const RuuahConfig) -> bool {
+    if config.is_null() {
+        return false;
+    }
+    unsafe { &*config }.config.reports
 }
 
 /// The configured lead font family, or NULL when unset. Borrowed: valid until

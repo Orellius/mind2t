@@ -1,4 +1,4 @@
-# What a terminal needs in 2026 — the open backlog
+# What a terminal needs in 2026 - the open backlog
 
 > **2026-07-30 append-all wave (one session, Orel's order):** CLOSED from this file --
 > P0.2 VS16 boundary (emoji presentation renders in its single cell; width stays
@@ -39,7 +39,7 @@ the absent seam is named per item. Ordered by what a user hits first, not by
 architectural interest. The iron rules hold for every item: harness BEFORE slice,
 controls seen to fail, core stays pure (no I/O), bidi never enters the core.
 
-## P0 — hit within minutes of real use
+## P0 - hit within minutes of real use
 
 1. **DONE 2026-07-29 (branch `paste-2004`): paste (cmd+V) + bracketed paste (mode 2004).**
    Landed exactly on the planned shape -- core mode → `Frame.modes` word →
@@ -65,7 +65,7 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
    emoji-presentation override for VS16 clusters is future cluster-level
    resolution work. Single-codepoint emoji -- the entire flagged case -- work.
 
-## P1 — the modern-TUI contract
+## P1 - the modern-TUI contract
 
 3. **Synchronized output (DEC private mode 2026). DONE 2026-07-30**
    (`sync-output-2026`). Core tracks the mode (terminal-global; ANY resize clears
@@ -76,7 +76,7 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
    otherwise -- reply grammar mirrored from oracle source);
    `ghostty_terminal_mode_get` answers 2026. Gate-removed mutant seen red 3/3 on
    the split-batch pty test.
-4. **DSR / DA query replies — slice 9's seam.** Programs probe the terminal
+4. **DSR / DA query replies - slice 9's seam.** Programs probe the terminal
    (`ESC[6n`, `ESC[c`) and hang or degrade without answers. The reply path is
    `Host::send`, proven end-to-end in slice 8; esctest2 is the oracle and was
    always the plan of record. **esctest2 WIRED 2026-07-30** (`esctest-wiring`):
@@ -132,13 +132,13 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
    (composing always false, the same boundary the byte path had); option-as-alt
    config (encoder supports it, no config surface); DECBKM (mode 67) untracked.
 
-## P2 — polish that reads as craft
+## P2 - polish that reads as craft
 
 8. **OSC 8 hyperlinks** (render underline + open on cmd+click).
-9. **Curly / colored underlines** (SGR 4:3, 58) — Claude Code uses them for
+9. **Curly / colored underlines** (SGR 4:3, 58) - Claude Code uses them for
    diagnostics; currently flattened to plain underline.
 10. **OSC 52 clipboard write** (child copies to system clipboard; read stays
-    off by default — it is a security surface).
+    off by default - it is a security surface).
 11. **Wedge/rounded mosaic synthesis** (U+1FB3C..): today they fall back to
     Iosevka's narrow glyphs; synthesizing the triangles removes the last
     non-cell-geometry art. Extend `mosaic.rs`; the no-gutter test generalizes.
@@ -151,17 +151,17 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
     everything), sorted by `(z, image id)` in the publisher. And images can now
     live IN THE GRID as U+10EEEE placeholder cells, which means they scroll,
     reflow and erase exactly like the text they are made of, with no anchor to
-    keep in step — the structural answer to images drifting away from their cells,
+    keep in step - the structural answer to images drifting away from their cells,
     where v2 could only teach the anchors to follow. Decoder ported from the
     oracle's `graphics_unicode.zig` (the 297-entry diacritic table and the
     `canAppend` run rules); the renderer crops per run, so a run showing the
     middle of a scrolled image draws the middle of it.
-    **Not done, named:** animation, explicit source rectangles (`x,y,w,h` — a
+    **Not done, named:** animation, explicit source rectangles (`x,y,w,h` - a
     placeholder crops by CELL, a different mechanism), placement ids beyond
     run-splitting, and file/shared-memory transmission.
 13. **OSC 7 working directory. DONE 2026-07-31** (`osc7-cwd`). Stored raw and
     undecoded, terminal-global, cleared by an empty report and by RIS but not
-    by DECSTR — every rule measured against the library before implementing,
+    by DECSTR - every rule measured against the library before implementing,
     and pinned in `crates/ghostty/tests/pwd.rs` (13) plus the corpus (8 cases,
     6 promoted diff → match). It has a REAL oracle, unlike OSC 8 and OSC 52:
     the ABI answers `GHOSTTY_TERMINAL_DATA_PWD`, so ours does too.
@@ -179,16 +179,16 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
     working directory report becoming notification spam is a misbehaviour, not
     a missing feature.
     **Not done, and named:** **OSC 1337 CurrentDir** (iTerm2 spelling) also
-    sets the pwd in the oracle — measured, not assumed — and this core ignores
+    sets the pwd in the oracle - measured, not assumed - and this core ignores
     it. Inert rather than harmful (nothing else claims OSC 1337 here, so it is
     simply dropped), so it is left as a one-line follow-up instead of being
     smuggled into this slice.
 
 ## Deliberately NOT on the list
 
-- **Bidi in the core** — renderer-layer forever (measured ABI + oracle reasons,
+- **Bidi in the core** - renderer-layer forever (measured ABI + oracle reasons,
   see CLAUDE.md). Auto base direction shipped 2026-07-29 at the frame layer.
-- **Tabs / splits / config files** — that is RUUAH-the-app's territory, not the
+- **Tabs / splits / config files** - that is RUUAH-the-app's territory, not the
   VT core's proof-of-consumability host.
 - **GPU present path** (the buffer is blitted via CoreGraphics): measure first;
   at one 60Hz window the copy has never been the bottleneck.

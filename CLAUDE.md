@@ -33,6 +33,36 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
+**OSC 7 working directory, `[tested]` 2026-07-31 (`osc7-cwd`).** The core tracks the
+pwd the child reports: stored RAW and undecoded, terminal-global, cleared by an empty
+report and by RIS but not by DECSTR. It has a real oracle -- the ABI answers
+`GHOSTTY_TERMINAL_DATA_PWD` -- so unlike OSC 8 and OSC 52 the corpus can pin it, and
+ours answers the same enum value because a drop-in that cannot is not a drop-in.
+Harness went first as always: `Snapshot` had no pwd at all, so a core ignoring OSC 7
+scored a perfect MATCH on every case that reports one.
+
+Two rules that reading the source alone gets WRONG, both binary-searched against the
+real library rather than inferred: `reportPwd`'s 4096-byte truncation is unreachable
+dead code for OSC 7 (the parser captures into a fixed `[2048]u8`, so the cliff is 2047
+bytes stored whole), and past that cliff the command is DROPPED rather than truncated,
+leaving any previous pwd untouched. Our vte is built with `std`, where `osc_raw` is an
+unbounded `Vec`, so the core has to enforce that limit itself.
+
+The probe found a defect next door: the oracle routes **OSC 9;9** (ConEmu CurrentDir)
+to the same pwd, while this core fell through to the notification branch and popped a
+desktop notification reading `9;/Users/orel/src`. Fixed and pinned in the same slice.
+**OSC 1337 CurrentDir is measured, unimplemented, and named** in `docs/BACKLOG-2026.md`.
+
+Host seam: event kind 7 carries the raw report (empty = cleared), mirroring how a title
+travels. No GUI consumer yet, so nothing here needs a live tap; cwd-keyed ghost history
+is the follow-on slice, and `docs/APP-BACKLOG-2026.md` records the shell dependency it
+will hit -- nothing emits OSC 7 into our windows today, because macOS only installs
+`update_terminal_cwd` when `$TERM_PROGRAM` is `Apple_Terminal` and we do not set it.
+
+Gates: **516 tests / difftest 164 cases 164/164 / esctest 125 pinned / 14 + 49 exports /
+Miri green / Swift smoke**. Four mutants seen red first (truncate-instead-of-drop,
+OSC 7 ignored entirely, RIS preserving the pwd, and a host arm that percent-decodes).
+
 **2026-07-30 append-all wave (one session):** twelve features landed, each on its own
 `--no-ff` branch, gates green at every merge, all pushed. New since v0.8.0+S2: proper
 ad-hoc bundle signing (TCC), S2 starship compat (integration on the oracle's zsh

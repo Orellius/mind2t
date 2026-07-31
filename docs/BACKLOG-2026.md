@@ -129,6 +129,30 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
 12. **Mirror table → full BidiMirroring.txt**, generated from the vendored UCD
     with the same lock discipline as the bidi suite (today: curated table,
     boundary documented in `bidi.rs::mirror`).
+13. **OSC 7 working directory. DONE 2026-07-31** (`osc7-cwd`). Stored raw and
+    undecoded, terminal-global, cleared by an empty report and by RIS but not
+    by DECSTR — every rule measured against the library before implementing,
+    and pinned in `crates/ghostty/tests/pwd.rs` (13) plus the corpus (8 cases,
+    6 promoted diff → match). It has a REAL oracle, unlike OSC 8 and OSC 52:
+    the ABI answers `GHOSTTY_TERMINAL_DATA_PWD`, so ours does too.
+    The rule that reading the source alone gets wrong in both halves:
+    `reportPwd`'s 4096-byte truncation is unreachable for OSC 7, because the
+    parser captures into a fixed `[2048]u8`; the real cliff is 2047 bytes
+    stored whole, and past it the command is DROPPED, not truncated, leaving
+    any previous pwd untouched. Our vte is built with `std` (unbounded
+    `osc_raw`), so the core enforces that limit itself. Host seam: event
+    kind 7, raw payload, empty = cleared.
+    The probe also found a real defect next door: the oracle routes **OSC 9;9**
+    (ConEmu CurrentDir) to the same pwd, while this core fell through to its
+    notification branch and popped a desktop notification reading
+    `9;/Users/orel/src`. Fixed in the same slice and corpus-pinned, because a
+    working directory report becoming notification spam is a misbehaviour, not
+    a missing feature.
+    **Not done, and named:** **OSC 1337 CurrentDir** (iTerm2 spelling) also
+    sets the pwd in the oracle — measured, not assumed — and this core ignores
+    it. Inert rather than harmful (nothing else claims OSC 1337 here, so it is
+    simply dropped), so it is left as a one-line follow-up instead of being
+    smuggled into this slice.
 
 ## Deliberately NOT on the list
 

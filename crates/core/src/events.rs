@@ -86,6 +86,18 @@ impl State {
             self.push_event(Event::Progress { state, value });
             return;
         }
+        // OSC 9;9;<path> is ConEmu's CurrentDir, and the oracle routes it to the same pwd
+        // the OSC 7 path feeds (measured 2026-07-31, `crates/ghostty/tests/pwd.rs`). It is
+        // handled HERE rather than left as a gap because falling through to the branch
+        // below turned a working-directory report into a desktop notification reading
+        // "9;/Users/orel/src" -- a defect this slice's probe found, not a missing feature.
+        // Unlike OSC 7 the payload is a bare path, not a URI; the core still stores it
+        // exactly as sent and lets the embedder tell them apart.
+        if params.get(1).copied() == Some(b"9".as_slice()) {
+            self.osc_pwd(params.get(1..).unwrap_or_default());
+            return;
+        }
+
         let body = join_fields(params.get(1..).unwrap_or_default());
         if !body.is_empty() {
             self.push_event(Event::Notify {

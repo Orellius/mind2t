@@ -1347,6 +1347,84 @@ fn host_events_cross_in_order_and_exactly_once() {
     unsafe { ruuah_host_free(host) };
 }
 
+/// OSC 7 crosses as event kind 7, carrying the RAW report.
+///
+/// The payload is deliberately a path with a percent-encoded space in it: the one thing a
+/// host must receive undecoded, because the core stores what the child sent and decoding
+/// anywhere below the embedder would put two different values on the two sides of this
+/// boundary. A clear (empty report) has to cross too, since "the child left that
+/// directory" is a state change a consumer needs, and an empty payload is the only way
+/// this ABI can say it.
+#[test]
+fn a_pwd_report_crosses_the_c_boundary_raw() {
+    use ruuah_vt_host::ruuah_host_next_event;
+
+    let command = CString::new(
+        "printf '\\033]7;file:///tmp/My%%20Code\\033\\\\'; sleep 1; printf '\\033]7;\\007'; sleep 8",
+    )
+    .expect("command");
+    let options = RuuahHostOptions {
+        cols: COLS,
+        rows: ROWS,
+        font_size: 0.0,
+        command: command.as_ptr(),
+        auto_direction: false,
+        config: ptr::null(),
+    };
+    let mut host: *mut RuuahHost = ptr::null_mut();
+    assert_eq!(
+        unsafe { ruuah_host_spawn(&options, &mut host) },
+        RuuahHostResult::Success
+    );
+
+    let next = |host| -> (u32, Vec<u8>) {
+        let (mut kind, mut len) = (0u32, 0usize);
+        assert_eq!(
+            unsafe { ruuah_host_next_event(host, &mut kind, ptr::null_mut(), 0, &mut len) },
+            RuuahHostResult::Success
+        );
+        if kind == 0 || len == 0 {
+            return (kind, Vec::new());
+        }
+        let mut buffer = vec![0u8; len];
+        let mut fetched = 0u32;
+        assert_eq!(
+            unsafe {
+                ruuah_host_next_event(host, &mut fetched, buffer.as_mut_ptr(), len, &mut len)
+            },
+            RuuahHostResult::Success
+        );
+        assert_eq!(fetched, kind, "the sizing call must not have consumed it");
+        (kind, buffer)
+    };
+
+    let await_event = |host| -> (u32, Vec<u8>) {
+        let deadline = Instant::now() + PATIENCE;
+        while Instant::now() < deadline {
+            let event = next(host);
+            if event.0 != 0 {
+                return event;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        (0, Vec::new())
+    };
+
+    let reported = await_event(host);
+    assert_eq!(reported.0, 7, "OSC 7 is event kind 7");
+    assert_eq!(
+        reported.1,
+        b"file:///tmp/My%20Code",
+        "the percent-encoding must survive the crossing undecoded"
+    );
+
+    let cleared = await_event(host);
+    assert_eq!(cleared.0, 7, "a clear is a pwd event too");
+    assert_eq!(cleared.1, Vec::<u8>::new(), "and it says so with an empty payload");
+
+    unsafe { ruuah_host_free(host) };
+}
+
 /// Slice 9's seam end to end: a DSR from the child produces reply bytes that travel
 /// back down the pty. The child's line discipline (canonical, ECHOCTL) echoes them as
 /// printable ^[[0n -- the same fencepost trick the paste test measured -- so the reply

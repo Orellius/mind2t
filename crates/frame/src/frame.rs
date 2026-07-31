@@ -139,6 +139,25 @@ pub struct FramePlacement {
     /// 0 = native pixel size; the renderer resolves the cell box.
     pub cols: u16,
     pub rows: u16,
+    /// Kitty `z=`. The list arrives ALREADY SORTED into draw order by the publisher, so
+    /// a renderer may walk it start to finish and a layered one may cut it into the three
+    /// contiguous bands (`FramePlacement::BELOW_BACKGROUND`, then below 0, then the rest).
+    pub z: i32,
+}
+
+impl FramePlacement {
+    /// Below this, a placement draws under the cell background rather than merely under
+    /// the text. The oracle's own threshold (`renderer/image.zig`: `i32::MIN / 2`).
+    pub const BELOW_BACKGROUND: i32 = i32::MIN / 2;
+
+    /// Which of the three layers this placement belongs to, low to high.
+    pub fn layer(&self) -> u8 {
+        match self.z {
+            z if z < Self::BELOW_BACKGROUND => 0,
+            z if z < 0 => 1,
+            _ => 2,
+        }
+    }
 }
 
 impl Frame {

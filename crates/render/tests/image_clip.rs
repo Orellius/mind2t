@@ -25,6 +25,7 @@ fn a_negative_row_placement_draws_its_bottom_half_only() {
         row: -1,
         cols: 1,
         rows: 2,
+        z: 0,
     }];
     renderer.draw_images(&placements, |_| Some((1, 2, Arc::clone(&rgba))));
 

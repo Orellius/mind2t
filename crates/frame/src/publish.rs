@@ -238,23 +238,30 @@ impl Publisher {
 
             // Placements anchor to active-grid rows and ride the same shift; both
             // backends clip per pixel at every canvas edge.
-            frame.placements(
-                screen
-                    .placements
-                    .iter()
-                    .map(|p| {
-                        (
-                            p.image,
-                            p.col,
-                            p.row
-                                .saturating_add(i16::try_from(history_visible).unwrap_or(i16::MAX)),
-                            p.cols,
-                            p.rows,
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .into_iter(),
-            );
+            // Sorted into DRAW ORDER here rather than renderer-side, because the host
+            // resolves image pixels positionally against this list: a renderer that
+            // re-sorted would pair every placement with the wrong image's bytes.
+            //
+            // The key mirrors the oracle's (`renderer/image.zig`): z, then image id, and
+            // a STABLE sort keeps placement order as the final tiebreak, so two
+            // placements of one image at one z draw in the order the child made them.
+            let mut placements = screen
+                .placements
+                .iter()
+                .map(|p| {
+                    (
+                        p.image,
+                        p.col,
+                        p.row
+                            .saturating_add(i16::try_from(history_visible).unwrap_or(i16::MAX)),
+                        p.cols,
+                        p.rows,
+                        p.z,
+                    )
+                })
+                .collect::<Vec<_>>();
+            placements.sort_by_key(|&(image, _, _, _, _, z)| (z, image));
+            frame.placements(placements.into_iter());
         })?;
 
         self.last_offset = offset;

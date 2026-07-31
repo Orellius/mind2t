@@ -1,4 +1,4 @@
-# CLAUDE.md — ruuah-vt (project child config)
+# CLAUDE.md - ruuah-vt (project child config)
 
 > **Parent stack layer:** `../CLAUDE.md` (tools/ 2026 stack, auto-inherited; don't restate it).
 > Chain: `~/.claude/CLAUDE.md` (contract) → `Studio/CLAUDE.md` (index) → `tools/CLAUDE.md` (stack) → **this file (ruuah-vt specifics)**.
@@ -9,7 +9,7 @@
 
 A terminal core in Rust implementing the C ABI Ghostty already publishes as
 **`libghostty-vt`**, so it can drop in behind an existing native GUI. The point is control
-and craft, not speed — Rust and Zig are peers here and there is no performance win waiting.
+and craft, not speed - Rust and Zig are peers here and there is no performance win waiting.
 
 **There is no consumer yet, and the note that used to sit here was wrong.** Measured
 2026-07-28: RUUAH's Swift app calls **99 `ghostty_*` symbols and not one of them is a VT-core
@@ -140,7 +140,7 @@ answers for 2004 and returns INVALID_VALUE for untracked modes rather than a gue
 "off". End-to-end proof in `host_abi.rs` uses the pty's ECHOCTL to make the fenceposts
 visible as pixels; the fence appears exactly when the child enabled 2004. The cmd+V tap
 in the installed app still needs live eyes.
-**Two open backlogs — read both before picking the next slice.**
+**Two open backlogs - read both before picking the next slice.**
 `docs/BACKLOG-2026.md` (protocol, written 2026-07-29 after the app ran Claude Code live):
 P0.1 paste is DONE; still open are P0.2 color emoji (renderer feature, not a font line),
 P1 = synchronized output (mode 2026), DSR/DA replies (= slice 9), SGR mouse, scrollback
@@ -148,7 +148,7 @@ viewport, kitty keyboard, and the P2 polish items.
 `docs/APP-BACKLOG-2026.md` (app slices S1-S9, mapped 2026-07-29 from Warp's open-source
 release and Superset): settings+themes, Blocks on our OSC 133 rails, palette+workflows,
 autosuggestions, worktree workspaces, diff panel, splits, persistent sessions, MCP
-control. Homegrown clean-room law stated in the file — never copy AGPL/ELv2 code.
+control. Homegrown clean-room law stated in the file - never copy AGPL/ELv2 code.
 
 **Slice 9 (esctest2) DONE 2026-07-30** (`esctest-wiring`): the suite runs as the child
 of our own pty host (`crates/pty/tests/esctest.rs`) and gates the workspace -- 568
@@ -466,7 +466,7 @@ movement.
 The seven remaining DIFF cases are **not slice boundaries**. They are named omissions kept
 deliberately, because a corpus where nothing differs cannot show the harness detects
 disagreement: DECALN, private/selective erase, REP, IRM, grapheme-cluster mode 2027, reverse
-wraparound (mode 45), and — added by slice 4 — a **saved (DECSC) cursor sitting in the blanks
+wraparound (mode 45), and - added by slice 4 - a **saved (DECSC) cursor sitting in the blanks
 past its row's text when that row reflows**. Upstream clamps such a pin against whatever
 column its sequential reflow writer happens to be parked on, a value carried over from the
 *previous* line (`PageList.zig`, `reflowRow`, the `p.x >= cols_len` branch). Matching it means
@@ -491,7 +491,7 @@ answering a query means writing bytes back, and the core does no I/O. The seam f
 
 - `[tested]` 32 tests green, `cargo test --workspace` exit 0.
 - `[tested]` `ruuah-vt-difftest` over 13 corpus cases: 4 MATCH, 9 DIFF, 13/13 met expectation.
-  Both directions demonstrated — the harness detects agreement *and* disagreement.
+  Both directions demonstrated - the harness detects agreement *and* disagreement.
 - `[tested]` The oracle readout itself: grapheme clusters, wide cells + spacer tails, the
   autowrap phantom state, alt screen, palette and RGB SGR, resumability across a write
   that splits a sequence mid-escape.
@@ -513,7 +513,7 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
 ## Project rules & gotchas
 
 - **`../ruuah` is read-only, including build artifacts.** Never run `zig build` in it with
-  default paths — that writes `zig-out/` and `.zig-cache/`. `scripts/build-oracle.sh`
+  default paths - that writes `zig-out/` and `.zig-cache/`. `scripts/build-oracle.sh`
   redirects both `--prefix` and `--cache-dir` here and then *verifies* the checkout is still
   clean, failing if it is not. Its whole economics are a near-zero rebase tax upstream.
 - **Zig must be exactly `0.16.0` at `/opt/homebrew/opt/zig/bin/zig`**, called by absolute
@@ -523,7 +523,7 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   is set. Worse: with both `.a` and `.dylib` on one search path, `-l static=` held for every
   target *except* the lib test harness, which silently picked the dylib. `build.rs` therefore
   symlinks only the archive into `OUT_DIR/link` and searches there. Cost: one confusing
-  SIGABRT on 2026-07-28 — do not re-derive it.
+  SIGABRT on 2026-07-28 - do not re-derive it.
 - **Sized structs must have `.size` set before the library sees them.** `GhosttyGridRef` and
   `GhosttyStyle` lead with a `size_t size` (the `GHOSTTY_INIT_SIZED` mechanism); leaving it
   zero claims to be compiled against a zero-byte struct. Every construction site in
@@ -531,7 +531,7 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
 - **`ghostty_type_json()` is the library describing its own ABI**, and it is the reason the
   bindings can be trusted rather than hoped about. `tests/abi_layout.rs` compares every
   offset this crate touches against it, which also catches the vendored headers drifting
-  from the linked archive — something bindgen alone cannot see.
+  from the linked archive - something bindgen alone cannot see.
 - **Extend the harness BEFORE building the slice. Ten for ten.** Every slice has had a blind
   spot that would have reported MATCH for a wrong implementation, and each was found by asking
   "can the harness even see this?" before writing code. Slice 8's was the C boundary itself:
@@ -544,16 +544,16 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   region. A fourth, the caret's landing column, was invisible to the pixel harness itself:
   `redraw.rs`'s incremental-equals-full invariant holds whether the caret is on the right cell
   or the wrong one, because both renderers are consistently wrong.
-  - **Slice 2** — background-colour erase was invisible. Ghostty keeps a cell with only a
+  - **Slice 2** - background-colour erase was invisible. Ghostty keeps a cell with only a
     background out of the style map, so `grid_ref_style` reported Default for a red cell. An
     erase ignoring BCE would have passed.
-  - **Slice 3** — scrollback was invisible. The oracle ran `max_scrollback = 0` and `Snapshot`
+  - **Slice 3** - scrollback was invisible. The oracle ran `max_scrollback = 0` and `Snapshot`
     held only the active area, so any history implementation would have passed.
-  - **Slice 4** — resize was not expressible at all: `Case` had no resize field and neither
+  - **Slice 4** - resize was not expressible at all: `Case` had no resize field and neither
     `Terminal` had a `resize` method, so any reflow would have passed. `Case` gained `resize`
     and `after`, and both were needed: `after` is the only way a grid comparison can see where
     the cursor landed, because a cursor that never writes leaves no trace. With the harness
-    extended and a non-reflowing resize in place, wrapped cases DIFFed and flat ones MATCHed —
+    extended and a non-reflowing resize in place, wrapped cases DIFFed and flat ones MATCHed -
     both directions, before a line of reflow was written.
   Treat this as the project's dominant risk, not a coincidence. The differential harness only
   catches what the `Snapshot` represents, so the first question of every slice is what new
@@ -563,7 +563,7 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   implementation of everything the ABI exposes. Slice 4 burned five rounds of black-box probes
   on the saved-cursor mapping and got three mutually contradictory rules; the answer was
   twenty lines of `reflowRow`. Probe to find out WHAT differs, read the source to find out WHY.
-  Both matter — the probes are what made the corpus, and the source is what stopped the
+  Both matter - the probes are what made the corpus, and the source is what stopped the
   guessing.
 - **A corpus `expect = "diff"` is a to-do, not a pass.** When ruuah-vt implements that behaviour
   the case *fails*, and it gets promoted to `expect = "match"`. That is the mechanism, not a
@@ -573,7 +573,7 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   2026-07-28 against the real library: `max_scrollback` behaves as a boolean (0 disables, any
   non-zero value behaves the same), and writing 3000 lines kept **2998** rows at 6 columns but
   only **634** at 80. This core budgets in rows instead. The two prune POLICIES are therefore
-  not comparable and must never be corpus-tested against each other — every scrollback case
+  not comparable and must never be corpus-tested against each other - every scrollback case
   stays far under both thresholds, where contents agree exactly, and the policy is unit-tested
   in `history.rs`. This is the plan's ranked failure mode 4, confirmed on the real thing.
 - **Only rows leaving the TOP OF THE SCREEN become history.** A scroll region that starts
@@ -581,7 +581,7 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   outright. Neither feeds scrollback; there is a corpus case pinning each.
 - **The alternate screen has no scrollback**, by protocol. It is constructed with a zero
   budget, so this is structural rather than a check that can be forgotten.
-- Cell text is a **grapheme cluster**, not a codepoint — encoded in `Snapshot` from day one
+- Cell text is a **grapheme cluster**, not a codepoint - encoded in `Snapshot` from day one
   because it is ranked failure mode 2 and 32 bits per cell is structurally insufficient.
 - **The bidi oracle is Unicode, and it is not optional.** `./scripts/fetch-ucd.sh` vendors
   `BidiTest.txt` and `BidiCharacterTest.txt` into `vendor/ucd/`; `ucd.lock` pins the revision,
@@ -604,32 +604,32 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
 - **Bidi is a renderer-layer item and must never enter the core.** Decided 2026-07-28, and
   slice 5.5 confirmed it: reordering landed with the corpus untouched at 78/78.
   `../ruuah/include/` has **zero** bidi/RTL surface, so reordering in the core breaks ABI
-  compatibility — the project's whole thesis — and makes every RTL line diverge from the
+  compatibility - the project's whole thesis - and makes every RTL line diverge from the
   oracle *by construction*, deleting the only correctness signal there is. Ghostty's own
   bidi-adjacent code sits in the font shaper, not the VT core. Scar
   `~/.claude/scars/2026-06-11-bidi-terminal-deadend.md` and memory
   `feedback-no-bidi-in-terminals`: emulator bidi structurally cannot serve a cursor-addressed
   TUI, because the cursor has no mapping after reorder. **"Support most languages" is not
-  bidi** — it is grapheme clusters plus correct width tables, both of which are slice 1.
+  bidi** - it is grapheme clusters plus correct width tables, both of which are slice 1.
 - **Darwin refuses `TIOCSWINSZ` on the pty MASTER.** Measured 2026-07-28 on macOS 25.5, and
   confirmed with raw `libc::ioctl` as well as through rustix, so it is a kernel rule and not
   a binding bug: setting the window size on the master returns `ENOTTY` (errno 25,
   "Inappropriate ioctl for device"). It must go to the **user side**; reading it back with
   `TIOCGWINSZ` works from either end. Linux accepts both, which is exactly why this is easy
   to write wrong and only fails on the machine the project targets. `host.rs` therefore
-  *reopens* the pts by path for each resize rather than holding a slave fd — holding one open
+  *reopens* the pts by path for each resize rather than holding a slave fd - holding one open
   would mean the master never reports EOF when the child exits, because this process would
   still have the other end open. Cost: eight failing integration tests with a misleading
   errno. Do not re-derive it.
 - **The seqlock payload is `AtomicU64` read and written `Relaxed`, and there is no `unsafe`
   in it.** A classic seqlock races the reader against the writer, which in Rust's model is a
-  data race and therefore undefined — the usual workarounds are `read_volatile` or a raw
+  data race and therefore undefined - the usual workarounds are `read_volatile` or a raw
   `copy_nonoverlapping`, both of which are formally still UB. The way out is that the standard
   library defines a data race as requiring a *non-atomic* access, so relaxed atomic loads that
   race are merely unordered, never undefined; the generation counter's `Acquire`/`Release`
   pair supplies the ordering that makes a set of atomic words into one consistent frame. This
   is why `Cell` being exactly 8 bytes pays off twice: one cell is one `u64`.
-  The `seqlock` crate (0.2.0, May 2026) was checked and does not fit — it requires `T: Copy`
+  The `seqlock` crate (0.2.0, May 2026) was checked and does not fit - it requires `T: Copy`
   and has no dynamically-sized payload, and a terminal grid is sized at runtime.
 - **The renderer's only input is `Frame::runs`, and a `Run` carries a `Direction`.** Nothing
   produces a `RightToLeft` run yet; the variant and `Run::column_of` exist so that slice 5.5
@@ -645,7 +645,7 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   2026-07-28 by walking every font in `/System/Library/Fonts`, its `Supplemental`,
   `/Library/Fonts` and `~/Library/Fonts`, then shaping Hebrew through each candidate.
   - Menlo maps Hebrew to glyph 0. Arial Hebrew maps `'A'` to glyph 0, and is proportional
-    besides. Fallback is therefore required, not an enhancement — which is why `FontStack`
+    besides. Fallback is therefore required, not an enhancement - which is why `FontStack`
     is plural from its first commit and the atlas keys on **(font, glyph)** rather than
     glyph. A glyph id without its font is meaningless, and collapsing the two would draw
     Hebrew with Menlo's glyph numbering.
@@ -653,18 +653,18 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
     `~/Library/Fonts/`. It is the only monospace font found that does Hebrew *correctly*:
     GSUB composes shin+shin-dot and bet+dagesh into single glyphs, GPOS puts a qamats at
     exactly half the advance so it is centred under its base, marks carry **zero advance** so
-    a pointed cluster stays ONE cell, and Latin and Hebrew both advance 0.6em — the same as
+    a pointed cluster stays ONE cell, and Latin and Hebrew both advance 0.6em - the same as
     Menlo, so the two share a grid exactly.
   - **It must not lead the stack**: it covers **0 of 128** box-drawing codepoints, 0 blocks
     and 0 powerline. Menlo leads, Miriam sits behind it, Arial Hebrew is the last resort so a
     machine without Culmus still works. `system()` filters to what is installed.
   - Iosevka and JetBrains Mono have no Hebrew at all, so the popular programming faces are
-    not options. Building a font is not one either — see the note below.
+    not options. Building a font is not one either - see the note below.
   - `font.rs` unit-tests the coverage gaps in both directions, so a font change on the
     machine surfaces as a failing test instead of tofu on screen.
 - **Do not try to build or merge a font.** A Hebrew-plus-Latin monospace face with correct
-  niqqud is person-years of type design, and the shortcut — merging Menlo's Latin and box
-  drawing with Miriam's Hebrew via fontTools — buys nothing the fallback stack does not
+  niqqud is person-years of type design, and the shortcut - merging Menlo's Latin and box
+  drawing with Miriam's Hebrew via fontTools - buys nothing the fallback stack does not
   already give (the advances already match) while creating a licence problem: Menlo is
   Apple's and not redistributable, and Miriam is GPL v2, so the merged output could never
   ship. Fallback is the answer, and it is already built.
@@ -677,9 +677,9 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   conformance oracle to decide that with rather than a preference.
 - **The shipped artifact is `libruuah-vt.a`, but cargo cannot name it that.** Measured
   2026-07-28: a package called `libruuah-vt` emits `lib`**`lib`**`ruuah_vt.a`, and
-  `[lib] name = "ruuah-vt"` is a hard cargo error — *"library target names cannot contain
+  `[lib] name = "ruuah-vt"` is a hard cargo error - *"library target names cannot contain
   hyphens"*. Ghostty gets the hyphen in `libghostty-vt` because zig names artifacts freely.
-  So the project is `ruuah-vt` (no `lib` prefix in a directory name — Ghostty's own project
+  So the project is `ruuah-vt` (no `lib` prefix in a directory name - Ghostty's own project
   dir is `ghostty`), cargo emits `libruuah_vt.a`, and **slice 6 renames it to
   `libruuah-vt.a` in the build step** so RUUAH's link flag mirrors `-lghostty-vt` exactly.
   Do not try to make cargo produce the hyphen directly.
@@ -693,7 +693,7 @@ history to track, so a second remote would be theatre. The upstream that actuall
 the **oracle**: libghostty-vt is a moving reference implementation, and when Ghostty changes
 behaviour the corpus verdicts move with it. `oracle.lock` pins the exact Ghostty commit the
 current oracle was built from, `scripts/build-oracle.sh` rewrites it and **announces when the
-oracle moved**. Commit `oracle.lock` whenever it changes — without it, a corpus case flipping
+oracle moved**. Commit `oracle.lock` whenever it changes - without it, a corpus case flipping
 overnight is indistinguishable from a regression you caused.
 
 - **PR WORKFLOW LAW (Orel's order, 2026-07-30): work lands through pull requests.** One
@@ -710,7 +710,7 @@ overnight is indistinguishable from a regression you caused.
 - **One branch per slice**, `slice-N-<name>`, merged with `--no-ff` so slice boundaries stay
   visible in the history. `git log --first-parent main` then reads as one line per slice.
 - **Annotated tag per completed slice**, `v0.N.0`. The tag message records the corpus state
-  (case counts and verdicts), the test count, and the `oracle.lock` describe string — so a
+  (case counts and verdicts), the test count, and the `oracle.lock` describe string - so a
   tag answers "what worked, measured against which Ghostty" without checking anything out.
   `v0.0.0` = slice 0 harness, `v0.1.0` = slice 1 parser + grid.
 - Never push a slice branch that leaves the corpus failing its own expectations. A case whose
@@ -725,7 +725,7 @@ Dependencies stay deliberately few: `vte`, `unicode-width`, `thiserror`, `serde`
 need) and `wezterm-bidi` (5.5, chosen by conformance measurement). **`wgpu` is the one large
 exception** (slice 7): measured at +123 packages against +9 for a Mac-only `objc2-metal`
 backend, taking the tree from 80 to 181. Orel chose it over the Metal route with those numbers
-in hand, for portability the roadmap does not yet want but may. `portable-pty` was evaluated for the pty host and rejected — on
+in hand, for portability the roadmap does not yet want but may. `portable-pty` was evaluated for the pty host and rejected - on
 macOS it costs thirteen crates including `serial2`, a serial-port library, and a second
 `thiserror` major version alongside the workspace's. `rustix` costs three and the pty dance is
 about sixty lines we own. **`cargo fmt --all` reformats the whole repo**, which was never
@@ -750,52 +750,52 @@ and `lib/`, bypassing the build script).
 
 ## In-repo docs (source of truth)
 
-- `corpus/cases.toml` — every byte stream and the verdict it is asserted to produce.
-- `crates/snapshot/src/grid.rs` — what "the grid" means for comparison. The contract both
+- `corpus/cases.toml` - every byte stream and the verdict it is asserted to produce.
+- `crates/snapshot/src/grid.rs` - what "the grid" means for comparison. The contract both
   implementations satisfy; neither owns it.
-- `crates/core/src/reflow.rs` — the re-lay itself, as a pure transform over rows. Every
+- `crates/core/src/reflow.rs` - the re-lay itself, as a pure transform over rows. Every
   non-obvious rule in it carries the measurement it came from.
-- `crates/core/src/resize.rs` — the storage round-trip around that transform: drain, reflow,
+- `crates/core/src/resize.rs` - the storage round-trip around that transform: drain, reflow,
   split back into history and active area.
-- `crates/snapshot/src/difference.rs` — how disagreement is located and reported.
-- `crates/frame/src/seqlock.rs` — the thread handoff. Read the module card before touching the
+- `crates/snapshot/src/difference.rs` - how disagreement is located and reported.
+- `crates/frame/src/seqlock.rs` - the thread handoff. Read the module card before touching the
   ordering; every `fence` in it is load-bearing.
-- `crates/frame/src/frame.rs` — what a renderer is allowed to draw from. The `Run` /
+- `crates/frame/src/frame.rs` - what a renderer is allowed to draw from. The `Run` /
   `Direction` seam that keeps bidi out of the renderer.
-- `crates/frame/tests/tearing.rs` — the concurrency harness, including the control that proves
+- `crates/frame/tests/tearing.rs` - the concurrency harness, including the control that proves
   it can fail.
-- `crates/pty/src/host.rs` — the only I/O in the project, and the one `unsafe` block.
-- `crates/render/src/renderer.rs` — the consumer the `Run` seam exists for. Every column comes
+- `crates/pty/src/host.rs` - the only I/O in the project, and the one `unsafe` block.
+- `crates/render/src/renderer.rs` - the consumer the `Run` seam exists for. Every column comes
   from `Run::column_of`.
-- `crates/render/src/font.rs` — why the font stack is plural, with the measurement.
-- `crates/render/tests/redraw.rs` — the pixel harness: incremental equals full, plus the
+- `crates/render/src/font.rs` - why the font stack is plural, with the measurement.
+- `crates/render/tests/redraw.rs` - the pixel harness: incremental equals full, plus the
   control that proves it can fail, plus the logical-order pin 5.5 must flip.
-- `crates/render/tests/vim.rs` — the acceptance gate. Writes a BMP to the temp dir for eyes.
-- `crates/frame/src/bidi.rs` — reordering, and the two terminal policies on top of the UBA
+- `crates/render/tests/vim.rs` - the acceptance gate. Writes a BMP to the temp dir for eyes.
+- `crates/frame/src/bidi.rs` - reordering, and the two terminal policies on top of the UBA
   (LTR base, segments bounded by box drawing).
-- `crates/frame/tests/bidi_conformance.rs` — the Unicode oracle, run against our own layout.
-- `crates/core/src/semantic.rs` — OSC 133, and the three places its rules apply at once.
-- `crates/ghostty/tests/semantic.rs` — what the oracle is known to do with OSC 133, measured.
-- `crates/render/tests/caret.rs` — where the caret lands, found by diffing shown against
+- `crates/frame/tests/bidi_conformance.rs` - the Unicode oracle, run against our own layout.
+- `crates/core/src/semantic.rs` - OSC 133, and the three places its rules apply at once.
+- `crates/ghostty/tests/semantic.rs` - what the oracle is known to do with OSC 133, measured.
+- `crates/render/tests/caret.rs` - where the caret lands, found by diffing shown against
   hidden, plus the control that pins the old logical placement.
-- `crates/render/src/surface.rs` — the backend seam, and the specified integer blend both
+- `crates/render/src/surface.rs` - the backend seam, and the specified integer blend both
   backends must produce. Also holds the truncating control.
-- `crates/render/src/gpu.rs` — the wgpu compute backend, and why the sRGB trap does not bite.
-- `crates/render/tests/backend.rs` — CPU against GPU, byte for byte.
-- `crates/abi-types/src/lib.rs` — the C types this library publishes. Depends on nothing so
+- `crates/render/src/gpu.rs` - the wgpu compute backend, and why the sRGB trap does not bite.
+- `crates/render/tests/backend.rs` - CPU against GPU, byte for byte.
+- `crates/abi-types/src/lib.rs` - the C types this library publishes. Depends on nothing so
   it can be linked beside the oracle without a symbol clash.
-- `crates/abi/src/exports.rs` — the C entry points, thin on purpose.
-- `crates/host/src/lib.rs` — the embedder C surface: the whole pipeline behind one handle.
-- `crates/host/include/ruuah_host.h` — the contract the Swift host imports directly.
-- `crates/host/tests/host_abi.rs` — pixels byte-compared through the C boundary, the
+- `crates/abi/src/exports.rs` - the C entry points, thin on purpose.
+- `crates/host/src/lib.rs` - the embedder C surface: the whole pipeline behind one handle.
+- `crates/host/include/ruuah_host.h` - the contract the Swift host imports directly.
+- `crates/host/tests/host_abi.rs` - pixels byte-compared through the C boundary, the
   skip-a-row control, and the `send` round trip via `cat`.
-- `swift/Sources/ruuah-host/` — the minimal host: `--smoke` headless proof and the window.
-- `crates/abi/tests/differential.rs` — the whole corpus driven through the C ABI and compared
+- `swift/Sources/ruuah-host/` - the minimal host: `--smoke` headless proof and the window.
+- `crates/abi/tests/differential.rs` - the whole corpus driven through the C ABI and compared
   against the Rust API, plus the wrong-row control.
-- `crates/ghostty/tests/abi_parity.rs` — our published layouts against libghostty-vt's own
+- `crates/ghostty/tests/abi_parity.rs` - our published layouts against libghostty-vt's own
   `ghostty_type_json()`. Caught a real `GhosttyPoint` size bug on its first run.
-- `scripts/build-lib.sh` — builds `libruuah-vt.a` and verifies its exports.
-- `crates/ghostty/tests/abi_layout.rs` — the ABI pin. Read before touching `sys`.
-- `crates/ghostty/tests/oracle.rs` — what the oracle is known to read correctly.
+- `scripts/build-lib.sh` - builds `libruuah-vt.a` and verifies its exports.
+- `crates/ghostty/tests/abi_layout.rs` - the ABI pin. Read before touching `sys`.
+- `crates/ghostty/tests/oracle.rs` - what the oracle is known to read correctly.
 - Conformance canon (not yet wired in): xterm ctlseqs, DEC STD 070, esctest2 (the CI
   target), wraptest (line-wrapping specifically), vttest (interactive, final pass only).

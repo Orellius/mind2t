@@ -12,7 +12,9 @@
 //!     answers `ENOTSUPPORTED`, which is what tells icat to fall back.
 //!   - formats: f=32 (RGBA), f=24 (RGB), f=100 (PNG via the `png` crate -- icat's
 //!     default wire format; GATE 01 weighed, decode is pure and deterministic).
-//!   - no unicode placeholders, no z-index, no animation, no source-rect cropping.
+//!   - no unicode placeholders, no animation, no source-rect cropping.
+//!   - z-index IS supported (`Placement::z`, three layers); it is the one signed key,
+//!     and the draw ORDER it implies is applied by the publisher, not here.
 //!   - a placement WITHOUT explicit `c,r` spans the image's native pixels; the renderer
 //!     computes the cell box (the core is deliberately pixel-cell-ignorant) and the
 //!     cursor does not move. With `c,r` given, the cursor steps past the placement the

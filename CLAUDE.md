@@ -106,7 +106,7 @@ is the follow-on slice, and `docs/APP-BACKLOG-2026.md` records the shell depende
 will hit -- nothing emits OSC 7 into our windows today, because macOS only installs
 `update_terminal_cwd` when `$TERM_PROGRAM` is `Apple_Terminal` and we do not set it.
 
-Gates: **516 tests / difftest 164 cases 164/164 / esctest 125 pinned / 14 + 49 exports /
+Gates: **516 tests / difftest 164 cases 164/164 / esctest 120 pinned / 14 + 49 exports /
 Miri green / Swift smoke**. Four mutants seen red first (truncate-instead-of-drop,
 OSC 7 ignored entirely, RIS preserving the pwd, and a host arm that percent-decodes).
 

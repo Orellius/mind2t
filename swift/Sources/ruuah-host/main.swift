@@ -75,9 +75,100 @@ func runSmoke() -> Int32 {
     return 1
 }
 
+/// Headless proof of the cwd-keyed ghost, end to end through the Swift seam.
+///
+/// This is the seam PR #15 shipped untested, and its failure is SILENT: if the OSC 7
+/// event never reaches the session, `pwdRaw` stays empty, every lookup falls back to
+/// global history, and the result is indistinguishable from the feature not existing.
+/// So the assertion is the discriminating one -- a command run HERE must win over a
+/// NEWER command run elsewhere. With the cwd lost, the newer one wins and this fails.
+func runHistorySmoke() -> Int32 {
+    let directoryA = "/tmp/ruuah-cwd-smoke-a"
+    let directoryB = "/tmp/ruuah-cwd-smoke-b"
+
+    /// Spawns a child whose only job is to report a directory, and returns the session
+    /// once that report has been drained. Real OSC 7 bytes down a real pty -- the point
+    /// is to exercise the event path, not to assign to `pwdRaw` directly.
+    func sessionReporting(_ directory: String) -> Session? {
+        guard let session = Session(
+            command: "printf '\\033]7;file://localhost\(directory)\\033\\\\'",
+            cols: 80, rows: 24, fontSize: 0, autoDirection: false, title: "cwd-smoke")
+        else { return nil }
+
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            _ = session.poll()
+            for event in session.drainEvents() {
+                if case .pwd = event { return session }
+            }
+            if session.exited, !session.pwdRaw.isEmpty { return session }
+            usleep(10_000)
+        }
+        FileHandle.standardError.write(
+            Data("no OSC 7 event for \(directory) within 10s\n".utf8))
+        return nil
+    }
+
+    let storePath = "/tmp/ruuah-cwd-smoke-history"
+    try? FileManager.default.removeItem(atPath: storePath)
+    var store: OpaquePointer?
+    guard storePath.withCString({ ruuah_history_load($0, &store) }) == RUUAH_HOST_SUCCESS
+    else {
+        FileHandle.standardError.write(Data("history store failed to load\n".utf8))
+        return 1
+    }
+
+    guard let inA = sessionReporting(directoryA) else { return 1 }
+    guard String(decoding: inA.pwdRaw, as: UTF8.self).contains(directoryA) else {
+        FileHandle.standardError.write(
+            Data(("session reported \(String(decoding: inA.pwdRaw, as: UTF8.self)),"
+                + " expected \(directoryA)\n").utf8))
+        return 1
+    }
+    inA.recordCommand(store, command: "echo alpha-here")
+
+    guard let inB = sessionReporting(directoryB) else { return 1 }
+    inB.recordCommand(store, command: "echo beta-here")
+
+    // Back where alpha ran. beta is NEWER, so a lookup that lost the directory returns it.
+    guard let backInA = sessionReporting(directoryA) else { return 1 }
+    let suggestion = backInA.suggestion(store, for: "echo ")
+
+    guard suggestion == "echo alpha-here" else {
+        FileHandle.standardError.write(
+            Data("""
+                cwd-keyed history FAILED: suggested \(suggestion ?? "nothing"), \
+                expected 'echo alpha-here'. The session's reported directory was \
+                '\(String(decoding: backInA.pwdRaw, as: UTF8.self))' -- if that is empty, \
+                the OSC 7 event never reached the Swift layer and every lookup is global.
+
+                """.utf8))
+        return 1
+    }
+
+    // The control: with no directory, the newest match anywhere is the right answer.
+    // Without this, the assertion above would also pass on a store holding only alpha.
+    guard let globalSession = Session(
+        command: "true", cols: 80, rows: 24, fontSize: 0, autoDirection: false,
+        title: "cwd-smoke-control"), globalSession.pwdRaw.isEmpty,
+        globalSession.suggestion(store, for: "echo ") == "echo beta-here"
+    else {
+        FileHandle.standardError.write(
+            Data("control failed: a session with no cwd must fall back to the newest\n".utf8))
+        return 1
+    }
+
+    print("HISTORY SMOKE OK: in \(directoryA) the ghost suggests 'echo alpha-here'; "
+        + "with no cwd it suggests the newer 'echo beta-here'")
+    return 0
+}
+
 let arguments = CommandLine.arguments
 if arguments.contains("--smoke") {
     exit(runSmoke())
+}
+if arguments.contains("--smoke-history") {
+    exit(runHistorySmoke())
 }
 
 var command: String?

@@ -552,6 +552,78 @@ impl<S: Surface> Renderer<S> {
         usize::from(frame.rows)
     }
 
+    /// Draws every unicode-placeholder run in the frame.
+    ///
+    /// The runs come from the grid itself (`ruuah_vt_frame::virtual_runs`), so an image
+    /// placed this way scrolls, reflows and is erased exactly like the text it is made of
+    /// -- no anchor to keep in step, which is the whole reason kitty added the feature.
+    ///
+    /// Each run draws a CROP: the run knows which cells of the image it shows, so the
+    /// image is scaled once to its full cell box and the run copies its own slice out of
+    /// that. Drawing the whole image per run and relying on clipping would be simpler and
+    /// wrong -- a run in the middle of a scrolled image would draw the top of it.
+    ///
+    /// `lookup` resolves an image id to its pixels; an unknown image draws nothing, which
+    /// is what a placeholder for an image that was never transmitted must do.
+    pub fn draw_placeholders<F>(&mut self, frame: &Frame, mut lookup: F)
+    where
+        F: FnMut(u32) -> Option<(u32, u32, std::sync::Arc<Vec<u8>>)>,
+    {
+        let metrics = self.fonts.metrics();
+        for y in 0..frame.rows {
+            for run in ruuah_vt_frame::virtual_runs(frame, y) {
+                let Some((width, height, rgba)) = lookup(run.image) else {
+                    continue;
+                };
+                if width == 0 || height == 0 {
+                    continue;
+                }
+
+                // The cell grid the image is divided into. A virtual placement may state
+                // it; otherwise the image's own pixel size decides, rounded UP so the last
+                // partial cell still belongs to the image.
+                let declared = frame.virtuals.iter().find(|v| v.image == run.image);
+                let (cols, rows) = match declared {
+                    Some(v) if v.cols > 0 && v.rows > 0 => (u32::from(v.cols), u32::from(v.rows)),
+                    _ => (
+                        width.div_ceil(metrics.width.max(1)),
+                        height.div_ceil(metrics.height.max(1)),
+                    ),
+                };
+                if cols == 0 || rows == 0 || run.image_col >= cols || run.image_row >= rows {
+                    continue;
+                }
+
+                let scaled = self.image_cache.get_or_scale(
+                    run.image,
+                    width,
+                    height,
+                    &rgba,
+                    cols * metrics.width,
+                    rows * metrics.height,
+                );
+
+                // The run's slice of that scaled image, clamped to what the image has.
+                let take = u32::from(run.width).min(cols - run.image_col);
+                let crop = crop_cells(
+                    &scaled,
+                    cols * metrics.width,
+                    run.image_col * metrics.width,
+                    run.image_row * metrics.height,
+                    take * metrics.width,
+                    metrics.height,
+                );
+                self.canvas.blend_image(
+                    i32::from(run.screen_col) * metrics.width as i32,
+                    i32::from(run.screen_row) * metrics.height as i32,
+                    take * metrics.width,
+                    metrics.height,
+                    &crop,
+                );
+            }
+        }
+    }
+
     /// Scales and blits ONE placement, returning the cell box it covers.
     ///
     /// The cell box is what the below-background layer needs, and it is derived from the
@@ -748,4 +820,34 @@ fn unskipped_spans(cols: u16, y: u16, rects: &[CellRect]) -> Vec<(u16, u16)> {
         spans.push((from, cols - from));
     }
     spans
+}
+
+/// Copies a rectangle out of an RGBA image.
+///
+/// Rows outside the source contribute transparent pixels rather than wrapping to the next
+/// line, which is the failure that makes a crop look like a shear.
+fn crop_cells(
+    source: &[u8],
+    source_width: u32,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> Vec<u8> {
+    let mut out = vec![0u8; (width * height * 4) as usize];
+    for row in 0..height {
+        let src_y = y + row;
+        for column in 0..width {
+            let src_x = x + column;
+            if src_x >= source_width {
+                continue;
+            }
+            let src = ((src_y * source_width + src_x) * 4) as usize;
+            let dst = ((row * width + column) * 4) as usize;
+            if src + 4 <= source.len() {
+                out[dst..dst + 4].copy_from_slice(&source[src..src + 4]);
+            }
+        }
+    }
+    out
 }

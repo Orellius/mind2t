@@ -129,6 +129,20 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
 12. **Mirror table → full BidiMirroring.txt**, generated from the vendored UCD
     with the same lock discipline as the bidi suite (today: curated table,
     boundary documented in `bidi.rs::mirror`).
+14. **Kitty z-index and unicode placeholders. DONE 2026-07-31**
+    (`images-v3a-zindex`, `images-v3b-placeholders`). Placements gained the three
+    z layers the protocol defines (under the cell background, under the text, over
+    everything), sorted by `(z, image id)` in the publisher. And images can now
+    live IN THE GRID as U+10EEEE placeholder cells, which means they scroll,
+    reflow and erase exactly like the text they are made of, with no anchor to
+    keep in step — the structural answer to images drifting away from their cells,
+    where v2 could only teach the anchors to follow. Decoder ported from the
+    oracle's `graphics_unicode.zig` (the 297-entry diacritic table and the
+    `canAppend` run rules); the renderer crops per run, so a run showing the
+    middle of a scrolled image draws the middle of it.
+    **Not done, named:** animation, explicit source rectangles (`x,y,w,h` — a
+    placeholder crops by CELL, a different mechanism), placement ids beyond
+    run-splitting, and file/shared-memory transmission.
 13. **OSC 7 working directory. DONE 2026-07-31** (`osc7-cwd`). Stored raw and
     undecoded, terminal-global, cleared by an empty report and by RIS but not
     by DECSTR — every rule measured against the library before implementing,

@@ -14,6 +14,22 @@
 > OPEN here: synchronized output (2026), SGR mouse, scrollback viewport, kitty
 > keyboard, esctest2 wiring, DA1 sixel-advertisement decision, kitty unicode
 > placeholders/z-index/animation/file-transmission.
+>
+> **CLOSED 2026-08-01: DA1 sixel advertisement + the reports-grant posture.**
+> DA1 now answers `?62;4;22c`. Ghostty answers `?62;22c` and omits attribute 4
+> because it has no sixel decoder -- its only sixel mention IS the capability
+> table the number comes from (`device_attributes.zig:53`). We DO decode sixel,
+> so silence was the inaccurate answer: probing tools fall back to nothing when
+> 4 is absent, which is a working decoder nothing ever reaches. The divergence
+> is deliberate and asymmetric on purpose -- advertising a capability we HAVE is
+> a different claim from matching a reference that lacks it -- and it carries its
+> own named test so removing sixel support means deleting that test WITH it.
+> Screen-inspection replies (DECRQCRA, WINOPS 18) became a config key,
+> `reports = true`, **default FALSE**: they let a program read back what is on
+> screen, the same posture question as OSC 52 reads, so the grant stays the
+> operator's and travels through the config handle at spawn. A NULL config handle
+> grants nothing, which is the safe direction to be wrong in. Still open here:
+> animation and file-transmission for kitty graphics.
 
 
 Written 2026-07-29 (IDT), after the first day RUUAH VT ran real work (Claude Code,

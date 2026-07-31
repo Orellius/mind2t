@@ -36,8 +36,21 @@ impl State {
         }
     }
 
+    /// DA1, and the ONE place this core deliberately claims more than the oracle.
+    ///
+    /// Ghostty answers `?62;22c` -- vt220 conformance plus ansi_color -- and omits
+    /// attribute 4 because it has no sixel decoder at all; its only sixel mention
+    /// IS the capability table this list comes from (`device_attributes.zig:53`,
+    /// `sixel = 4`). This core does decode sixel, so staying silent would be the
+    /// inaccurate answer: `img2sixel` and friends probe DA1 and fall back to
+    /// nothing when 4 is absent, which is a working decoder no tool will ever use.
+    ///
+    /// Attributes ascend, so 4 goes before 22. Divergence from the oracle is
+    /// deliberate, corpus-pinned, and named in BACKLOG-2026.md -- and it is
+    /// asymmetric on purpose: advertising a capability we HAVE is a different
+    /// claim from matching a reference implementation that lacks it.
     pub(crate) fn device_attributes_primary(&mut self) {
-        self.replies.extend_from_slice(b"\x1b[?62;22c");
+        self.replies.extend_from_slice(b"\x1b[?62;4;22c");
     }
 
     pub(crate) fn device_attributes_secondary(&mut self) {
@@ -179,11 +192,38 @@ mod tests {
     }
 
     #[test]
-    fn the_three_device_attribute_answers_mirror_the_oracle() {
-        assert_eq!(replies_for(b"\x1b[c"), b"\x1b[?62;22c");
-        assert_eq!(replies_for(b"\x1b[0c"), b"\x1b[?62;22c");
+    fn the_three_device_attribute_answers_mirror_the_oracle_except_sixel() {
+        // DA2 and DA3 are byte-identical to the oracle. DA1 adds attribute 4,
+        // because we decode sixel and it does not -- the one place this core
+        // deliberately claims MORE. Asserted as exact bytes rather than a
+        // "contains 4", so an accidental reordering or a dropped 22 fails here.
+        assert_eq!(replies_for(b"\x1b[c"), b"\x1b[?62;4;22c");
+        assert_eq!(replies_for(b"\x1b[0c"), b"\x1b[?62;4;22c");
         assert_eq!(replies_for(b"\x1b[>c"), b"\x1b[>1;0;0c");
         assert_eq!(replies_for(b"\x1b[=c"), b"\x1bP!|00000000\x1b\\");
+    }
+
+    /// The divergence stated as its own assertion, so deleting it is a visible act
+    /// rather than an edit to a list. If sixel support were ever removed, this test
+    /// is the one that must be deleted WITH it -- and its failure says why.
+    #[test]
+    fn da1_advertises_sixel_because_this_core_decodes_it() {
+        let reply = replies_for(b"\x1b[c");
+        let text = String::from_utf8(reply).unwrap();
+        let attributes: Vec<&str> = text
+            .trim_start_matches("\x1b[?")
+            .trim_end_matches('c')
+            .split(';')
+            .collect();
+        // The FIRST field is the conformance level (62 = vt220), not a capability --
+        // the ascent rule applies to what follows it. Asserting otherwise failed on
+        // its first run, which is the test doing its job on the test.
+        assert_eq!(attributes.first(), Some(&"62"), "conformance level: {text:?}");
+        let capabilities = &attributes[1..];
+        assert!(capabilities.contains(&"4"), "sixel attribute missing: {text:?}");
+        assert!(capabilities.contains(&"22"), "ansi_color must survive: {text:?}");
+        let numbers: Vec<u32> = capabilities.iter().map(|a| a.parse().unwrap()).collect();
+        assert!(numbers.windows(2).all(|w| w[0] < w[1]), "attributes must ascend: {text:?}");
     }
 
     #[test]

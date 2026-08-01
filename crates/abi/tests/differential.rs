@@ -208,6 +208,12 @@ unsafe fn read_snapshot(handle: GhosttyTerminal, reader: Reader) -> Snapshot {
                     std::slice::from_raw_parts(raw.ptr, raw.len).to_vec()
                 }
             },
+            // Deliberately NOT read through the C surface yet: the ABI has no colour
+            // data enums until the colour slice lands. The moment the core tracks a
+            // colour, the Rust-side snapshot reports it, this default stops matching,
+            // and the colour corpus cases fail HERE -- which is the forcing function
+            // for adding GHOSTTY_TERMINAL_DATA_COLOR_* to our ghostty_terminal_get.
+            colors: ruuah_vt_snapshot::Colors::default(),
         }
     }
 }

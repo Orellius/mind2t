@@ -438,6 +438,11 @@ impl State {
             history: screen.history.to_rows(),
             damage: None,
             pwd: self.pwd.clone(),
+            // Harness-first placeholder: the core does not track OSC colour state yet,
+            // so it reports the shared default table. Every corpus case that changes a
+            // colour therefore DIFFs here until the colour slice lands -- which is the
+            // shape a new observable is supposed to start in.
+            colors: ruuah_vt_snapshot::Colors::default(),
         }
     }
 

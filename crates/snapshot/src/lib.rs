@@ -10,6 +10,6 @@ pub mod grid;
 
 pub use difference::{Difference, diff};
 pub use grid::{
-    Cell, Color, Cursor, Damage, Dirty, Modes, Row, RowSemantic, Screen, Semantic, Snapshot,
-    Style, Underline, Wide,
+    Cell, Color, Colors, Cursor, Damage, Dirty, Modes, Rgb, Row, RowSemantic, Screen, Semantic,
+    Snapshot, Style, Underline, Wide, default_palette,
 };

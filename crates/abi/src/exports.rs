@@ -246,6 +246,40 @@ pub unsafe extern "C" fn ghostty_terminal_get(
                     len: view.pwd.len(),
                 }
             }
+            // Effective colours: OSC override or embedder default, NO_VALUE when
+            // neither exists -- the oracle's exact result contract. The cursor getter
+            // deliberately has no foreground fallback; that rule belongs to the OSC
+            // query reply alone.
+            GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND
+            | GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND
+            | GHOSTTY_TERMINAL_DATA_COLOR_CURSOR => {
+                let color = match data {
+                    GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND => view.colors.foreground,
+                    GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND => view.colors.background,
+                    _ => view.colors.cursor,
+                };
+                let Some(c) = color else { return GHOSTTY_NO_VALUE };
+                *out.cast::<GhosttyColorRgb>() = GhosttyColorRgb { r: c.r, g: c.g, b: c.b };
+            }
+            // No embedder default surface exists yet (the OPT setters are unbuilt),
+            // so the dynamic defaults are honestly absent rather than zero-filled.
+            GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND_DEFAULT
+            | GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND_DEFAULT
+            | GHOSTTY_TERMINAL_DATA_COLOR_CURSOR_DEFAULT => return GHOSTTY_NO_VALUE,
+            GHOSTTY_TERMINAL_DATA_COLOR_PALETTE => {
+                let table = out.cast::<[GhosttyColorRgb; 256]>();
+                for (slot, c) in (*table).iter_mut().zip(view.colors.palette.iter()) {
+                    *slot = GhosttyColorRgb { r: c.r, g: c.g, b: c.b };
+                }
+            }
+            GHOSTTY_TERMINAL_DATA_COLOR_PALETTE_DEFAULT => {
+                let table = out.cast::<[GhosttyColorRgb; 256]>();
+                for (slot, c) in
+                    (*table).iter_mut().zip(ruuah_vt_snapshot::default_palette().iter())
+                {
+                    *slot = GhosttyColorRgb { r: c.r, g: c.g, b: c.b };
+                }
+            }
             _ => return GHOSTTY_INVALID_VALUE,
         }
     }

@@ -14,6 +14,7 @@
 //! compatibility and make every RTL line diverge from the oracle by construction.
 
 pub mod cell;
+mod colors;
 pub mod dispatch;
 pub mod events;
 pub mod graphics;

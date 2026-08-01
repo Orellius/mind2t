@@ -2,7 +2,7 @@
 # The corpus law in both directions: a line here failing is a regression; a test
 # passing without a line here must be promoted by adding it. Re-triage after suite
 # updates: cargo test -p ruuah-vt-pty --test esctest -- --ignored print_esctest --nocapture
-# Suite pin: esctest.lock. Baseline 2026-08-01 (DECLRMM slice): 367 pass of 568. The slice promoted 30 tests across CR, CNL, CPL, CUF, ICH, DCH, IL, DL, SU, SD, SM/IRM, SCORC and DECSET - the plan estimated ~10, because the margin tests hide inside those classes rather than forming one of their own. UNPINNED, deliberately: DSCSCL_Level3_SupportsDECRQMDoesntSupportDECSLRM, which passed only VACUOUSLY while DECSLRM did not exist - it asserts that conformance level 3 REFUSES DECSLRM, and this core does not track DECSCL levels at all, so implementing the feature un-passed it. Same shape as DECSCL_Level2DoesntSupportDECRQM when DECRQM landed; DECSCL level tracking stays its own future item. Margins are differentially measured - the oracle carries scrolling_region.left/right - and the one rule that had to be corrected against a wrong assumption is CUB: it clamps at COLUMN 0 and ignores the left margin, because the oracle's cursorLeft fast path skips the margin logic whenever no reverse-wrap mode is active, while CUF still stops at the right margin.
+# Suite pin: esctest.lock. Baseline 2026-08-01 (DECLRMM slice): 368 pass of 568. The slice promoted 31 tests (30 in the slice, plus DECRQSS_DECSLRM, which the Ghostty re-measurement surfaced: it answered that query while we refused, a refusal that was correct before margins existed) across CR, CNL, CPL, CUF, ICH, DCH, IL, DL, SU, SD, SM/IRM, SCORC and DECSET - the plan estimated ~10, because the margin tests hide inside those classes rather than forming one of their own. UNPINNED, deliberately: DSCSCL_Level3_SupportsDECRQMDoesntSupportDECSLRM, which passed only VACUOUSLY while DECSLRM did not exist - it asserts that conformance level 3 REFUSES DECSLRM, and this core does not track DECSCL levels at all, so implementing the feature un-passed it. Same shape as DECSCL_Level2DoesntSupportDECRQM when DECRQM landed; DECSCL level tracking stays its own future item. Margins are differentially measured - the oracle carries scrolling_region.left/right - and the one rule that had to be corrected against a wrong assumption is CUB: it clamps at COLUMN 0 and ignores the left margin, because the oracle's cursorLeft fast path skips the margin logic whenever no reverse-wrap mode is active, while CUF still stops at the right margin.
 APCTests.test_APC_Basic
 BSTests.test_BS_Basic
 BSTests.test_BS_CursorStartsInDoWrapPosition
@@ -137,6 +137,7 @@ DECRQMTests.test_DECRQM_DEC_DECSCNM
 DECRQMTests.test_DECRQM_DEC_DECTCEM
 DECRQSSTests.test_DECRQSS_DECSCA
 DECRQSSTests.test_DECRQSS_DECSCUSR
+DECRQSSTests.test_DECRQSS_DECSLRM
 DECRQSSTests.test_DECRQSS_DECSTBM
 DECRQSSTests.test_DECRQSS_SGR
 DECSCLTests.test_DSCSCL_Level2Supports7BitControls

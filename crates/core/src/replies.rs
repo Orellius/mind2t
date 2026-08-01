@@ -145,14 +145,29 @@ impl State {
     /// DECRQSS (DCS $ q <setting> ST) -> DECRPSS `DCS {1|0} $ r <value><setting> ST`.
     ///
     /// The supported settings mirror the ORACLE's exactly (`dcs.zig` DECRQSS enum):
-    /// SGR ("m"), DECSCUSR (" q"), DECSTBM ("r"), and DECSLRM ("s") which answers
-    /// invalid here because left/right margins are not tracked -- the same answer the
-    /// oracle gives with mode 69 off. Everything else, xterm's wider catalogue
-    /// included, is `DCS 0 $ r ST`: an honest "I do not carry that setting", the
-    /// DECRQM posture applied to DCS.
+    /// SGR ("m"), DECSCUSR (" q"), DECSTBM ("r") and DECSLRM ("s"), plus DECSCA
+    /// which xterm carries and the oracle does not. DECSLRM went live with the
+    /// DECLRMM slice: it reports the band while mode 69 is on and answers invalid
+    /// while it is off, which is the oracle's own condition. Everything else is
+    /// `DCS 0 $ r ST`: an honest "I do not carry that setting", the DECRQM posture
+    /// applied to DCS.
     pub(crate) fn decrqss_reply(&mut self, setting: &[u8]) {
         let body: Option<String> = match setting {
             b"m" => Some(self.sgr_report()),
+            b"s" => {
+                // DECSLRM reports only while DECLRMM is on - the oracle's own arm
+                // (`dcs.zig`: `if (t.modes.get(.enable_left_and_right_margin))`),
+                // so with the mode off this falls through to the invalid answer.
+                // Added when the Ghostty re-measurement showed it answering this
+                // and us refusing, which was true before margins existed and stale
+                // the moment they landed.
+                if self.left_right_margin {
+                    let screen = self.screen();
+                    Some(format!("{};{}s", screen.scroll_left + 1, screen.scroll_right + 1))
+                } else {
+                    None
+                }
+            }
             b"r" => {
                 let screen = self.screen();
                 Some(format!("{};{}r", screen.scroll_top + 1, screen.scroll_bottom + 1))
@@ -630,10 +645,15 @@ mod tests {
 
     #[test]
     fn decrqss_refuses_what_it_does_not_carry() {
-        // DECSLRM without left/right margins, and xterm's wider catalogue (DECSLPP
-        // here): an honest invalid, exactly the oracle's `0$r` shape.
+        // DECSLRM with DECLRMM OFF, and xterm's wider catalogue (DECSLPP here):
+        // an honest invalid, exactly the oracle's `0$r` shape.
         assert_eq!(replies_for(b"\x1bP$qs\x1b\\"), b"\x1bP0$r\x1b\\");
         assert_eq!(replies_for(b"\x1bP$qt\x1b\\"), b"\x1bP0$r\x1b\\");
+        // With the mode ON it reports the live band, 1-based. This arm did not exist
+        // until the Ghostty re-measurement showed it answering DECRQSS(DECSLRM)
+        // while we refused - a refusal that was right before margins existed and
+        // went stale the moment they landed.
+        assert_eq!(replies_for(b"\x1b[?69h\x1b[3;6s\x1bP$qs\x1b\\"), b"\x1bP1$r3;6s\x1b\\");
         // DECSCA joined the catalogue with the selective-erase slice.
         assert_eq!(replies_for(b"\x1bP$q\"q\x1b\\"), b"\x1bP1$r0\"q\x1b\\");
         assert_eq!(replies_for(b"\x1b[1\"q\x1bP$q\"q\x1b\\"), b"\x1bP1$r1\"q\x1b\\");

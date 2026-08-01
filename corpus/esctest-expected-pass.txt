@@ -2,7 +2,7 @@
 # The corpus law in both directions: a line here failing is a regression; a test
 # passing without a line here must be promoted by adding it. Re-triage after suite
 # updates: cargo test -p ruuah-vt-pty --test esctest -- --ignored print_esctest --nocapture
-# Suite pin: esctest.lock. Baseline 2026-08-01 (post-VPR/HPR): 126 pass / 397 fail / 45 skip of 568 (DECCKM promoted by the SGR mouse slice; DECNKM by the kitty keyboard slice, which tracks mode 66). Note: DECSCL_Level2DoesntSupportDECRQM passed only while DECRQM did not exist at all (vacuous level-gating); answering DECRQM un-passed it, and DECSCL level tracking is its own future item.
+# Suite pin: esctest.lock. Baseline 2026-08-01 (post-OSC-colour): 137 pass / 386 fail / 45 skip of 568 (the colour slice promoted 11: ChangeColor 3, ChangeDynamicColor 3, ChangeSpecialColor 3 - which Ghostty 1.3.1 fails - and ResetColor 2. Hash3/Hash9/Hash12/RGBI stay failing DELIBERATELY: the core mirrors the oracle's v*255/max hex scaling, not xterm's truncation; see crates/core/src/colors.rs).
 BSTests.test_BS_Basic
 BSTests.test_BS_InitialReverseWraparound
 BSTests.test_BS_MovesLeftWhenLeftOfLeftMargin
@@ -51,6 +51,15 @@ CUUTests.test_CUU_ExplicitParam
 CUUTests.test_CUU_StopsAtTopLine
 CUUTests.test_CUU_StopsAtTopLineWhenBegunAboveScrollRegion
 CUUTests.test_CUU_StopsAtTopMarginInScrollRegion
+ChangeColorTests.test_ChangeColor_Hash6
+ChangeColorTests.test_ChangeColor_Multiple
+ChangeColorTests.test_ChangeColor_RGB
+ChangeDynamicColorTests.test_ChangeDynamicColor_Hash6
+ChangeDynamicColorTests.test_ChangeDynamicColor_Multiple
+ChangeDynamicColorTests.test_ChangeDynamicColor_RGB
+ChangeSpecialColorTests.test_ChangeSpecialColor_Hash6
+ChangeSpecialColorTests.test_ChangeSpecialColor_Multiple
+ChangeSpecialColorTests.test_ChangeSpecialColor_RGB
 DECBITests.test_DECBI_NoWrapOnLeftEdge
 DECCRATests.test_DECCRA_cursorDoesNotMove
 DECERATests.test_DECERA_cursorDoesNotMove
@@ -112,6 +121,8 @@ RISTests.test_RIS_CursorToOrigin
 RISTests.test_RIS_RemoveMargins
 RISTests.test_RIS_ResetTabs
 RITests.test_RI_Basic
+ResetColorTests.test_ResetColor_All
+ResetColorTests.test_ResetColor_Standard
 SCORCTests.test_SaveRestoreCursor_AltVsMain
 SCORCTests.test_SaveRestoreCursor_Basic
 SCORCTests.test_SaveRestoreCursor_MoveToHomeWhenNotSaved

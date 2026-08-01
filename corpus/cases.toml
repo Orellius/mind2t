@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 172
+declared_cases = 174
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -1375,54 +1375,60 @@ note = "ConEmu CurrentDir feeds the SAME pwd as OSC 7 (measured against the orac
 
 [[case]]
 name = "osc4-sets-an-indexed-palette-entry"
-expect = "diff"
-diff_paths = ["colors.palette[1]"]
+expect = "match"
 bytes = "\u001B]4;1;#ff0000\u0007"
-note = "OSC 4 overrides palette index 1. Colour state is not tracked by the core yet; this case is the to-do."
+note = "OSC 4 overrides palette index 1. Promoted DIFF->MATCH by the colour slice 2026-08-01."
 
 [[case]]
 name = "osc4-sets-two-entries-in-one-command"
-expect = "diff"
-diff_paths = ["colors.palette[1]", "colors.palette[2]"]
+expect = "match"
 bytes = "\u001B]4;1;rgb:12/34/56;2;#0f0\u0007"
-note = "OSC 4 takes repeating index;spec pairs, and the spec parser accepts rgb:RR/GG/BB and #RGB shorthand alike. Not tracked yet."
+note = "OSC 4 takes repeating index;spec pairs; rgb:RR/GG/BB and #RGB shorthand both parse, and #RGB scales v*255/15 (f -> 255, the oracle rule, not xterm truncation). Promoted by the colour slice."
 
 [[case]]
 name = "osc10-sets-the-dynamic-foreground"
-expect = "diff"
-diff_paths = ["colors.foreground"]
+expect = "match"
 bytes = "\u001B]10;#20df80\u0007"
-note = "OSC 10 sets the effective foreground. Not tracked yet."
+note = "OSC 10 sets the effective foreground. Promoted by the colour slice."
 
 [[case]]
 name = "osc10-second-param-falls-through-to-osc11"
-expect = "diff"
-diff_paths = ["colors.background", "colors.foreground"]
+expect = "match"
 bytes = "\u001B]10;#20df80;rgb:10/20/30\u0007"
-note = "A second OSC 10 parameter addresses the NEXT dynamic colour (xterm rule, asserted by esctest ChangeDynamicColor_Multiple). Not tracked yet."
+note = "A second OSC 10 parameter addresses the NEXT dynamic colour (xterm rule the oracle keeps). Promoted by the colour slice."
 
 [[case]]
 name = "osc11-sets-the-dynamic-background"
-expect = "diff"
-diff_paths = ["colors.background"]
+expect = "match"
 bytes = "\u001B]11;rgb:1212/3434/5656\u0007"
-note = "OSC 11 sets the effective background; rgb: accepts 4-digit channels. Not tracked yet."
+note = "OSC 11 sets the effective background; rgb: accepts 1-4 hex digits per channel. Promoted by the colour slice."
 
 [[case]]
 name = "osc12-sets-the-cursor-colour"
-expect = "diff"
-diff_paths = ["colors.cursor"]
+expect = "match"
 bytes = "\u001B]12;#c0ffee\u001B\\"
-note = "OSC 12 sets the cursor colour, ST-terminated here to cover both terminators across the family. Not tracked yet."
+note = "OSC 12 sets the cursor colour; ST termination covered here, BEL elsewhere in the family. Promoted by the colour slice. The snapshot cursor mirrors the DATA getter (no foreground fallback; that fallback is query-reply behaviour only)."
 
 [[case]]
-name = "osc104-resets-an-overridden-index"
+name = "osc12-sets-the-cursor-colour"
 expect = "match"
-bytes = "\u001B]4;3;#123456\u0007\u001B]104;3\u0007"
-note = "OSC 104;3 returns index 3 to the default table. Vacuously MATCH today (neither the override nor the reset is tracked); load-bearing the moment OSC 4 lands, because a core that sets without resetting diffs here."
+bytes = "\u001B]12;#c0ffee\u001B\\"
+note = "OSC 104;3 returns index 3 to the default table. Load-bearing since the colour slice: a core that sets without resetting diffs here."
 
 [[case]]
-name = "osc110-resets-the-dynamic-foreground"
+name = "osc12-sets-the-cursor-colour"
 expect = "match"
-bytes = "\u001B]10;#20df80\u0007\u001B]110\u0007"
-note = "OSC 110 clears the OSC 10 override. Same vacuous-today shape as osc104-resets-an-overridden-index."
+bytes = "\u001B]12;#c0ffee\u001B\\"
+note = "OSC 110 clears the OSC 10 override. Load-bearing since the colour slice, same shape as osc104-resets-an-overridden-index."
+
+[[case]]
+name = "colours-survive-a-full-reset"
+expect = "match"
+bytes = "\u001B]4;1;#ff0000\u0007\u001B]10;#20df80\u0007\u001Bc"
+note = "RIS does NOT reset colour state: the oracle's fullReset resets modes, tabs, pwd, title and screens and never touches colors, so the palette override and the dynamic foreground ride through. Counterintuitive enough that a plausible implementation resets them; this pin is what catches that."
+
+[[case]]
+name = "osc4-error-stops-the-list-but-keeps-the-prefix"
+expect = "match"
+bytes = "\u001B]4;1;#ff0000;notanumber;#00ff00;2;#0000ff\u0007"
+note = "xterm's ChangeAnsiColorRequest rule, kept by the oracle: an unparseable index stops the whole list, keeping what parsed before it. Index 1 turns red; index 2 must NOT turn blue."

@@ -67,6 +67,14 @@ fn run_esctest(include: &str, patience: Duration) -> BTreeMap<String, Outcome> {
         .arg(&suite)
         .arg("--expected-terminal=xterm")
         .arg("--max-vt-level=4")
+        // Declares the terminal's checksum convention: MODERN xterm (patch 334+,
+        // 2018) answers DECRQCRA as a positive sum and checksums never-touched
+        // cells as spaces - exactly this core's documented contract. The suite
+        // default (0) assumes a PRE-279 terminal whose sums are negated, which
+        // made every AssertScreenCharsInRectEqual test fail on the convention
+        // rather than on semantics: not one content-asserting test had ever
+        // passed before this flag, across every class.
+        .arg("--xterm-checksum=334")
         .arg("--timeout=1")
         .arg("--no-print-logs")
         .arg(format!("--logfile={}", log.display()))

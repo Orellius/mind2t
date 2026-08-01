@@ -210,6 +210,15 @@ pub struct Modes {
     /// GRID EFFECTS; this bit is the part that would otherwise be invisible, since
     /// enabling the mode alone changes nothing on screen.
     pub left_right_margin: bool,
+    /// DEC ?3 (DECCOLM): 132-column mode. The RESIZE it performs is visible as grid
+    /// width, but the bit itself must be compared separately: without mode 40 the
+    /// oracle's `deccolm` forces it false and does nothing, and a core that stored
+    /// the bit while skipping the resize (or resized without storing) would be
+    /// invisible to a grid-only comparison in one direction each.
+    pub column_132: bool,
+    /// DEC ?40 (xterm's Allow80To132): the gate DECCOLM is behind. Pure stored
+    /// state in the oracle (`stream_terminal.zig`: `.enable_mode_3 => {}`).
+    pub enable_mode_3: bool,
 }
 
 impl Default for Modes {
@@ -238,6 +247,8 @@ impl Default for Modes {
             reverse_colors: false,
             backarrow: false,
             left_right_margin: false,
+            column_132: false,
+            enable_mode_3: false,
         }
     }
 }

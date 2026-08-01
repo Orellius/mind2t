@@ -95,6 +95,12 @@ impl State {
         } else {
             let tracked = match mode {
                 1 => Some(self.cursor_keys),
+                // DECCOLM and its gate: both in the oracle's own table, both now
+                // genuinely tracked here (the resize really happens), so the answer
+                // is honest under this function's own law.
+                3 => Some(self.column_132),
+                40 => Some(self.enable_mode_3),
+                69 => Some(self.left_right_margin),
                 4 => Some(self.slow_scroll),
                 5 => Some(self.reverse_colors),
                 67 => Some(self.backarrow),
@@ -325,13 +331,39 @@ impl State {
         self.replies.extend_from_slice(reply.as_bytes());
     }
 
-    /// XTERM_WINOPS reports (CSI Ps t). Only 18 -- the text area size in characters,
-    /// `CSI 8 ; rows ; cols t` -- because it is what esctest's `GetScreenSize` runs on
-    /// at init. The resize/move ops in the same namespace are refused outright (a child
-    /// moving the operator's window is not a feature), and the pixel reports wait for a
-    /// consumer. Gated with the checksum: both let the child inspect the screen.
-    pub(crate) fn window_report(&mut self, op: u16, sub: u16) {
+    /// XTERM_WINOPS (CSI Ps t). Reports: 18 (text area size in characters, what
+    /// esctest's `GetScreenSize` runs on) and 20/21 (titles). Mutations: 8, the
+    /// character-cell resize, added with DECCOLM because esctest's between-test
+    /// reset recovers from 132-column mode with `CSI 8;25;80 t` and a suite that
+    /// cannot recover poisons every test after the first DECCOLM. The move/iconify
+    /// ops stay refused outright (a child moving the operator's window is not a
+    /// feature), and the pixel forms (4/14) wait for a consumer: the core has no
+    /// pixel geometry. Everything here is gated behind the embedder's reports
+    /// grant: the readbacks because they let the child inspect the screen, the
+    /// resize because a child reshaping the operator's terminal unasked is the
+    /// same hostility class. The app does not grant it; the esctest harness does.
+    ///
+    /// No oracle for op 8: Ghostty routes CSI t to its APP layer (surface
+    /// messages), so libghostty-vt never sees a window op. Unit-gated, said
+    /// loudly, the sixel precedent.
+    pub(crate) fn window_report(&mut self, op: u16, a: u16, b: u16) {
         match op {
+            // Resize the text area to `a` rows by `b` cols. xterm's zero rule is
+            // "use the display's dimension"; the core has no display, so zero (and
+            // omitted) keeps the CURRENT dimension, the nearest honest reading.
+            // A same-size request is a no-op rather than a resize, so it cannot
+            // reset scroll regions or synchronized output as a side effect.
+            8 => {
+                if !self.reports_enabled {
+                    return;
+                }
+                let (cur_cols, cur_rows) = (self.screen().cols(), self.screen().rows());
+                let rows = if a == 0 { cur_rows } else { a };
+                let cols = if b == 0 { cur_cols } else { b };
+                if (cols, rows) != (cur_cols, cur_rows) {
+                    self.child_resize(cols, rows);
+                }
+            }
             18 => {
                 if !self.reports_enabled {
                     return;
@@ -365,7 +397,7 @@ impl State {
             // exit is the whole point of the feature.
             22 => {
                 const CAP: usize = 10;
-                let entry = match sub {
+                let entry = match a {
                     1 => (self.icon_title.clone(), String::new()),
                     2 => (String::new(), self.title.clone()),
                     _ => (self.icon_title.clone(), self.title.clone()),
@@ -380,10 +412,10 @@ impl State {
                 // A pop restores only what its sub-command names, so an icon-only pop
                 // must leave the window title alone even when the entry carries both
                 // (esctest asserts exactly that in PopIcon and PopWindow).
-                if sub != 2 {
+                if a != 2 {
                     self.icon_title = icon;
                 }
-                if sub != 1 {
+                if a != 1 {
                     self.title = window.clone();
                     self.push_event(crate::events::Event::Title(window));
                 }
@@ -520,6 +552,93 @@ mod tests {
         // 2 = iconify, 3 = move: a child steering the operator's window is not a
         // feature. 14/16 (pixel reports) wait for a consumer.
         assert_eq!(reporting_terminal(b"\x1b[2t\x1b[3;0;0t\x1b[14t\x1b[16t"), b"");
+    }
+
+    #[test]
+    fn decrqm_answers_deccolm_its_gate_and_declrmm() {
+        // Mode 40 toggles as pure state; mode 3 toggles only once 40 is armed
+        // (the inert direction first, then the armed round trip); 69 is DECLRMM.
+        assert_eq!(replies_for(b"\x1b[?40$p"), b"\x1b[?40;2$y");
+        assert_eq!(replies_for(b"\x1b[?40h\x1b[?40$p"), b"\x1b[?40;1$y");
+        assert_eq!(replies_for(b"\x1b[?3h\x1b[?3$p"), b"\x1b[?3;2$y", "no grant, no mode");
+        assert_eq!(replies_for(b"\x1b[?40h\x1b[?3h\x1b[?3$p"), b"\x1b[?3;1$y");
+        assert_eq!(replies_for(b"\x1b[?40h\x1b[?3h\x1b[?3l\x1b[?3$p"), b"\x1b[?3;2$y");
+        assert_eq!(replies_for(b"\x1b[?69$p"), b"\x1b[?69;2$y");
+        assert_eq!(replies_for(b"\x1b[?69h\x1b[?69$p"), b"\x1b[?69;1$y");
+    }
+
+    /// WINOPS 8, both directions of its grant: without `enable_reports` the resize
+    /// must NOT happen (a child reshaping the operator's terminal unasked), and with
+    /// it the grid must actually wear the new size. Observed as dimensions, since
+    /// the op produces no reply bytes to assert on.
+    #[test]
+    fn winop_8_resizes_only_with_the_grant() {
+        let mut denied = Terminal::new(20, 10);
+        denied.write(b"\x1b[8;12;40t");
+        let snap = denied.snapshot();
+        assert_eq!((snap.cols, snap.rows), (20, 10), "no grant, no resize");
+
+        let mut granted = Terminal::new(20, 10);
+        granted.enable_reports(true);
+        granted.write(b"\x1b[8;12;40t");
+        let snap = granted.snapshot();
+        assert_eq!((snap.cols, snap.rows), (40, 12));
+    }
+
+    /// The zero rule: xterm's zero means "the display's dimension", the core has no
+    /// display, so zero keeps the CURRENT dimension. Each axis independently.
+    #[test]
+    fn winop_8_zero_keeps_the_current_dimension() {
+        let mut terminal = Terminal::new(20, 10);
+        terminal.enable_reports(true);
+        terminal.write(b"\x1b[8;0;35t");
+        let snap = terminal.snapshot();
+        assert_eq!((snap.cols, snap.rows), (35, 10));
+        terminal.write(b"\x1b[8;14;0t");
+        let snap = terminal.snapshot();
+        assert_eq!((snap.cols, snap.rows), (35, 14));
+    }
+
+    /// The child-resize ceiling, seen to FIRE and seen to stay quiet (SCAR-004: a
+    /// guard is not proven by the absence of what it suppresses). Past the ceiling
+    /// the request is ignored WHOLE, mode bit included for DECCOLM, because a bit
+    /// claiming 132 columns over a narrower grid is the lie DECRQM exists to
+    /// prevent. And the ceiling survives RIS like the reports grant.
+    #[test]
+    fn the_child_resize_ceiling_refuses_and_admits() {
+        let mut capped = Terminal::new(20, 10);
+        capped.enable_reports(true);
+        capped.set_child_resize_ceiling(30, 15);
+
+        // WINOPS 8 within the ceiling: admitted.
+        capped.write(b"\x1b[8;12;25t");
+        let snap = capped.snapshot();
+        assert_eq!((snap.cols, snap.rows), (25, 12));
+
+        // WINOPS 8 past the ceiling: refused whole, grid untouched.
+        capped.write(b"\x1b[8;12;40t");
+        let snap = capped.snapshot();
+        assert_eq!((snap.cols, snap.rows), (25, 12), "the ceiling must fire");
+
+        // DECCOLM's 132 is past this ceiling: no resize, and DECRQM keeps answering
+        // reset. That pairing is what keeps the answer honest.
+        capped.write(b"\x1b[?40h\x1b[?3h");
+        let snap = capped.snapshot();
+        assert_eq!((snap.cols, snap.rows), (25, 12));
+        capped.write(b"\x1b[?3$p");
+        assert_eq!(capped.take_replies(), b"\x1b[?3;2$y");
+
+        // RIS cannot shed the ceiling: it is the embedder's property.
+        capped.write(b"\x1bc\x1b[8;12;40t");
+        let snap = capped.snapshot();
+        assert_eq!((snap.cols, snap.rows), (25, 12), "ceiling survives RIS");
+
+        // Control: the same DECCOLM under a ceiling that admits 132.
+        let mut roomy = Terminal::new(20, 10);
+        roomy.set_child_resize_ceiling(200, 100);
+        roomy.write(b"\x1b[?40h\x1b[?3h");
+        let snap = roomy.snapshot();
+        assert_eq!((snap.cols, snap.rows), (132, 10));
     }
 
     /// The kitty detection handshake, the exact probe a 2026 CLI sends: query, push,

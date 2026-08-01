@@ -417,6 +417,9 @@ fn pump(
     let mut terminal =
         Terminal::with_scrollback(options.size.cols, options.size.rows, options.scrollback);
     terminal.enable_reports(options.reports);
+    // Without this, a child-driven resize (DECCOLM, WINOPS 8) could outgrow the frame
+    // channel and turn the GATED expect below into a child-triggerable panic.
+    terminal.set_child_resize_ceiling(options.capacity.cols, options.capacity.rows);
     let mut buffer = vec![0u8; 64 * 1024];
 
     // Synchronized output (mode 2026): while the child holds the gate, reads parse but

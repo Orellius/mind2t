@@ -157,6 +157,15 @@ impl State {
                 let screen = self.screen();
                 Some(format!("{};{}r", screen.scroll_top + 1, screen.scroll_bottom + 1))
             }
+            b"\"q" => {
+                // DECSCA: 1 while the pen protects, 0 otherwise. Reply-only
+                // divergence: the oracle's DECRQSS catalogue omits it and answers
+                // invalid; xterm (and esctest) answer the state.
+                Some(format!(
+                    "{}\"q",
+                    u8::from(self.screen().protected == crate::cell::Protection::Dec)
+                ))
+            }
             b" q" => {
                 // The inverse of set_cursor_shape's table, the oracle's own mapping:
                 // blink picks the odd value of each pair.
@@ -568,10 +577,13 @@ mod tests {
 
     #[test]
     fn decrqss_refuses_what_it_does_not_carry() {
-        // DECSLRM without left/right margins, and xterm's wider catalogue (DECSCA
+        // DECSLRM without left/right margins, and xterm's wider catalogue (DECSLPP
         // here): an honest invalid, exactly the oracle's `0$r` shape.
         assert_eq!(replies_for(b"\x1bP$qs\x1b\\"), b"\x1bP0$r\x1b\\");
-        assert_eq!(replies_for(b"\x1bP$q\"q\x1b\\"), b"\x1bP0$r\x1b\\");
+        assert_eq!(replies_for(b"\x1bP$qt\x1b\\"), b"\x1bP0$r\x1b\\");
+        // DECSCA joined the catalogue with the selective-erase slice.
+        assert_eq!(replies_for(b"\x1bP$q\"q\x1b\\"), b"\x1bP1$r0\"q\x1b\\");
+        assert_eq!(replies_for(b"\x1b[1\"q\x1bP$q\"q\x1b\\"), b"\x1bP1$r1\"q\x1b\\");
         // An oversized request drops whole - the oracle's ignore state, not a reply.
         assert_eq!(replies_for(b"\x1bP$qabc\x1b\\"), b"");
     }

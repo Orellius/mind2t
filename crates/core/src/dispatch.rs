@@ -11,6 +11,7 @@
 use ruuah_vt_snapshot::Semantic;
 use vte::Params;
 
+use crate::cell::Protection;
 use crate::sgr;
 use crate::terminal::{Active, State};
 
@@ -157,7 +158,7 @@ impl State {
         let blank = self.blank();
         self.mark_full_damage();
         self.scroll_clear_at_prompt(blank);
-        self.screen_mut().erase_in_display(2, blank);
+        self.screen_mut().erase_in_display(2, blank, Protection::None);
     }
 
     /// The kitty keyboard CSI family (`stream.zig`'s 'u' intermediate dispatch):
@@ -245,15 +246,33 @@ impl State {
         }
 
         if intermediates.first() == Some(&b'?') {
-            let on = match action {
-                'h' => true,
-                'l' => false,
-                _ => return,
-            };
-            for item in params.iter() {
-                if let Some(&mode) = item.first() {
-                    self.set_mode(mode, on);
+            match action {
+                'h' | 'l' => {
+                    let on = action == 'h';
+                    for item in params.iter() {
+                        if let Some(&mode) = item.first() {
+                            self.set_mode(mode, on);
+                        }
+                    }
                 }
+                // DECSED / DECSEL: the selective erases. Only DECSCA protection is
+                // honored, and only here - plain ED/EL erase protected cells too.
+                'J' => {
+                    let blank = self.blank();
+                    let mode = zero_arg(params, 0);
+                    if mode == 2 {
+                        self.mark_full_damage();
+                    }
+                    // The selective erases spare DEC-protected (DECSCA) cells and
+                    // erase ISO-protected ones - xterm's matrix, pinned by esctest's
+                    // DECSED_doesNotRespectISOProtect.
+                    self.screen_mut().erase_in_display(mode, blank, Protection::Dec);
+                }
+                'K' => {
+                    let blank = self.blank();
+                    self.screen_mut().erase_in_line(zero_arg(params, 0), blank, Protection::Dec);
+                }
+                _ => {}
             }
             return;
         }
@@ -293,6 +312,14 @@ impl State {
                         arg_or_zero(params, 3),
                     );
                 }
+                '{' => {
+                    return self.selective_erase_rect(
+                        arg_or_zero(params, 0),
+                        arg_or_zero(params, 1),
+                        arg_or_zero(params, 2),
+                        arg_or_zero(params, 3),
+                    );
+                }
                 'v' => {
                     // Pps (4) and Ppd (7) are page numbers: accepted, ignored, one page.
                     return self.copy_rect(
@@ -312,6 +339,17 @@ impl State {
         // is the embedder's concern.
         if action == 'q' && intermediates == [b' '] {
             return self.set_cursor_shape(arg_or_zero(params, 0));
+        }
+
+        // DECSCA (CSI Ps " q): 1 protects what prints next (DEC kind); 0 and 2 both
+        // unprotect (esctest pins their equivalence).
+        if action == 'q' && intermediates == [b'"'] {
+            match arg_or_zero(params, 0) {
+                0 | 2 => self.screen_mut().protected = Protection::None,
+                1 => self.screen_mut().protected = Protection::Dec,
+                _ => {}
+            }
+            return;
         }
 
         // DECRQCRA (CSI Pid;Pp;Pt;Pl;Pb;Pr * y): the checksum readback esctest2's screen
@@ -426,10 +464,14 @@ impl State {
                     self.mark_full_damage();
                     self.scroll_clear_at_prompt(blank);
                 }
-                self.screen_mut().erase_in_display(mode, blank);
+                // The plain erases spare ISO-protected (SPA/EPA) cells and erase
+                // DEC-protected ones - the other half of xterm's matrix.
+                self.screen_mut().erase_in_display(mode, blank, Protection::Iso);
             }
-            'K' => self.screen_mut().erase_in_line(zero_arg(params, 0), blank),
-            'X' => self.screen_mut().erase_chars(arg(params, 0), blank),
+            'K' => {
+                self.screen_mut().erase_in_line(zero_arg(params, 0), blank, Protection::Iso);
+            }
+            'X' => self.screen_mut().erase_chars(arg(params, 0), blank, Protection::Iso),
             '@' => self.screen_mut().insert_chars(arg(params, 0), blank),
             'P' => self.screen_mut().delete_chars(arg(params, 0), blank),
             'L' => self.screen_mut().insert_lines(arg(params, 0), blank),
@@ -485,6 +527,9 @@ impl State {
             // mode_get(66) observes both spellings identically.
             b'=' => self.keypad_keys = true,
             b'>' => self.keypad_keys = false,
+            // SPA / EPA: the ISO protection pen. Plain erases spare these cells.
+            b'V' => self.screen_mut().protected = Protection::Iso,
+            b'W' => self.screen_mut().protected = Protection::None,
             b'c' => self.full_reset(),
             _ => {}
         }

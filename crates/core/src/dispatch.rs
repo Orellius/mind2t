@@ -391,7 +391,7 @@ impl State {
             }
 
             'n' => self.device_status_report(arg_or_zero(params, 0)),
-            't' => self.window_report(arg_or_zero(params, 0)),
+            't' => self.window_report(arg_or_zero(params, 0), arg_or_zero(params, 1)),
             'c' => {
                 if arg_or_zero(params, 0) == 0 {
                     self.device_attributes_primary();

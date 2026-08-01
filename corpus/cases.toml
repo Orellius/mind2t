@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 188
+declared_cases = 191
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -1519,3 +1519,21 @@ name = "probe-iso-protection-against-complete-erase"
 expect = "match"
 bytes = "a\u001BVb\u001BW\u001B[1;1H\u001B[2J"
 note = "MEASURED: a complete erase (ED 2) DOES spare an ISO-protected cell, on both sides. Kept as a pin because it is the fact that forced DECSTR to strip protection - without that, esctest carries a protected cell across its own between-test reset."
+
+[[case]]
+name = "osc2-sets-the-window-title"
+expect = "match"
+bytes = "\u001B]2;hello world\u0007"
+note = "OSC 2 sets the window title, a real differential observable (the oracle answers GHOSTTY_TERMINAL_DATA_TITLE). Before the winops slice the core raised a Title EVENT and stored nothing, so a snapshot could not see it at all."
+
+[[case]]
+name = "osc1-sets-only-the-icon-title"
+expect = "match"
+bytes = "\u001B]2;window\u0007\u001B]1;icon\u0007"
+note = "OSC 1 addresses the ICON title only, so the window title must survive it. The oracle has no icon title, which is exactly why this case is worth pinning: a core that let OSC 1 overwrite the window title would diverge HERE and nowhere else."
+
+[[case]]
+name = "ris-clears-the-title"
+expect = "match"
+bytes = "\u001B]2;doomed\u0007\u001Bc"
+note = "RIS clears the title (the oracle's fullReset clears its title buffer)."

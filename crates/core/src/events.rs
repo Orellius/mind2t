@@ -109,9 +109,19 @@ impl State {
 
     /// OSC 0 / OSC 2: set the title. 0 also names the icon; this core treats both as
     /// the title, which is what every modern terminal does.
+    /// OSC 0 sets both titles, OSC 1 the icon title only, OSC 2 the window title only
+    /// (xterm's split). The window title is what the host shows, so only it raises a
+    /// Title event; the icon title is stored for the winops report and nothing else.
     pub(crate) fn osc_title(&mut self, params: &[&[u8]]) {
+        let which = params.first().copied().unwrap_or(b"0");
         let title = join_fields(params.get(1..).unwrap_or_default());
-        self.push_event(Event::Title(title));
+        if which != b"2" {
+            self.icon_title = title.clone();
+        }
+        if which != b"1" {
+            self.title = title.clone();
+            self.push_event(Event::Title(title));
+        }
     }
 
     /// OSC 777 ; notify ; title ; body -- the rxvt extension every terminal copied.

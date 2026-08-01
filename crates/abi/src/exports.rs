@@ -240,6 +240,16 @@ pub unsafe extern "C" fn ghostty_terminal_get(
             // own lifetime, since a write invalidates it. Empty answers with a NULL pointer
             // and zero length -- the oracle's own "no pwd has been set" state, and the
             // reason `pwd` is never `Option` on either side of the harness.
+            GHOSTTY_TERMINAL_DATA_TITLE => {
+                *out.cast::<GhosttyString>() = GhosttyString {
+                    ptr: if view.title.is_empty() {
+                        std::ptr::null()
+                    } else {
+                        view.title.as_ptr()
+                    },
+                    len: view.title.len(),
+                }
+            }
             GHOSTTY_TERMINAL_DATA_PWD => {
                 *out.cast::<GhosttyString>() = GhosttyString {
                     ptr: if view.pwd.is_empty() { std::ptr::null() } else { view.pwd.as_ptr() },

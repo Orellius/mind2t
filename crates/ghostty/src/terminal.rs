@@ -149,6 +149,19 @@ impl Terminal {
             damage: None,
             pwd: self.pwd()?,
             colors: self.colors()?,
+            title: {
+                let raw: sys::GhosttyString = unsafe {
+                    self.get(sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_TITLE, "TITLE")
+                }?;
+                if raw.ptr.is_null() || raw.len == 0 {
+                    String::new()
+                } else {
+                    String::from_utf8_lossy(unsafe {
+                        std::slice::from_raw_parts(raw.ptr, raw.len)
+                    })
+                    .into_owned()
+                }
+            },
         })
     }
 

@@ -61,6 +61,14 @@ pub fn diff(oracle: &Snapshot, candidate: &Snapshot) -> Vec<Difference> {
         ));
     }
 
+    if oracle.title != candidate.title {
+        out.push(Difference::new(
+            "title",
+            describe_bytes(oracle.title.as_bytes()),
+            describe_bytes(candidate.title.as_bytes()),
+        ));
+    }
+
     if oracle.pwd != candidate.pwd {
         out.push(Difference::new(
             "pwd",
@@ -411,6 +419,7 @@ mod tests {
             damage: None,
             pwd: Vec::new(),
             colors: crate::grid::Colors::default(),
+            title: String::new(),
         }
     }
 

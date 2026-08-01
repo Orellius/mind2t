@@ -50,6 +50,15 @@ impl Terminal {
         self.state.resize(cols, rows);
     }
 
+    /// Caps CHILD-driven resizes (DECCOLM, XTERM WINOPS 8) at the embedder's frame
+    /// channel capacity. An embedder that skips this accepts that a child can grow
+    /// the grid without bound; the pump never skips it, because an over-capacity
+    /// publish is a panic there. Survives RIS like the reports grant: it is the
+    /// embedder's property, not terminal state.
+    pub fn set_child_resize_ceiling(&mut self, cols: u16, rows: u16) {
+        self.state.child_resize_ceiling = Some((cols, rows));
+    }
+
     /// Discards accumulated damage, starting a fresh observation window.
     pub fn clear_damage(&mut self) {
         self.state.full_damage = false;
@@ -276,6 +285,16 @@ pub(crate) struct State {
     /// Terminal-global like the other mode flags; the margins themselves are
     /// per-screen state on `Screen`, because the alternate screen has its own.
     pub(crate) left_right_margin: bool,
+    /// DECCOLM (mode 3) and its xterm gate, mode 40 (Allow80To132). The oracle's
+    /// `deccolm` (Terminal.zig:3644) does NOTHING without 40: it forces the bit
+    /// false and returns. Tracking both is what makes the DECRQM answers and the
+    /// 132-column resize honest at once. Mode 40 itself is pure stored state
+    /// (`stream_terminal.zig`: `.enable_mode_3 => {}`), default off.
+    pub(crate) column_132: bool,
+    pub(crate) enable_mode_3: bool,
+    /// Largest geometry a CHILD-driven resize (DECCOLM, WINOPS 8) may reach; None
+    /// outside a pump. See `child_resize` for why this exists at all.
+    pub(crate) child_resize_ceiling: Option<(u16, u16)>,
     pub(crate) slow_scroll: bool,
     pub(crate) reverse_colors: bool,
     pub(crate) backarrow: bool,
@@ -374,6 +393,9 @@ impl State {
             send_receive: true,
             linefeed_mode: false,
             left_right_margin: false,
+            column_132: false,
+            enable_mode_3: false,
+            child_resize_ceiling: None,
             slow_scroll: false,
             reverse_colors: false,
             backarrow: false,
@@ -494,6 +516,8 @@ impl State {
                 reverse_colors: self.reverse_colors,
                 backarrow: self.backarrow,
                 left_right_margin: self.left_right_margin,
+                column_132: self.column_132,
+                enable_mode_3: self.enable_mode_3,
             },
             cursor: Cursor {
                 x: screen.x,
@@ -831,6 +855,44 @@ impl State {
         self.mark_full_damage();
     }
 
+    /// A resize the CHILD asked for (DECCOLM, XTERM WINOPS 8), as opposed to one the
+    /// embedder performed. The embedder's path is gated against the frame channel's
+    /// capacity at `Host::resize`; a child-driven resize would bypass that gate and
+    /// panic the pump's publish, so it carries its own ceiling, set by the pump from
+    /// the same capacity. Outside a pump (corpus, unit tests) there is no ceiling.
+    /// A request past the ceiling is IGNORED whole rather than clamped: a clamped
+    /// grid would wear dimensions the child never asked for.
+    pub(crate) fn child_resize(&mut self, cols: u16, rows: u16) -> bool {
+        if let Some((max_cols, max_rows)) = self.child_resize_ceiling {
+            if cols > max_cols || rows > max_rows {
+                return false;
+            }
+        }
+        self.resize(cols, rows);
+        true
+    }
+
+    /// DECCOLM (DECSET/DECRST 3), mirroring the oracle's `deccolm` (Terminal.zig:3644):
+    /// without mode 40 the bit is forced FALSE and nothing else happens, even on a SET.
+    /// With the grant it is the full VT sequence: resize to 132 or 80 columns (rows
+    /// kept), erase the display completely, home the cursor. The scroll region and any
+    /// left/right margins fall out of the resize, which resets all four edges.
+    pub(crate) fn deccolm(&mut self, wide: bool) {
+        if !self.enable_mode_3 {
+            self.column_132 = false;
+            return;
+        }
+        let rows = self.screen().rows();
+        if !self.child_resize(if wide { 132 } else { 80 }, rows) {
+            // The embedder's ceiling refused the grid; claiming the mode without
+            // wearing the width would be the lie DECRQM exists to prevent.
+            return;
+        }
+        self.column_132 = wide;
+        self.erase_display_complete();
+        self.cursor_position(0, 0);
+    }
+
     pub(crate) fn full_reset(&mut self) {
         let cols = self.screen().cols();
         let rows = self.screen().rows();
@@ -838,12 +900,16 @@ impl State {
         // terminal state -- a child must not be able to revoke it with a RIS (esctest
         // would lose its screen readback mid-run).
         let reports = self.reports_enabled;
+        // Same law as the reports grant: the child-resize ceiling is the EMBEDDER's
+        // property (frame channel capacity), so a child cannot shed it with RIS.
+        let ceiling = self.child_resize_ceiling;
         // Colour state survives too. Measured, not assumed: the oracle's `fullReset`
         // resets modes, tabs, pwd, title and the screens, and never touches `colors`,
         // so OSC 4/10/11/12 overrides ride through a RIS (corpus-pinned).
         let colors = std::mem::take(&mut self.colors);
         *self = State::new(cols, rows, self.max_scrollback);
         self.reports_enabled = reports;
+        self.child_resize_ceiling = ceiling;
         self.colors = colors;
         self.mark_full_damage();
     }

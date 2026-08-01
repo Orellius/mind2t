@@ -64,6 +64,11 @@ impl State {
                     self.screen_mut().reset_margins();
                 }
             }
+            // DECCOLM and its gate. Mode 40 is pure stored state (the oracle's
+            // setMode arm is empty); mode 3 is the whole 80/132 sequence, and it
+            // is fully inert without 40 (`deccolm`, Terminal.zig:3644).
+            3 => self.deccolm(on),
+            40 => self.enable_mode_3 = on,
             2004 => self.bracketed_paste = on,
             2026 => self.synchronized_output = on,
             // The mouse family (9/1000/1002/1003/1005/1006/1015/1016/1007): raw bit plus
@@ -162,7 +167,7 @@ impl State {
 
     /// ED 2 as the mode switches perform it: the same complete erase `CSI 2 J` runs,
     /// including the scroll-into-scrollback at a prompt and the whole-frame damage.
-    fn erase_display_complete(&mut self) {
+    pub(crate) fn erase_display_complete(&mut self) {
         let blank = self.blank();
         self.mark_full_damage();
         self.scroll_clear_at_prompt(blank);
@@ -399,7 +404,11 @@ impl State {
             }
 
             'n' => self.device_status_report(arg_or_zero(params, 0)),
-            't' => self.window_report(arg_or_zero(params, 0), arg_or_zero(params, 1)),
+            't' => self.window_report(
+                arg_or_zero(params, 0),
+                arg_or_zero(params, 1),
+                arg_or_zero(params, 2),
+            ),
             'c' => {
                 if arg_or_zero(params, 0) == 0 {
                     self.device_attributes_primary();

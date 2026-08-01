@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 200
+declared_cases = 207
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -1591,3 +1591,45 @@ name = "scrolling-only-moves-the-column-band"
 expect = "match"
 bytes = "\u001B[?69h\u001B[3;6s\u001B[1;1Habcdefgh\r\nijklmnop\u001B[1;3H\u001B[1M"
 note = "DL scrolls only the banded columns: cells outside the margins hold still, which is the entire point of a column band."
+
+[[case]]
+name = "mode-40-is-pure-stored-state"
+expect = "match"
+bytes = "\u001B[?40h"
+note = "DECSET 40 (Allow80To132) stores the bit and does nothing else - the oracle's setMode arm is literally empty (stream_terminal.zig: .enable_mode_3 => {}). The bit is the whole observable."
+
+[[case]]
+name = "deccolm-is-inert-without-mode-40"
+expect = "match"
+bytes = "ab\u001B[?3h"
+note = "DECSET 3 without mode 40 is fully ignored: deccolm (Terminal.zig:3644) forces 132_column FALSE and returns before touching the grid. Content survives, width stays, cursor stays. The gate direction of the DECCOLM family."
+
+[[case]]
+name = "deccolm-132-resizes-erases-and-homes"
+expect = "match"
+bytes = "\u001B[5;5Hxyz\u001B[?40h\u001B[?3h"
+note = "With mode 40 armed, DECSET 3 is the full VT sequence: resize to 132 columns, erase the display completely, home the cursor (deccolm: resize, eraseDisplay(.complete), setCursorPos(1,1)). Grid width, content, cursor and the mode bit all move at once."
+
+[[case]]
+name = "deccolm-back-to-80-erases-again"
+expect = "match"
+bytes = "\u001B[?40h\u001B[?3habc\u001B[?3l"
+note = "DECRST 3 with the grant is deccolm(80_cols): the same resize-erase-home, pointed the other way. Content printed in 132-column mode does not survive the return trip."
+
+[[case]]
+name = "deccolm-resets-margins-and-scroll-region"
+expect = "match"
+bytes = "\u001B[?40h\u001B[?69h\u001B[3;6s\u001B[?3hab\rX"
+note = "deccolm calls resize, and resize resets the scrolling region on ALL FOUR edges (Terminal.zig resize tail). After DECCOLM the CR lands on column 0, not the old left margin - the discriminating cell for a core that resized without clearing the band."
+
+[[case]]
+name = "deccolm-set-without-grant-forces-the-bit-off"
+expect = "match"
+bytes = "\u001B[?40h\u001B[?3h\u001B[?40l\u001B[?3h"
+note = "Adversarial edge measured off the oracle's order of operations: setMode stores 132_column=true unconditionally, THEN deccolm sees mode 40 off and forces it back FALSE without resizing. So a SET of mode 3 after the grant is revoked turns the bit OFF while the grid stays 132 wide. A core that gates the store but skips the force-false diverges here."
+
+[[case]]
+name = "ris-clears-deccolm-state-but-keeps-the-width"
+expect = "match"
+bytes = "\u001B[?40h\u001B[?3h\u001Bc"
+note = "fullReset (Terminal.zig:4459) resets the mode table - modes 3 and 40 both drop - but performs NO resize, so the grid stays 132 columns wide after RIS. xterm resizes back to 80 here and esctest asserts that; we follow the oracle and lose test_RIS_ResetDECCOLM on the width half, deliberately."

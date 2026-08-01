@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 177
+declared_cases = 181
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -196,10 +196,9 @@ note = "REP repeats the last graphic character. Not implemented."
 
 [[case]]
 name = "insert-replace-mode"
-expect = "diff"
-diff_paths = ["cell[0,2].text", "cell[0,3].text", "cell[0,4].text", "cell[0,5].text", "cell[0,6].text", "cell[0,7].text"]
+expect = "match"
 bytes = "abcdef\u001B[1G\u001B[4hXY"
-note = "IRM makes printing insert rather than overwrite. Not implemented."
+note = "IRM makes printing insert rather than overwrite. Promoted DIFF->MATCH by the DECRQM slice 2026-08-01: the oracle implements insert mode (Terminal.zig:1374, shift only when not at end of line) and now so does this core."
 
 [[case]]
 name = "grapheme-cluster-mode-2027"
@@ -1453,3 +1452,27 @@ expect = "diff"
 diff_paths = ["cell[1,0].text", "cell[1,1].text"]
 bytes = "ab\u001B[1;1;1;2;1;2;1;1$v"
 note = "DECCRA copies row 1's 'ab' onto row 2; the oracle ignores it. Same deliberate xterm-direction divergence family."
+
+[[case]]
+name = "ansi-modes-track-like-the-oracle"
+expect = "match"
+bytes = "\u001B[2h\u001B[4h\u001B[20h\u001B[12l"
+note = "SM sets KAM/IRM/LNM and RM clears SRM - the oracle's exact ANSI mode set, compared as state on every case since the DECRQM slice."
+
+[[case]]
+name = "lnm-linefeed-returns-the-carriage"
+expect = "match"
+bytes = "abc\u001B[20h\ndef"
+note = "With LNM set, LF also does CR (the oracle's linefeed(): index then carriageReturn), so 'def' starts at column 0 of the next row rather than column 3."
+
+[[case]]
+name = "reverse-video-and-backarrow-track"
+expect = "match"
+bytes = "\u001B[?5h\u001B[?67h\u001B[?4h"
+note = "DECSCNM, DECBKM and DECSCLM are tracked state in the oracle's table; consumers live outside the core."
+
+[[case]]
+name = "ansi-modes-survive-nothing-special-but-ris-resets-them"
+expect = "match"
+bytes = "\u001B[4h\u001B[?5h\u001Bc"
+note = "RIS returns every tracked mode to its default (modes.reset() in fullReset) - insert off, reverse video off, SRM back to SET."

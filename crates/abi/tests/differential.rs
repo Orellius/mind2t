@@ -193,6 +193,13 @@ unsafe fn read_snapshot(handle: GhosttyTerminal, reader: Reader) -> Snapshot {
                     keypad_keys: mode(66),
                     ignore_keypad_with_numlock: mode(1035),
                     alt_esc_prefix: mode(1036),
+                    kam: mode(0x8002),
+                    insert: mode(0x8004),
+                    send_receive: mode(0x800C),
+                    linefeed: mode(0x8014),
+                    slow_scroll: mode(4),
+                    reverse_colors: mode(5),
+                    backarrow: mode(67),
                 }
             },
             grid,

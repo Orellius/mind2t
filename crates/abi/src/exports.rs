@@ -359,6 +359,10 @@ pub unsafe extern "C" fn ghostty_terminal_mode_get(
             unsafe { *out_value = view.modes.backarrow };
             GHOSTTY_SUCCESS
         }
+        69 => {
+            unsafe { *out_value = view.modes.left_right_margin };
+            GHOSTTY_SUCCESS
+        }
         2004 => {
             unsafe { *out_value = view.modes.bracketed_paste };
             GHOSTTY_SUCCESS

@@ -315,13 +315,66 @@ impl State {
     /// at init. The resize/move ops in the same namespace are refused outright (a child
     /// moving the operator's window is not a feature), and the pixel reports wait for a
     /// consumer. Gated with the checksum: both let the child inspect the screen.
-    pub(crate) fn window_report(&mut self, op: u16) {
-        if !self.reports_enabled || op != 18 {
-            return;
+    pub(crate) fn window_report(&mut self, op: u16, sub: u16) {
+        match op {
+            18 => {
+                if !self.reports_enabled {
+                    return;
+                }
+                let screen = self.screen();
+                let reply = format!("\x1b[8;{};{}t", screen.rows(), screen.cols());
+                self.replies.extend_from_slice(reply.as_bytes());
+            }
+            // 20/21: report the icon label / window title as OSC L / OSC l.
+            //
+            // Gated with the checksum readback, and for a sharper reason than
+            // symmetry: title REPORTING is the classic terminal injection vector -
+            // a child writes an escape sequence into the title, asks for it back,
+            // and the reply lands on the shell's stdin as typed input. xterm ships
+            // it disabled by default for exactly this. The grant is the embedder's.
+            20 | 21 => {
+                if !self.reports_enabled {
+                    return;
+                }
+                let (marker, value) = if op == 20 {
+                    ('L', self.icon_title.clone())
+                } else {
+                    ('l', self.title.clone())
+                };
+                let reply = format!("\x1b]{marker}{value}\x1b\\");
+                self.replies.extend_from_slice(reply.as_bytes());
+            }
+            // 22/23: push/pop the title stack. Sub-command 0 both, 1 icon, 2 window.
+            // Not gated: this moves no information back to the child, so it carries
+            // none of the readback risk - and a TUI that pushes on entry and pops on
+            // exit is the whole point of the feature.
+            22 => {
+                const CAP: usize = 10;
+                let entry = match sub {
+                    1 => (self.icon_title.clone(), String::new()),
+                    2 => (String::new(), self.title.clone()),
+                    _ => (self.icon_title.clone(), self.title.clone()),
+                };
+                if self.title_stack.len() >= CAP {
+                    self.title_stack.remove(0);
+                }
+                self.title_stack.push(entry);
+            }
+            23 => {
+                let Some((icon, window)) = self.title_stack.pop() else { return };
+                // A pop restores only what its sub-command names, so an icon-only pop
+                // must leave the window title alone even when the entry carries both
+                // (esctest asserts exactly that in PopIcon and PopWindow).
+                if sub != 2 {
+                    self.icon_title = icon;
+                }
+                if sub != 1 {
+                    self.title = window.clone();
+                    self.push_event(crate::events::Event::Title(window));
+                }
+            }
+            _ => {}
         }
-        let screen = self.screen();
-        let reply = format!("\x1b[8;{};{}t", screen.rows(), screen.cols());
-        self.replies.extend_from_slice(reply.as_bytes());
     }
 }
 
@@ -586,6 +639,69 @@ mod tests {
         assert_eq!(replies_for(b"\x1b[1\"q\x1bP$q\"q\x1b\\"), b"\x1bP1$r1\"q\x1b\\");
         // An oversized request drops whole - the oracle's ignore state, not a reply.
         assert_eq!(replies_for(b"\x1bP$qabc\x1b\\"), b"");
+    }
+
+    /// The winops title family, in the exact shapes esctest drives: report as
+    /// OSC L / OSC l, push both then pop both, and the two asymmetric pops that
+    /// must leave the other title untouched.
+    #[test]
+    fn winops_reports_and_stacks_the_titles() {
+        // Reports are gated with the checksum readback (title reflection is the
+        // classic injection vector), so the ungated terminal answers nothing.
+        assert_eq!(replies_for(b"\x1b]0;hello\x07\x1b[21t"), b"");
+
+        assert_eq!(
+            reporting_terminal(b"\x1b]0;hello\x07\x1b[21t\x1b[20t"),
+            b"\x1b]lhello\x1b\\\x1b]Lhello\x1b\\"
+        );
+        // OSC 1 sets only the icon, OSC 2 only the window.
+        assert_eq!(
+            reporting_terminal(b"\x1b]1;icon\x07\x1b]2;win\x07\x1b[20t\x1b[21t"),
+            b"\x1b]Licon\x1b\\\x1b]lwin\x1b\\"
+        );
+        // Push both, change both, pop both.
+        assert_eq!(
+            reporting_terminal(
+                b"\x1b]0;first\x07\x1b[22;0t\x1b]0;second\x07\x1b[23;0t\x1b[21t\x1b[20t"
+            ),
+            b"\x1b]lfirst\x1b\\\x1b]Lfirst\x1b\\"
+        );
+        // Pop ICON only: the window title must stay at the changed value.
+        assert_eq!(
+            reporting_terminal(
+                b"\x1b]0;first\x07\x1b[22;0t\x1b]0;second\x07\x1b[23;1t\x1b[20t\x1b[21t"
+            ),
+            b"\x1b]Lfirst\x1b\\\x1b]lsecond\x1b\\"
+        );
+        // Pop WINDOW only: the icon title stays changed.
+        assert_eq!(
+            reporting_terminal(
+                b"\x1b]0;first\x07\x1b[22;0t\x1b]0;second\x07\x1b[23;2t\x1b[20t\x1b[21t"
+            ),
+            b"\x1b]Lsecond\x1b\\\x1b]lfirst\x1b\\"
+        );
+        // Popping an empty stack changes nothing rather than clearing the title.
+        assert_eq!(
+            reporting_terminal(b"\x1b]0;kept\x07\x1b[23;0t\x1b[21t"),
+            b"\x1b]lkept\x1b\\"
+        );
+    }
+
+    #[test]
+    fn the_title_stack_is_bounded_and_drops_its_oldest() {
+        // Eleven pushes into a ten-deep stack: the first is gone, the second is the
+        // one a single pop finds at the bottom.
+        let mut terminal = crate::terminal::Terminal::new(20, 10);
+        terminal.enable_reports(true);
+        for i in 0..11 {
+            terminal.write(format!("\x1b]0;t{i}\x07\x1b[22;0t").as_bytes());
+        }
+        let _ = terminal.take_replies();
+        for _ in 0..10 {
+            terminal.write(b"\x1b[23;0t");
+        }
+        terminal.write(b"\x1b[21t");
+        assert_eq!(terminal.take_replies(), b"\x1b]lt1\x1b\\");
     }
 
     #[test]

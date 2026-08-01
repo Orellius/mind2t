@@ -205,6 +205,15 @@ unsafe fn read_snapshot(handle: GhosttyTerminal, reader: Reader) -> Snapshot {
             grid,
             history,
             damage: None,
+            title: {
+                let raw: GhosttyString = get(handle, GHOSTTY_TERMINAL_DATA_TITLE);
+                if raw.ptr.is_null() || raw.len == 0 {
+                    String::new()
+                } else {
+                    String::from_utf8_lossy(std::slice::from_raw_parts(raw.ptr, raw.len))
+                        .into_owned()
+                }
+            },
             // Read through the C surface like everything else here: a borrowed
             // GhosttyString, copied out before the next write can invalidate the view.
             pwd: {

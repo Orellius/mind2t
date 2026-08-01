@@ -305,6 +305,16 @@ pub(crate) struct State {
     /// embedder's concern and the frame does not carry it yet.
     pub(crate) cursor_shape: u8,
     pub(crate) cursor_blink: bool,
+    /// The window title (OSC 0/2) and the icon title (OSC 0/1). The oracle carries a
+    /// title and exposes it as GHOSTTY_TERMINAL_DATA_TITLE, so the window half is a
+    /// real differential observable; it has no icon title and no stack, so those are
+    /// xterm-direction additions gated by unit tests and esctest.
+    pub(crate) title: String,
+    pub(crate) icon_title: String,
+    /// XTERM_WINOPS 22/23: the title stack. Bounded like xterm's (10 entries); a push
+    /// past the cap drops the OLDEST, so a runaway child cannot grow it without limit
+    /// and a well-behaved one still finds its entry.
+    pub(crate) title_stack: Vec<(String, String)>,
 
     /// Round-robin id source for sixel images in their private range.
     pub(crate) sixel_counter: u32,
@@ -377,6 +387,9 @@ impl State {
             // The power-on cursor: a blinking block (DECSCUSR 0/1).
             cursor_shape: 0,
             cursor_blink: true,
+            title: String::new(),
+            icon_title: String::new(),
+            title_stack: Vec::new(),
             sixel_counter: 0,
             link_table: Vec::new(),
             cursor_link: None,
@@ -490,6 +503,7 @@ impl State {
             // Mirrors the DATA getters, not the query path: GHOSTTY_TERMINAL_DATA_
             // COLOR_CURSOR is `cursor.get()` with NO foreground fallback (that
             // fallback is xterm report behaviour, `colorForXterm` only).
+            title: self.title.clone(),
             colors: ruuah_vt_snapshot::Colors {
                 foreground: self.colors.foreground.get(),
                 background: self.colors.background.get(),
@@ -937,7 +951,7 @@ impl Perform for State {
 
     fn osc_dispatch(&mut self, params: &[&[u8]], bell_terminated: bool) {
         match params.first().copied() {
-            Some(b"0") | Some(b"2") => self.osc_title(params),
+            Some(b"0") | Some(b"1") | Some(b"2") => self.osc_title(params),
             Some(b"7") => self.osc_pwd(params),
             Some(b"8") => self.osc_hyperlink(params),
             Some(b"52") => self.osc_clipboard(params),

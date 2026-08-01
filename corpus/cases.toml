@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 174
+declared_cases = 177
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -1432,3 +1432,24 @@ name = "osc4-error-stops-the-list-but-keeps-the-prefix"
 expect = "match"
 bytes = "\u001B]4;1;#ff0000;notanumber;#00ff00;2;#0000ff\u0007"
 note = "xterm's ChangeAnsiColorRequest rule, kept by the oracle: an unparseable index stops the whole list, keeping what parsed before it. Index 1 turns red; index 2 must NOT turn blue."
+
+[[case]]
+name = "decfra-fills-diverging-from-the-oracle"
+expect = "diff"
+diff_paths = ["cell[0,0].text", "cell[0,1].text", "cell[1,0].text", "cell[1,1].text"]
+bytes = "\u001B[37;1;1;2;2$x"
+note = "DECFRA fills a rect with '%'. The oracle has NO dollar-intermediate grid ops (measured 2026-08-01: no $x/$z/$v dispatch in stream_terminal.zig), so this is a deliberate divergence in xterm's direction - the DECSTR pattern. esctest asserts the xterm behaviour."
+
+[[case]]
+name = "decera-erases-diverging-from-the-oracle"
+expect = "diff"
+diff_paths = ["cell[0,0].text", "cell[0,1].text", "cell[1,0].text", "cell[1,1].text"]
+bytes = "ab\r\ncd\u001B[1;1;2;2$z"
+note = "DECERA blanks the rect; the oracle ignores the sequence and keeps ab/cd. Same deliberate xterm-direction divergence as DECFRA."
+
+[[case]]
+name = "deccra-copies-diverging-from-the-oracle"
+expect = "diff"
+diff_paths = ["cell[1,0].text", "cell[1,1].text"]
+bytes = "ab\u001B[1;1;1;2;1;2;1;1$v"
+note = "DECCRA copies row 1's 'ab' onto row 2; the oracle ignores it. Same deliberate xterm-direction divergence family."

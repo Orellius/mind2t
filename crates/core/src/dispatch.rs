@@ -267,6 +267,48 @@ impl State {
             return self.soft_reset();
         }
 
+        // The rectangle family (CSI ... $ x/z/v). xterm-direction divergence: the
+        // oracle has no `$` grid-op dispatch at all (rect.rs module card).
+        if intermediates == [b'$'] {
+            match action {
+                'x' => {
+                    return self.fill_rect(
+                        arg_or_zero(params, 0),
+                        arg_or_zero(params, 1),
+                        arg_or_zero(params, 2),
+                        arg_or_zero(params, 3),
+                        arg_or_zero(params, 4),
+                    );
+                }
+                'z' => {
+                    return self.erase_rect(
+                        arg_or_zero(params, 0),
+                        arg_or_zero(params, 1),
+                        arg_or_zero(params, 2),
+                        arg_or_zero(params, 3),
+                    );
+                }
+                'v' => {
+                    // Pps (4) and Ppd (7) are page numbers: accepted, ignored, one page.
+                    return self.copy_rect(
+                        arg_or_zero(params, 0),
+                        arg_or_zero(params, 1),
+                        arg_or_zero(params, 2),
+                        arg_or_zero(params, 3),
+                        arg_or_zero(params, 5),
+                        arg_or_zero(params, 6),
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        // DECSCUSR (CSI Ps SP q): tracked so DECRQSS can answer it; the visual shape
+        // is the embedder's concern.
+        if action == 'q' && intermediates == [b' '] {
+            return self.set_cursor_shape(arg_or_zero(params, 0));
+        }
+
         // DECRQCRA (CSI Pid;Pp;Pt;Pl;Pb;Pr * y): the checksum readback esctest2's screen
         // assertions run on. Pp (the page) is ignored -- there is one page here.
         if action == 'y' && intermediates.first() == Some(&b'*') {

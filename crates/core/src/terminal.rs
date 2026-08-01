@@ -280,6 +280,15 @@ pub(crate) struct State {
     pub(crate) apc_overflow: bool,
     /// A sixel DCS being decoded, between hook('q') and unhook.
     pub(crate) sixel: Option<crate::sixel::SixelDecoder>,
+    /// A DECRQSS request (DCS $ q ... ST) being accumulated: the setting bytes, and
+    /// whether they overflowed the oracle's own two-byte bound (overflow = the whole
+    /// command is dropped, mirroring its ignore state).
+    pub(crate) decrqss: Option<(Vec<u8>, bool)>,
+    /// DECSCUSR (CSI Ps SP q): 0 = block, 1 = underline, 2 = bar, plus the blink half
+    /// (odd values blink). Tracked so DECRQSS can answer; drawing a shape is the
+    /// embedder's concern and the frame does not carry it yet.
+    pub(crate) cursor_shape: u8,
+    pub(crate) cursor_blink: bool,
     /// Round-robin id source for sixel images in their private range.
     pub(crate) sixel_counter: u32,
     /// OSC 8: interned (explicit id, uri) pairs the grids' cell stamps point into.
@@ -339,6 +348,10 @@ impl State {
             apc: Vec::new(),
             apc_overflow: false,
             sixel: None,
+            decrqss: None,
+            // The power-on cursor: a blinking block (DECSCUSR 0/1).
+            cursor_shape: 0,
+            cursor_blink: true,
             sixel_counter: 0,
             link_table: Vec::new(),
             cursor_link: None,
@@ -775,19 +788,41 @@ impl Perform for State {
         }
     }
 
-    fn hook(&mut self, _params: &vte::Params, _intermediates: &[u8], _ignore: bool, action: char) {
-        if action == 'q' {
+    fn hook(&mut self, _params: &vte::Params, intermediates: &[u8], _ignore: bool, action: char) {
+        // Both live on final 'q': sixel is bare `DCS q`, DECRQSS is `DCS $ q`. Before
+        // the split, a DECRQSS started a sixel decoder and the setting bytes drew.
+        if action == 'q' && intermediates == [b'$'] {
+            self.decrqss = Some((Vec::new(), false));
+            return;
+        }
+        if action == 'q' && intermediates.is_empty() {
             self.sixel = Some(crate::sixel::SixelDecoder::new());
         }
     }
 
     fn put(&mut self, byte: u8) {
+        if let Some((data, overflow)) = self.decrqss.as_mut() {
+            // The oracle's request buffer is two bytes ([2]u8); a third byte tips the
+            // whole command into its ignore state, never a truncated lookup.
+            if data.len() >= 2 {
+                *overflow = true;
+            } else {
+                data.push(byte);
+            }
+            return;
+        }
         if let Some(decoder) = self.sixel.as_mut() {
             decoder.put(byte);
         }
     }
 
     fn unhook(&mut self) {
+        if let Some((data, overflow)) = self.decrqss.take() {
+            if !overflow {
+                self.decrqss_reply(&data);
+            }
+            return;
+        }
         let Some(decoder) = self.sixel.take() else {
             return;
         };

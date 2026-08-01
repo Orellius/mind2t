@@ -11,7 +11,7 @@
 
 use ruuah_vt_snapshot::Semantic;
 
-use crate::cell::Cell;
+use crate::cell::{Cell, Protection};
 use crate::grid::Grid;
 use crate::history::History;
 use crate::style::StyleId;
@@ -22,6 +22,8 @@ pub struct SavedCursor {
     pub x: u16,
     pub y: u16,
     pub pending_wrap: bool,
+    /// DECSC carries the protection pen (the oracle's saved cursor does too).
+    pub protected: crate::cell::Protection,
 }
 
 /// One screen buffer.
@@ -56,6 +58,10 @@ pub struct Screen {
     /// disturbing the shell's stack, and leaving 1049 restores the shell's negotiation
     /// with no pop required.
     pub kitty_keyboard: crate::kitty_keys::KittyFlagStack,
+    /// The protection pen: newly printed cells carry this kind. Per-cursor in the
+    /// oracle, so per-screen here. SPA sets Iso, DECSCA 1 sets Dec, EPA and
+    /// DECSCA 0/2 clear it.
+    pub protected: crate::cell::Protection,
 }
 
 impl Screen {
@@ -70,6 +76,7 @@ impl Screen {
             scroll_top: 0,
             scroll_bottom: rows.saturating_sub(1),
             saved: None,
+            protected: crate::cell::Protection::None,
             semantic_content: Semantic::Output,
             semantic_clear_at_eol: false,
             kitty_keyboard: crate::kitty_keys::KittyFlagStack::default(),
@@ -180,14 +187,18 @@ impl Screen {
     }
 
     /// EL: 0 erases cursor to end of line, 1 start to cursor, 2 the whole line.
-    pub fn erase_in_line(&mut self, mode: u16, blank: Cell) {
+    pub fn erase_in_line(&mut self, mode: u16, blank: Cell, spare: Protection) {
         let (from, to) = match mode {
             0 => (self.x, self.last_col()),
             1 => (0, self.x),
             2 => (0, self.last_col()),
             _ => return,
         };
-        self.grid.clear_span(self.y, from, to, blank);
+        if spare == Protection::None {
+            self.grid.clear_span(self.y, from, to, blank);
+        } else {
+            self.selective_span(self.y, from, to, blank, spare);
+        }
         self.pending_wrap = false;
     }
 
@@ -198,9 +209,34 @@ impl Screen {
     /// Upstream dispatches it straight to `eraseHistory` (`Terminal.zig:3398`) and the other
     /// three modes each clear the phantom state themselves, so touching it here would make
     /// ED 3 cancel a deferred wrap that upstream leaves standing.
-    pub fn erase_in_display(&mut self, mode: u16, blank: Cell) {
+    pub fn erase_in_display(&mut self, mode: u16, blank: Cell, spare: Protection) {
         if mode == 3 {
             self.history.clear();
+            return;
+        }
+        if spare != Protection::None {
+            let last = self.last_col();
+            match mode {
+                0 => {
+                    self.selective_span(self.y, self.x, last, blank, spare);
+                    for y in (self.y + 1)..self.rows() {
+                        self.selective_span(y, 0, last, blank, spare);
+                    }
+                }
+                1 => {
+                    for y in 0..self.y {
+                        self.selective_span(y, 0, last, blank, spare);
+                    }
+                    self.selective_span(self.y, 0, self.x, blank, spare);
+                }
+                2 => {
+                    for y in 0..self.rows() {
+                        self.selective_span(y, 0, last, blank, spare);
+                    }
+                }
+                _ => return,
+            }
+            self.pending_wrap = false;
             return;
         }
         match mode {
@@ -226,10 +262,40 @@ impl Screen {
         self.pending_wrap = false;
     }
 
+    /// Strips protection from every cell on screen. Called only by DECSTR - see the
+    /// justification there.
+    pub fn clear_protection(&mut self) {
+        for y in 0..self.rows() {
+            for x in 0..self.cols() {
+                let index = self.grid.index(x, y);
+                let mut cell = self.grid.cell(index);
+                if cell.flags.protection() != Protection::None {
+                    cell.flags.set_protection(Protection::None);
+                    self.grid.write(index, cell);
+                }
+            }
+        }
+    }
+
+    /// A protection-aware span wipe: cells whose protection kind matches `spare`
+    /// survive. xterm's matrix - the plain erases spare Iso, the selective spare Dec.
+    fn selective_span(&mut self, y: u16, from: u16, to: u16, blank: Cell, spare: Protection) {
+        for x in from..=to {
+            let index = self.grid.index(x, y);
+            if self.grid.cell(index).flags.protection() != spare {
+                self.grid.write(index, blank);
+            }
+        }
+    }
+
     /// ECH: erase `count` cells from the cursor without shifting anything.
-    pub fn erase_chars(&mut self, count: u16, blank: Cell) {
+    pub fn erase_chars(&mut self, count: u16, blank: Cell, spare: Protection) {
         let to = self.x.saturating_add(count.saturating_sub(1)).min(self.last_col());
-        self.grid.clear_span(self.y, self.x, to, blank);
+        if spare == Protection::None {
+            self.grid.clear_span(self.y, self.x, to, blank);
+        } else {
+            self.selective_span(self.y, self.x, to, blank, spare);
+        }
         self.pending_wrap = false;
     }
 
@@ -381,6 +447,7 @@ impl Screen {
             x: self.x,
             y: self.y,
             pending_wrap: self.pending_wrap,
+            protected: self.protected,
         });
     }
 
@@ -391,11 +458,13 @@ impl Screen {
             x: 0,
             y: 0,
             pending_wrap: false,
+            protected: crate::cell::Protection::None,
         });
         self.x = saved.x.min(self.last_col());
         let y = saved.y.min(self.last_row());
         self.set_y(y);
         self.pending_wrap = saved.pending_wrap;
+        self.protected = saved.protected;
     }
 
     /// Clears the whole buffer, its history and the cursor, as entering the alternate
@@ -522,16 +591,16 @@ mod tests {
 
         put(&mut screen, 0, "abcdef");
         screen.move_to(3, 0);
-        screen.erase_in_line(0, Cell::BLANK);
+        screen.erase_in_line(0, Cell::BLANK, Protection::None);
         assert_eq!(text_of(&screen, 0), "abc");
 
         put(&mut screen, 0, "abcdef");
         screen.move_to(3, 0);
-        screen.erase_in_line(1, Cell::BLANK);
+        screen.erase_in_line(1, Cell::BLANK, Protection::None);
         assert_eq!(text_of(&screen, 0), "    ef");
 
         put(&mut screen, 0, "abcdef");
-        screen.erase_in_line(2, Cell::BLANK);
+        screen.erase_in_line(2, Cell::BLANK, Protection::None);
         assert_eq!(text_of(&screen, 0), "");
     }
 

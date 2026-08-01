@@ -36,6 +36,14 @@ impl CellFlags {
     const HAS_GRAPHEME: u8 = 1 << 0;
     const SEMANTIC_SHIFT: u8 = 1;
     const SEMANTIC_MASK: u8 = 0b11 << Self::SEMANTIC_SHIFT;
+    /// Protection KIND, two bits (3-4): 0 none, 1 ISO (SPA/EPA), 2 DEC (DECSCA).
+    /// Per-cell kind is xterm's real matrix - DECSED spares DEC-protected cells and
+    /// plain ED spares ISO-protected ones - and it is a DELIBERATE divergence from
+    /// the oracle, whose single bit plus never-reset "last mode" makes an ISO cell
+    /// survive esctest's own between-test ED(2), poisoning every later test. Same
+    /// justification as the DECSTR divergence: test isolation over model parity.
+    const PROTECT_SHIFT: u8 = 3;
+    const PROTECT_MASK: u8 = 0b11 << Self::PROTECT_SHIFT;
 
     /// Whether this cell has continuation codepoints in the grid's grapheme map.
     ///
@@ -75,11 +83,40 @@ impl CellFlags {
         self.0 = (self.0 & !Self::SEMANTIC_MASK) | (bits << Self::SEMANTIC_SHIFT);
     }
 
+    pub fn protection(self) -> Protection {
+        match (self.0 & Self::PROTECT_MASK) >> Self::PROTECT_SHIFT {
+            1 => Protection::Iso,
+            2 => Protection::Dec,
+            _ => Protection::None,
+        }
+    }
+
+    pub fn set_protection(&mut self, kind: Protection) {
+        let bits = match kind {
+            Protection::None => 0,
+            Protection::Iso => 1,
+            Protection::Dec => 2,
+        };
+        self.0 = (self.0 & !Self::PROTECT_MASK) | (bits << Self::PROTECT_SHIFT);
+    }
+
     pub fn with_semantic(semantic: Semantic) -> CellFlags {
         let mut flags = CellFlags::NONE;
         flags.set_semantic(semantic);
         flags
     }
+}
+
+/// How a cell is protected from erasure, if at all. See the matrix note on the
+/// flag bits above.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Protection {
+    #[default]
+    None,
+    /// SPA/EPA: spared by the PLAIN erases (ED/EL/ECH).
+    Iso,
+    /// DECSCA: spared by the SELECTIVE erases (DECSED/DECSEL/DECSERA).
+    Dec,
 }
 
 /// One grid cell. Plain old data, copyable, never owning a heap allocation.

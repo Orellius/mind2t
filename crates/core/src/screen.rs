@@ -41,6 +41,12 @@ pub struct Screen {
     pub placements: Vec<crate::graphics::Placement>,
     pub scroll_top: u16,
     pub scroll_bottom: u16,
+    /// Inclusive LEFT/RIGHT margins (DECSLRM). Default is the whole width. Only
+    /// meaningful while DECLRMM (mode 69) is on - DECSLRM refuses to set them
+    /// otherwise - but they stay set once established, which is why the mode bit
+    /// and the margins are separate state.
+    pub scroll_left: u16,
+    pub scroll_right: u16,
     pub saved: Option<SavedCursor>,
     /// What OSC 133 says this screen's cursor is currently writing. Per-screen because it is
     /// per-cursor upstream (`Screen.zig:173`): every switch copies it across with the cursor
@@ -75,6 +81,8 @@ impl Screen {
             placements: Vec::new(),
             scroll_top: 0,
             scroll_bottom: rows.saturating_sub(1),
+            scroll_left: 0,
+            scroll_right: cols.saturating_sub(1),
             saved: None,
             protected: crate::cell::Protection::None,
             semantic_content: Semantic::Output,
@@ -114,6 +122,46 @@ impl Screen {
     pub fn reset_scroll_region(&mut self) {
         self.scroll_top = 0;
         self.scroll_bottom = self.last_row();
+        self.reset_margins();
+    }
+
+    pub fn reset_margins(&mut self) {
+        self.scroll_left = 0;
+        self.scroll_right = self.last_col();
+    }
+
+    /// Whether left/right margins are narrower than the screen. The fast path for
+    /// every operation that only has to care when they are.
+    pub fn has_margins(&self) -> bool {
+        self.scroll_left > 0 || self.scroll_right < self.last_col()
+    }
+
+    /// DECSLRM (`Terminal.zig:2372`), measured: left is at least 1, right defaults
+    /// to the full width when 0 and clamps to it, an empty or inverted pair is
+    /// IGNORED outright, and a successful set homes the cursor. The mode-69 gate
+    /// lives at the call site, exactly as the oracle checks it first.
+    pub fn set_margins(&mut self, left_req: u16, right_req: u16) -> bool {
+        let cols = self.cols();
+        let left = left_req.max(1);
+        let right = if right_req == 0 { cols } else { right_req.min(cols) };
+        if left >= right {
+            return false;
+        }
+        self.scroll_left = left - 1;
+        self.scroll_right = right - 1;
+        true
+    }
+
+    /// The right edge printing and wrapping obey. The oracle recomputes this per
+    /// print (`Terminal.zig:1097`) rather than caching it, because a cursor parked
+    /// to the RIGHT of the margin uses the screen edge instead - which is what lets
+    /// a program write status text outside the margined column band.
+    pub fn print_right_limit(&self) -> u16 {
+        if self.x > self.scroll_right {
+            self.last_col()
+        } else {
+            self.scroll_right
+        }
     }
 
     pub fn move_to(&mut self, x: u16, y: u16) {
@@ -156,8 +204,9 @@ impl Screen {
     /// Moves up one row, scrolling the region down if already at its top margin (RI).
     pub fn reverse_index(&mut self, blank: Cell) {
         if self.y == self.scroll_top {
+            let (left, right) = (self.scroll_left, self.scroll_right);
             self.grid
-                .scroll_down(self.scroll_top, self.scroll_bottom, 1, blank);
+                .scroll_down_in(self.scroll_top, self.scroll_bottom, left, right, 1, blank);
         } else if self.y > 0 {
             let previous = self.y - 1;
             self.set_y(previous);
@@ -174,12 +223,18 @@ impl Screen {
     /// one, and the next reflow would rejoin them into nonsense. Upstream applies the same
     /// test in `printWrap`.
     pub fn wrap_line(&mut self, blank: Cell) {
+        // Only a wrap at the TRUE end of the row is a soft wrap. A wrap at a narrower
+        // right margin folds text inside a column band, and the row it leaves is not a
+        // continuation of anything - measured: the oracle sets no wrap flag there, and
+        // marking one would make reflow rejoin two lines that were never one.
         let at_edge = self.x == self.last_col();
         if at_edge && let Some(meta) = self.grid.row_meta_mut(self.y) {
             meta.wrap = true;
         }
         self.line_feed(blank);
-        self.x = 0;
+        // The left MARGIN, not column zero: the oracle's printWrap ends with
+        // cursorHorizontalAbsolute(scrolling_region.left).
+        self.x = self.scroll_left;
         self.pending_wrap = false;
         if at_edge && let Some(meta) = self.grid.row_meta_mut(self.y) {
             meta.wrap_continuation = true;
@@ -301,13 +356,23 @@ impl Screen {
 
     /// ICH: insert `count` blanks at the cursor, pushing the rest of the row right.
     pub fn insert_chars(&mut self, count: u16, blank: Cell) {
-        self.grid.shift_right(self.y, self.x, count, blank);
+        let right = self.last_col();
+        self.insert_chars_to(count, right, blank);
+    }
+
+    pub fn insert_chars_to(&mut self, count: u16, right: u16, blank: Cell) {
+        self.grid.shift_right_to(self.y, self.x, right, count, blank);
         self.pending_wrap = false;
     }
 
     /// DCH: delete `count` cells at the cursor, pulling the rest of the row left.
     pub fn delete_chars(&mut self, count: u16, blank: Cell) {
-        self.grid.shift_left(self.y, self.x, count, blank);
+        let right = self.last_col();
+        self.delete_chars_to(count, right, blank);
+    }
+
+    pub fn delete_chars_to(&mut self, count: u16, right: u16, blank: Cell) {
+        self.grid.shift_left_to(self.y, self.x, right, count, blank);
         self.pending_wrap = false;
     }
 
@@ -317,9 +382,10 @@ impl Screen {
         if !self.in_region() {
             return;
         }
+        let (left, right) = (self.scroll_left, self.scroll_right);
         self.grid
-            .scroll_down(self.y, self.scroll_bottom, count, blank);
-        self.x = 0;
+            .scroll_down_in(self.y, self.scroll_bottom, left, right, count, blank);
+        self.x = left;
         self.pending_wrap = false;
     }
 
@@ -327,8 +393,10 @@ impl Screen {
         if !self.in_region() {
             return;
         }
-        self.grid.scroll_up(self.y, self.scroll_bottom, count, blank);
-        self.x = 0;
+        let (left, right) = (self.scroll_left, self.scroll_right);
+        self.grid
+            .scroll_up_in(self.y, self.scroll_bottom, left, right, count, blank);
+        self.x = left;
         self.pending_wrap = false;
     }
 
@@ -344,15 +412,20 @@ impl Screen {
     /// and putting it in scrollback would invent history that never scrolled. Same reason
     /// `delete_lines` does not route through here.
     fn scroll_region_up(&mut self, count: u16, blank: Cell) {
-        if self.scroll_top == 0 && self.history.enabled() {
+        // A row leaving a COLUMN-BANDED region has not left the screen: the cells
+        // outside the band stay exactly where they are, so the row still exists and
+        // pushing it to scrollback would invent a line that never scrolled. Same
+        // reasoning as the top-margin test beside it.
+        if self.scroll_top == 0 && !self.has_margins() && self.history.enabled() {
             let limit = count.min(self.rows());
             for y in 0..limit {
                 let row = self.grid.extract_row(y);
                 self.history.push(row);
             }
         }
+        let (left, right) = (self.scroll_left, self.scroll_right);
         self.grid
-            .scroll_up(self.scroll_top, self.scroll_bottom, count, blank);
+            .scroll_up_in(self.scroll_top, self.scroll_bottom, left, right, count, blank);
         self.scroll_placements_up(count);
     }
 
@@ -401,7 +474,14 @@ impl Screen {
 
     pub fn scroll_down(&mut self, count: u16, blank: Cell) {
         self.grid
-            .scroll_down(self.scroll_top, self.scroll_bottom, count, blank);
+            .scroll_down_in(
+                self.scroll_top,
+                self.scroll_bottom,
+                self.scroll_left,
+                self.scroll_right,
+                count,
+                blank,
+            );
         let (top, bottom) = (self.scroll_top as i16, self.scroll_bottom as i16);
         // Content pushed past the region bottom is DESTROYED (not scrolled away), so a
         // placement following it goes with it.
@@ -438,8 +518,14 @@ impl Screen {
         });
     }
 
+    /// Whether the cursor sits inside the scroll region - BOTH axes. IL/DL refuse
+    /// outright when the cursor is outside the column band too, measured from the
+    /// oracle's own guard (`Terminal.zig:2676-2679`).
     fn in_region(&self) -> bool {
-        self.y >= self.scroll_top && self.y <= self.scroll_bottom
+        self.y >= self.scroll_top
+            && self.y <= self.scroll_bottom
+            && self.x >= self.scroll_left
+            && self.x <= self.scroll_right
     }
 
     pub fn save_cursor(&mut self) {

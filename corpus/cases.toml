@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 191
+declared_cases = 200
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -1537,3 +1537,57 @@ name = "ris-clears-the-title"
 expect = "match"
 bytes = "\u001B]2;doomed\u0007\u001Bc"
 note = "RIS clears the title (the oracle's fullReset clears its title buffer)."
+
+[[case]]
+name = "declrmm-decslrm-sets-margins-and-homes"
+expect = "match"
+bytes = "\u001B[?69h\u001B[3;6s"
+note = "DECSLRM under mode 69 sets the column band and HOMES the cursor (setCursorPos(1,1)). Both sides implement left/right margins - the oracle carries scrolling_region.left/right - so this whole family is differentially measurable, not source-referenced."
+
+[[case]]
+name = "decslrm-is-refused-without-mode-69"
+expect = "match"
+bytes = "\u001B[3;6s"
+note = "Without DECLRMM, CSI s is SCOSC (save cursor) and sets no margins - the ambiguity the oracle resolves in its handler rather than its parser. A core that always parsed DECSLRM would move the cursor here and diverge."
+
+[[case]]
+name = "carriage-return-lands-on-the-left-margin"
+expect = "match"
+bytes = "\u001B[?69h\u001B[3;6s\u001B[1;5Habc\r X"
+note = "CR returns to the LEFT MARGIN, not column 0, when the cursor is at or right of it (Terminal.zig:1676)."
+
+[[case]]
+name = "carriage-return-left-of-the-margin-goes-to-column-zero"
+expect = "match"
+bytes = "\u001B[?69h\u001B[3;6s\u001B[1;2Hab\rZ"
+note = "The arm a plausible implementation misses: a cursor LEFT of the margin gets a real carriage return to column 0, which is what lets a program write outside the band."
+
+[[case]]
+name = "backspace-crosses-the-left-margin"
+expect = "match"
+bytes = "\u001B[?69h\u001B[3;6s\u001B[1;3H\b\b\bX"
+note = "MEASURED, against my own wrong assumption: BS and CUB clamp at COLUMN 0 and ignore the left margin. The oracle cursorLeft takes a fast path when no reverse-wrap mode is active (Terminal.zig:1766) and its margin-aware floor is reachable only through the reverse-wrap walk, which mode 45 gates and neither side implements. CUF still stops at the RIGHT margin, so the pair is genuinely asymmetric. This case failed first with the cursor three columns off, which is how the rule got found rather than guessed."
+
+[[case]]
+name = "cuf-stops-at-the-right-margin"
+expect = "match"
+bytes = "\u001B[?69h\u001B[3;6s\u001B[1;3H\u001B[20CX"
+note = "CUF clamps to the right margin while the cursor is at or left of it (Terminal.zig:1743)."
+
+[[case]]
+name = "printing-wraps-at-the-right-margin"
+expect = "match"
+bytes = "\u001B[?69h\u001B[2;5s\u001B[1;2Habcdefgh"
+note = "Printing wraps at the RIGHT MARGIN and the wrap lands on the LEFT MARGIN (printWrap ends with cursorHorizontalAbsolute(left)), so the text stays inside the column band across rows."
+
+[[case]]
+name = "ich-and-dch-stay-inside-the-band"
+expect = "match"
+bytes = "\u001B[?69h\u001B[2;5s\u001B[1;1Habcdefgh\u001B[1;2H\u001B[2@\u001B[2;1Hijklmnop\u001B[2;2H\u001B[2P"
+note = "ICH pushes cells off the RIGHT MARGIN rather than past it, and DCH pulls from inside the band - so neither smears into text parked outside the margins."
+
+[[case]]
+name = "scrolling-only-moves-the-column-band"
+expect = "match"
+bytes = "\u001B[?69h\u001B[3;6s\u001B[1;1Habcdefgh\r\nijklmnop\u001B[1;3H\u001B[1M"
+note = "DL scrolls only the banded columns: cells outside the margins hold still, which is the entire point of a column band."

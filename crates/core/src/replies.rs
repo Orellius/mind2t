@@ -105,6 +105,139 @@ impl State {
         self.replies.extend_from_slice(reply.as_bytes());
     }
 
+    /// DECSCUSR (CSI Ps SP q). Values 0-6; 0 means 1 (the VT rule); odd = blinking.
+    /// Anything past 6 is ignored whole, mirroring the oracle's enum cast failure.
+    pub(crate) fn set_cursor_shape(&mut self, style: u16) {
+        let (shape, blink) = match style {
+            0 | 1 => (0, true),
+            2 => (0, false),
+            3 => (1, true),
+            4 => (1, false),
+            5 => (2, true),
+            6 => (2, false),
+            _ => return,
+        };
+        self.cursor_shape = shape;
+        self.cursor_blink = blink;
+    }
+
+    /// DECRQSS (DCS $ q <setting> ST) -> DECRPSS `DCS {1|0} $ r <value><setting> ST`.
+    ///
+    /// The supported settings mirror the ORACLE's exactly (`dcs.zig` DECRQSS enum):
+    /// SGR ("m"), DECSCUSR (" q"), DECSTBM ("r"), and DECSLRM ("s") which answers
+    /// invalid here because left/right margins are not tracked -- the same answer the
+    /// oracle gives with mode 69 off. Everything else, xterm's wider catalogue
+    /// included, is `DCS 0 $ r ST`: an honest "I do not carry that setting", the
+    /// DECRQM posture applied to DCS.
+    pub(crate) fn decrqss_reply(&mut self, setting: &[u8]) {
+        let body: Option<String> = match setting {
+            b"m" => Some(self.sgr_report()),
+            b"r" => {
+                let screen = self.screen();
+                Some(format!("{};{}r", screen.scroll_top + 1, screen.scroll_bottom + 1))
+            }
+            b" q" => {
+                // The inverse of set_cursor_shape's table, the oracle's own mapping:
+                // blink picks the odd value of each pair.
+                let style = match (self.cursor_shape, self.cursor_blink) {
+                    (0, true) => 1,
+                    (0, false) => 2,
+                    (1, true) => 3,
+                    (1, false) => 4,
+                    (2, true) => 5,
+                    _ => 6,
+                };
+                Some(format!("{style} q"))
+            }
+            _ => None,
+        };
+        let reply = match body {
+            Some(body) => format!("\x1bP1$r{body}\x1b\\"),
+            None => "\x1bP0$r\x1b\\".to_string(),
+        };
+        self.replies.extend_from_slice(reply.as_bytes());
+    }
+
+    /// The SGR half of DECRPSS, ported from the oracle's `printAttributes`
+    /// (`Terminal.zig:3545`): always leads with 0, flags in fixed order (bold, faint,
+    /// italic, underline, blink, inverse, invisible, strikethrough -- overline and the
+    /// underline colour are NOT reported, matching it), non-single underlines use the
+    /// colon subparameter form, and colours split palette<8 / bright<16 / indexed /
+    /// direct exactly as it does.
+    fn sgr_report(&self) -> String {
+        use ruuah_vt_snapshot::{Color, Underline};
+        use std::fmt::Write as _;
+        let pen = &self.pen;
+        let mut out = String::from("0");
+        if pen.bold {
+            out.push_str(";1");
+        }
+        if pen.faint {
+            out.push_str(";2");
+        }
+        if pen.italic {
+            out.push_str(";3");
+        }
+        match pen.underline {
+            Underline::None => {}
+            Underline::Single => out.push_str(";4"),
+            other => {
+                let kind = match other {
+                    Underline::Double => 2,
+                    Underline::Curly => 3,
+                    Underline::Dotted => 4,
+                    Underline::Dashed => 5,
+                    _ => unreachable!(),
+                };
+                let _ = write!(out, ";4:{kind}");
+            }
+        }
+        if pen.blink {
+            out.push_str(";5");
+        }
+        if pen.inverse {
+            out.push_str(";7");
+        }
+        if pen.invisible {
+            out.push_str(";8");
+        }
+        if pen.strikethrough {
+            out.push_str(";9");
+        }
+        match pen.fg {
+            Color::Default => {}
+            Color::Palette(i) if i < 8 => {
+                let _ = write!(out, ";3{i}");
+            }
+            Color::Palette(i) if i < 16 => {
+                let _ = write!(out, ";9{}", i - 8);
+            }
+            Color::Palette(i) => {
+                let _ = write!(out, ";38:5:{i}");
+            }
+            Color::Rgb { r, g, b } => {
+                let _ = write!(out, ";38:2::{r}:{g}:{b}");
+            }
+        }
+        match pen.bg {
+            Color::Default => {}
+            Color::Palette(i) if i < 8 => {
+                let _ = write!(out, ";4{i}");
+            }
+            Color::Palette(i) if i < 16 => {
+                let _ = write!(out, ";10{}", i - 8);
+            }
+            Color::Palette(i) => {
+                let _ = write!(out, ";48:5:{i}");
+            }
+            Color::Rgb { r, g, b } => {
+                let _ = write!(out, ";48:2::{r}:{g}:{b}");
+            }
+        }
+        out.push('m');
+        out
+    }
+
     /// The kitty keyboard query (`CSI ? u`) -> `CSI ? flags u`, the active screen's
     /// stack top. Unconditional like DECRQM -- this reply is HOW a 2026 CLI detects
     /// kitty support at all; refusing it would silently degrade every one of them.
@@ -377,6 +510,43 @@ mod tests {
         terminal.enable_reports(true);
         terminal.write(b"\x1bc\x1b[18t");
         assert_eq!(terminal.take_replies(), b"\x1b[8;10;20t");
+    }
+
+    /// DECRQSS answers exactly the oracle's settings catalogue. The esctest grammar:
+    /// ReadDCS sees `1$r<value><setting>`.
+    #[test]
+    fn decrqss_answers_sgr_region_and_cursor_style() {
+        // Plain pen: "0m". Bold + red: "0;1;31m" (flags first, colours after).
+        assert_eq!(replies_for(b"\x1bP$qm\x1b\\"), b"\x1bP1$r0m\x1b\\");
+        assert_eq!(
+            replies_for(b"\x1b[1;31m\x1bP$qm\x1b\\"),
+            b"\x1bP1$r0;1;31m\x1b\\"
+        );
+        // Curly underline uses the colon subparameter form; bright bg the 10x form;
+        // indexed and direct colours the 38/48 forms - all printAttributes rules.
+        assert_eq!(
+            replies_for(b"\x1b[4:3;103m\x1bP$qm\x1b\\"),
+            b"\x1bP1$r0;4:3;103m\x1b\\"
+        );
+        assert_eq!(
+            replies_for(b"\x1b[38;5;100;48;2;1;2;3m\x1bP$qm\x1b\\"),
+            b"\x1bP1$r0;38:5:100;48:2::1:2:3m\x1b\\"
+        );
+        // DECSTBM reports the live region, 1-based.
+        assert_eq!(replies_for(b"\x1b[5;6r\x1bP$qr\x1b\\"), b"\x1bP1$r5;6r\x1b\\");
+        // DECSCUSR round-trips through the tracked shape+blink pair.
+        assert_eq!(replies_for(b"\x1b[4 q\x1bP$q q\x1b\\"), b"\x1bP1$r4 q\x1b\\");
+        assert_eq!(replies_for(b"\x1bP$q q\x1b\\"), b"\x1bP1$r1 q\x1b\\", "default: blinking block");
+    }
+
+    #[test]
+    fn decrqss_refuses_what_it_does_not_carry() {
+        // DECSLRM without left/right margins, and xterm's wider catalogue (DECSCA
+        // here): an honest invalid, exactly the oracle's `0$r` shape.
+        assert_eq!(replies_for(b"\x1bP$qs\x1b\\"), b"\x1bP0$r\x1b\\");
+        assert_eq!(replies_for(b"\x1bP$q\"q\x1b\\"), b"\x1bP0$r\x1b\\");
+        // An oversized request drops whole - the oracle's ignore state, not a reply.
+        assert_eq!(replies_for(b"\x1bP$qabc\x1b\\"), b"");
     }
 
     #[test]

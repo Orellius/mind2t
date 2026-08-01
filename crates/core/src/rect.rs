@@ -304,6 +304,77 @@ mod tests {
 }
 
 #[cfg(test)]
+mod margin_tests {
+    use crate::terminal::Terminal;
+
+    fn rows(terminal: &Terminal, n: u16) -> Vec<String> {
+        let snapshot = terminal.snapshot();
+        (0..n).map(|y| snapshot.row_text(y.into())).collect()
+    }
+
+    /// The crash the whole-suite gate found the expensive way. Deleting every cell
+    /// from column 0 to the right margin made the bounded DCH compute `last - count`
+    /// as `at_x - 1` and underflow, panicking inside the PTY pump thread - so the
+    /// terminal stopped answering and esctest hung for its full 600s timeout rather
+    /// than failing. Nothing in the unit suite could see it; this is that test.
+    #[test]
+    fn deleting_a_whole_span_does_not_underflow() {
+        let mut terminal = Terminal::new(8, 2);
+        terminal.write(b"\x1b[?69h\x1b[1;4s\x1b[1;1Habcd\x1b[1;1H\x1b[9P");
+        assert_eq!(rows(&terminal, 2)[0], "", "the band emptied without panicking");
+
+        // The same shape without margins, and an insert that fills the span.
+        let mut terminal = Terminal::new(8, 2);
+        terminal.write(b"abcd\x1b[1;1H\x1b[99P");
+        assert_eq!(rows(&terminal, 2)[0], "");
+        let mut terminal = Terminal::new(8, 2);
+        terminal.write(b"\x1b[?69h\x1b[1;4s\x1b[1;1Habcd\x1b[1;1H\x1b[9@");
+        assert_eq!(rows(&terminal, 2)[0], "");
+    }
+
+    /// CUF stops at the right margin while CUB crosses the left one. The asymmetry
+    /// is the oracle's (its cursorLeft fast path ignores margins entirely), and it
+    /// is the rule this slice got wrong before the differential corrected it.
+    #[test]
+    fn cuf_stops_at_the_right_margin_but_cub_crosses_the_left() {
+        let mut terminal = Terminal::new(20, 2);
+        terminal.write(b"\x1b[?69h\x1b[3;6s\x1b[1;3H\x1b[20C");
+        assert_eq!(terminal.snapshot().cursor.x, 5, "CUF clamped to the right margin");
+
+        let mut terminal = Terminal::new(20, 2);
+        terminal.write(b"\x1b[?69h\x1b[3;6s\x1b[1;3H\x1b[20D");
+        assert_eq!(terminal.snapshot().cursor.x, 0, "CUB walked past the left margin");
+    }
+
+    /// DECSLRM is refused unless DECLRMM is on, and an inverted or empty band is
+    /// refused outright rather than clamped - so a program cannot be handed a region
+    /// it did not ask for.
+    #[test]
+    fn decslrm_needs_mode_69_and_refuses_a_degenerate_band() {
+        let mut terminal = Terminal::new(20, 2);
+        // Without mode 69 this is SCOSC, so printing still wraps at the screen edge.
+        terminal.write(b"\x1b[3;6s\x1b[1;1H");
+        terminal.write("abcdefgh".as_bytes());
+        assert_eq!(rows(&terminal, 2)[0], "abcdefgh", "no band was set");
+
+        let mut terminal = Terminal::new(20, 2);
+        terminal.write(b"\x1b[?69h\x1b[6;3s\x1b[1;1H");
+        terminal.write("abcdefgh".as_bytes());
+        assert_eq!(rows(&terminal, 2)[0], "abcdefgh", "inverted band refused");
+    }
+
+    /// Turning DECLRMM off resets the margins, which is what esctest's own reset
+    /// depends on between tests.
+    #[test]
+    fn clearing_mode_69_resets_the_margins() {
+        let mut terminal = Terminal::new(20, 2);
+        terminal.write(b"\x1b[?69h\x1b[3;6s\x1b[?69l\x1b[1;1H");
+        terminal.write("abcdefgh".as_bytes());
+        assert_eq!(rows(&terminal, 2)[0], "abcdefgh");
+    }
+}
+
+#[cfg(test)]
 mod protection_tests {
     use crate::terminal::Terminal;
 

@@ -143,6 +143,7 @@ impl Terminal {
                 slow_scroll: self.dec_mode(4)?,
                 reverse_colors: self.dec_mode(5)?,
                 backarrow: self.dec_mode(67)?,
+                left_right_margin: self.dec_mode(69)?,
             },
             grid,
             history,

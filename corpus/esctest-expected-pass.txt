@@ -2,7 +2,7 @@
 # The corpus law in both directions: a line here failing is a regression; a test
 # passing without a line here must be promoted by adding it. Re-triage after suite
 # updates: cargo test -p ruuah-vt-pty --test esctest -- --ignored print_esctest --nocapture
-# Suite pin: esctest.lock. Baseline 2026-08-01 (XTERMWINOPS slice): 338 pass of 568. Promoted 12: the winops title family (report icon/window label, push/pop with all three sub-commands, multi-push), the SMTitle set/query pair, and RIS_ResetTitleMode. The window title is a real differential observable (the oracle answers GHOSTTY_TERMINAL_DATA_TITLE); the ICON title and the title STACK are xterm-direction additions the oracle does not carry, so they are unit- and esctest-gated only. Title REPORTING (20/21) is gated behind the reports grant with the checksum readback - reflecting a title the child wrote is the classic injection vector and xterm ships it off by default. The resize/move/maximize winops stay REFUSED on purpose: a child moving the operator's window is not a feature, which is why 16 of this class's 28 tests will never pass here.
+# Suite pin: esctest.lock. Baseline 2026-08-01 (DECLRMM slice): 367 pass of 568. The slice promoted 30 tests across CR, CNL, CPL, CUF, ICH, DCH, IL, DL, SU, SD, SM/IRM, SCORC and DECSET - the plan estimated ~10, because the margin tests hide inside those classes rather than forming one of their own. UNPINNED, deliberately: DSCSCL_Level3_SupportsDECRQMDoesntSupportDECSLRM, which passed only VACUOUSLY while DECSLRM did not exist - it asserts that conformance level 3 REFUSES DECSLRM, and this core does not track DECSCL levels at all, so implementing the feature un-passed it. Same shape as DECSCL_Level2DoesntSupportDECRQM when DECRQM landed; DECSCL level tracking stays its own future item. Margins are differentially measured - the oracle carries scrolling_region.left/right - and the one rule that had to be corrected against a wrong assumption is CUB: it clamps at COLUMN 0 and ignores the left margin, because the oracle's cursorLeft fast path skips the margin logic whenever no reverse-wrap mode is active, while CUF still stops at the right margin.
 APCTests.test_APC_Basic
 BSTests.test_BS_Basic
 BSTests.test_BS_CursorStartsInDoWrapPosition
@@ -25,11 +25,18 @@ CHTTests.test_CHT_OneTabStopByDefault
 CNLTests.test_CNL_DefaultParam
 CNLTests.test_CNL_ExplicitParam
 CNLTests.test_CNL_StopsAtBottomLine
+CNLTests.test_CNL_StopsAtBottomLineWhenBegunBelowScrollRegion
+CNLTests.test_CNL_StopsAtBottomMarginInScrollRegion
 CPLTests.test_CPL_DefaultParam
 CPLTests.test_CPL_ExplicitParam
 CPLTests.test_CPL_StopsAtTopLine
+CPLTests.test_CPL_StopsAtTopLineWhenBegunAboveScrollRegion
+CPLTests.test_CPL_StopsAtTopMarginInScrollRegion
 CRTests.test_CR_Basic
+CRTests.test_CR_MovesToLeftMarginWhenLeftOfLeftMarginInOriginMode
+CRTests.test_CR_MovesToLeftMarginWhenRightOfLeftMargin
 CRTests.test_CR_MovesToLeftOfScreenWhenLeftOfLeftMargin
+CRTests.test_CR_StaysPutWhenAtLeftMargin
 CUBTests.test_CUB_DefaultParam
 CUBTests.test_CUB_ExplicitParam
 CUBTests.test_CUB_StopsAtLeftEdge
@@ -42,6 +49,7 @@ CUDTests.test_CUD_StopsAtBottomMarginInScrollRegion
 CUFTests.test_CUF_DefaultParam
 CUFTests.test_CUF_ExplicitParam
 CUFTests.test_CUF_StopsAtRightEdgeWhenBegunRightOfScrollRegion
+CUFTests.test_CUF_StopsAtRightMarginInScrollRegion
 CUFTests.test_CUF_StopsAtRightSide
 CUPTests.test_CUP_ColumnOnly
 CUPTests.test_CUP_DefaultParams
@@ -63,7 +71,9 @@ ChangeSpecialColorTests.test_ChangeSpecialColor_Hash6
 ChangeSpecialColorTests.test_ChangeSpecialColor_Multiple
 ChangeSpecialColorTests.test_ChangeSpecialColor_RGB
 DCHTests.test_DCH_DefaultParam
+DCHTests.test_DCH_DeleteAllWithMargins
 DCHTests.test_DCH_ExplicitParam
+DCHTests.test_DCH_RespectsMargins
 DCHTests.test_DCH_WorksOutsideTopBottomMargin
 DCSTests.test_DCS_Unrecognized
 DECBITests.test_DECBI_NoWrapOnLeftEdge
@@ -130,7 +140,6 @@ DECRQSSTests.test_DECRQSS_DECSCUSR
 DECRQSSTests.test_DECRQSS_DECSTBM
 DECRQSSTests.test_DECRQSS_SGR
 DECSCLTests.test_DSCSCL_Level2Supports7BitControls
-DECSCLTests.test_DSCSCL_Level3_SupportsDECRQMDoesntSupportDECSLRM
 DECSEDTests.test_DECSED_0
 DECSEDTests.test_DECSED_0_Protection
 DECSEDTests.test_DECSED_0_WithScrollRegion
@@ -168,7 +177,10 @@ DECSERATests.test_DECSERA_overlyLargeSourceClippedToScreenSize
 DECSETTests.test_DECSET_ALTBUF
 DECSETTests.test_DECSET_DECAWM
 DECSETTests.test_DECSET_DECAWM_CursorAtRightMargin
+DECSETTests.test_DECSET_DECAWM_OffRespectsLeftRightMargin
+DECSETTests.test_DECSET_DECAWM_OnRespectsLeftRightMargin
 DECSETTests.test_DECSET_DECAWM_TabDoesNotWrapAround
+DECSETTests.test_DECSET_DECLRMM
 DECSETTests.test_DECSET_DECLRMM_MarginsResetByDECSTR
 DECSETTests.test_DECSET_DECLRMM_ModeResetByDECSTR
 DECSETTests.test_DECSET_DECOM_SoftReset
@@ -206,11 +218,15 @@ DECSTRTests.test_DECSTR_DECSCA
 DECSTRTests.test_DECSTR_IRM
 DECSTRTests.test_DECSTR_ReverseWraparound
 DECSTRTests.test_DECSTR_STBM
+DLTests.test_DL_ClearOutLeftRightAndTopBottomScrollRegion
 DLTests.test_DL_DefaultParam
 DLTests.test_DL_DeleteMoreThanVisible
 DLTests.test_DL_ExplicitParam
+DLTests.test_DL_InLeftRightAndTopBottomScrollRegion
+DLTests.test_DL_InLeftRightScrollRegion
 DLTests.test_DL_InScrollRegion
 DLTests.test_DL_OutsideLeftRightAndTopBottomScrollRegion
+DLTests.test_DL_OutsideLeftRightScrollRegion
 DLTests.test_DL_OutsideScrollRegion
 ECHTests.test_ECH_DefaultParam
 ECHTests.test_ECH_ExplicitParam
@@ -257,9 +273,12 @@ ICHTests.test_ICH_DefaultParam
 ICHTests.test_ICH_ExplicitParam
 ICHTests.test_ICH_ScrollEntirelyOffRightEdge
 ICHTests.test_ICH_ScrollOffRightEdge
+ICHTests.test_ICH_ScrollOffRightMarginInScrollRegion
 ILTests.test_IL_AboveScrollRegion
 ILTests.test_IL_DefaultParam
 ILTests.test_IL_ExplicitParam
+ILTests.test_IL_RespectsScrollRegion
+ILTests.test_IL_RespectsScrollRegion_Over
 ILTests.test_IL_ScrollsOffBottom
 INDTests.test_IND_Basic
 INDTests.test_IND_Scrolls
@@ -299,22 +318,32 @@ SCORCTests.test_SaveRestoreCursor_MoveToHomeWhenNotSaved
 SCORCTests.test_SaveRestoreCursor_Protection
 SCORCTests.test_SaveRestoreCursor_Reset
 SCORCTests.test_SaveRestoreCursor_ReverseWrapNotAffected
+SCORCTests.test_SaveRestoreCursor_WorksInLRM
 SCORCTests.test_SaveRestoreCursor_Wrap
+SDTests.test_SD_BigScrollLeftRightAndTopBottomScrollRegion
 SDTests.test_SD_CanClearScreen
 SDTests.test_SD_DefaultParam
 SDTests.test_SD_ExplicitParam
+SDTests.test_SD_LeftRightAndTopBottomScrollRegion
+SDTests.test_SD_OutsideLeftRightScrollRegion
 SDTests.test_SD_OutsideTopBottomScrollRegion
+SDTests.test_SD_RespectsLeftRightScrollRegion
 SDTests.test_SD_RespectsTopBottomScrollRegion
 SMTests.test_SM_IRM
 SMTests.test_SM_IRM_DoesNotWrapUnlessCursorAtMargin
+SMTests.test_SM_IRM_TruncatesAtRightMargin
 SMTests.test_SM_LNM
 SMTitleTests.test_SMTitle_SetHexQueryHex
 SMTitleTests.test_SMTitle_SetUTF8QueryUTF8
 SOSTests.test_SOS_Basic
+SUTests.test_SU_BigScrollLeftRightAndTopBottomScrollRegion
 SUTests.test_SU_CanClearScreen
 SUTests.test_SU_DefaultParam
 SUTests.test_SU_ExplicitParam
+SUTests.test_SU_LeftRightAndTopBottomScrollRegion
+SUTests.test_SU_OutsideLeftRightScrollRegion
 SUTests.test_SU_OutsideTopBottomScrollRegion
+SUTests.test_SU_RespectsLeftRightScrollRegion
 SUTests.test_SU_RespectsTopBottomScrollRegion
 TBCTests.test_TBC_0
 TBCTests.test_TBC_3

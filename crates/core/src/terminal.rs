@@ -272,6 +272,10 @@ pub(crate) struct State {
     /// ?5 (DECSCNM reverse video - the renderer's consumer arrives later), and
     /// ?67 (DECBKM backarrow - the key encoder's concern). All three are in the
     /// oracle's mode table, so they are corpus-pinnable state.
+    /// DECLRMM (mode 69): whether DECSLRM is allowed to set margins at all.
+    /// Terminal-global like the other mode flags; the margins themselves are
+    /// per-screen state on `Screen`, because the alternate screen has its own.
+    pub(crate) left_right_margin: bool,
     pub(crate) slow_scroll: bool,
     pub(crate) reverse_colors: bool,
     pub(crate) backarrow: bool,
@@ -369,6 +373,7 @@ impl State {
             // SRM means "local echo OFF" and the protocol default is SET.
             send_receive: true,
             linefeed_mode: false,
+            left_right_margin: false,
             slow_scroll: false,
             reverse_colors: false,
             backarrow: false,
@@ -488,6 +493,7 @@ impl State {
                 slow_scroll: self.slow_scroll,
                 reverse_colors: self.reverse_colors,
                 backarrow: self.backarrow,
+                left_right_margin: self.left_right_margin,
             },
             cursor: Cursor {
                 x: screen.x,
@@ -531,10 +537,14 @@ impl State {
         if cols == 0 {
             return;
         }
+        // The right edge printing obeys, recomputed per character exactly as the
+        // oracle does (`Terminal.zig:1097`): the right margin normally, the screen
+        // edge when the cursor is parked right of the margin.
+        let right_limit = self.screen().print_right_limit();
 
         // A wide character that cannot fit in the last column leaves a spacer head behind
         // and starts on the next row, rather than being split across the wrap.
-        if width == 2 && self.screen().x + 1 >= cols {
+        if width == 2 && self.screen().x + 1 > right_limit {
             if !self.autowrap {
                 return;
             }
@@ -568,9 +578,9 @@ impl State {
         // IRM: shift the rest of the row right before writing, exactly the oracle's
         // guard (`Terminal.zig:1374`) - only when the cell is not at the end of the
         // line, so a print in the last column overwrites rather than inserting.
-        if self.insert_mode && self.screen().x + width < cols {
+        if self.insert_mode && self.screen().x + width <= right_limit {
             let blank_for_insert = self.blank();
-            self.screen_mut().insert_chars(width, blank_for_insert);
+            self.screen_mut().insert_chars_to(width, right_limit, blank_for_insert);
         }
 
         let pen = self.pen;
@@ -614,9 +624,14 @@ impl State {
 
         // At the right edge the cursor stays put and the wrap is deferred. Advancing to
         // `cols` instead would be off the grid and would lose the phantom state.
-        if x + width >= cols {
+        //
+        // The edge is the RIGHT LIMIT, not the screen width: with a column band the
+        // cursor parks on the margin. Parking it at `cols - 1` instead put it outside
+        // the band AND made the wrap look like a true end-of-row soft wrap, which the
+        // corpus caught as two spurious wrap flags with the grids otherwise identical.
+        if x + width > right_limit {
             let screen = self.screen_mut();
-            screen.x = cols - 1;
+            screen.x = right_limit;
             screen.pending_wrap = true;
         } else {
             self.screen_mut().x = x + width;
@@ -649,6 +664,53 @@ impl State {
         let y = top.saturating_add(row).min(bottom);
         self.screen_mut().move_to(col, y);
         self.last_print = None;
+    }
+
+    /// The column a carriage return lands on, and with it CNL/CPL and the wrap.
+    ///
+    /// The oracle's rule verbatim (`carriageReturn`, Terminal.zig:1676): under DECOM
+    /// always the left margin; otherwise the left margin only when the cursor is at
+    /// or right of it, and column 0 when the cursor sits LEFT of the margin. That
+    /// last arm is what lets a program writing outside the band still get a real
+    /// carriage return.
+    pub(crate) fn carriage_column(&self) -> u16 {
+        let left = self.screen().scroll_left;
+        if self.origin || self.screen().x >= left { left } else { 0 }
+    }
+
+    /// CUF. The right MARGIN bounds it while the cursor is at or left of the margin;
+    /// a cursor already right of the margin is bounded by the screen instead
+    /// (`Terminal.zig:1743`) - the same outside-the-region principle CUU/CUD use
+    /// for rows.
+    pub(crate) fn cursor_right(&mut self, count: u16) {
+        let x = self.cursor_x();
+        let right = self.screen().scroll_right;
+        let max = if x <= right {
+            right - x
+        } else {
+            self.screen().cols().saturating_sub(1).saturating_sub(x)
+        };
+        let y = self.cursor_y();
+        self.goto(x + count.min(max), y);
+    }
+
+    /// CUB, and it is NOT the mirror of CUF - measured, after assuming it was.
+    ///
+    /// The oracle's `cursorLeft` takes a fast path when no reverse-wrap mode is
+    /// active (`Terminal.zig:1766`): `cursorLeft(min(count, cursor.x))`, clamping at
+    /// COLUMN 0 and ignoring the left margin entirely. The margin-aware floor below
+    /// it exists only for the reverse-wrap walk, and reverse wrap (mode 45) is a
+    /// corpus-pinned unimplemented divergence here. So a plain CUB or BS crosses the
+    /// left margin, while a plain CUF still stops at the right one - an asymmetry
+    /// that reads like a bug until you find the fast path.
+    ///
+    /// The differential is what caught this: the corpus case asserting a margin
+    /// floor DIFFed with the cursor three columns off, and the oracle's source
+    /// explained why.
+    pub(crate) fn cursor_left(&mut self, count: u16) {
+        let x = self.cursor_x();
+        let y = self.cursor_y();
+        self.goto(x - count.min(x), y);
     }
 
     /// CUU. The scroll region bounds the move, not the screen.
@@ -820,6 +882,10 @@ impl State {
         // because the oracle ignores the sequence entirely.
         self.screen_mut().protected = crate::cell::Protection::None;
         self.screen_mut().clear_protection();
+        // DEC STD 070 has DECSTR reset the left/right margin MODE, and esctest
+        // asserts it (DECSET_DECLRMM_ModeResetByDECSTR). Resetting the scroll
+        // region below already clears the margins themselves.
+        self.left_right_margin = false;
         let screen = self.screen_mut();
         screen.reset_scroll_region();
         screen.pending_wrap = false;
@@ -848,10 +914,10 @@ impl Perform for State {
         match byte {
             0x07 => self.push_event(crate::events::Event::Bell),
             0x08 => {
-                let x = self.screen().x.saturating_sub(1);
-                self.screen_mut().x = x;
+                // The oracle's backspace IS cursorLeft(1), so it stops at the left
+                // margin rather than at column 0.
+                self.cursor_left(1);
                 self.screen_mut().pending_wrap = false;
-                self.last_print = None;
             }
             0x09 => self.tab_forward(1),
             0x0a | 0x0b | 0x0c => {
@@ -866,7 +932,8 @@ impl Perform for State {
                 self.last_print = None;
             }
             0x0d => {
-                self.screen_mut().x = 0;
+                let x = self.carriage_column();
+                self.screen_mut().x = x;
                 self.screen_mut().pending_wrap = false;
                 self.last_print = None;
             }

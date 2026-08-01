@@ -205,6 +205,11 @@ pub struct Modes {
     pub slow_scroll: bool,
     pub reverse_colors: bool,
     pub backarrow: bool,
+    /// DEC ?69 (DECLRMM): whether DECSLRM may set left/right margins at all. The
+    /// margins themselves have no ABI surface, so they are compared through their
+    /// GRID EFFECTS; this bit is the part that would otherwise be invisible, since
+    /// enabling the mode alone changes nothing on screen.
+    pub left_right_margin: bool,
 }
 
 impl Default for Modes {
@@ -232,6 +237,7 @@ impl Default for Modes {
             slow_scroll: false,
             reverse_colors: false,
             backarrow: false,
+            left_right_margin: false,
         }
     }
 }

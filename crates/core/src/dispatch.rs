@@ -56,6 +56,14 @@ impl State {
             4 => self.slow_scroll = on,
             5 => self.reverse_colors = on,
             67 => self.backarrow = on,
+            // DECLRMM. Turning it OFF resets the margins (xterm's own behaviour and
+            // what esctest's reset relies on); turning it on only permits DECSLRM.
+            69 => {
+                self.left_right_margin = on;
+                if !on {
+                    self.screen_mut().reset_margins();
+                }
+            }
             2004 => self.bracketed_paste = on,
             2026 => self.synchronized_output = on,
             // The mouse family (9/1000/1002/1003/1005/1006/1015/1016/1007): raw bit plus
@@ -400,25 +408,19 @@ impl State {
 
             'A' => self.cursor_up(arg(params, 0)),
             'B' => self.cursor_down(arg(params, 0)),
-            'C' => {
-                let (x, y) = (self.cursor_x().saturating_add(arg(params, 0)), self.cursor_y());
-                self.goto(x, y);
-            }
-            'D' => {
-                let (x, y) = (self.cursor_x().saturating_sub(arg(params, 0)), self.cursor_y());
-                self.goto(x, y);
-            }
+            'C' => self.cursor_right(arg(params, 0)),
+            'D' => self.cursor_left(arg(params, 0)),
             // CNL and CPL are a clamped vertical move followed by a carriage return
             // (stream.zig:1224 and :1247), so they inherit the scroll-region bound.
             'E' => {
                 self.cursor_down(arg(params, 0));
-                let y = self.cursor_y();
-                self.goto(0, y);
+                let (x, y) = (self.carriage_column(), self.cursor_y());
+                self.goto(x, y);
             }
             'F' => {
                 self.cursor_up(arg(params, 0));
-                let y = self.cursor_y();
-                self.goto(0, y);
+                let (x, y) = (self.carriage_column(), self.cursor_y());
+                self.goto(x, y);
             }
             'G' | '`' => {
                 let y = self.cursor_y();
@@ -472,8 +474,14 @@ impl State {
                 self.screen_mut().erase_in_line(zero_arg(params, 0), blank, Protection::Iso);
             }
             'X' => self.screen_mut().erase_chars(arg(params, 0), blank, Protection::Iso),
-            '@' => self.screen_mut().insert_chars(arg(params, 0), blank),
-            'P' => self.screen_mut().delete_chars(arg(params, 0), blank),
+            '@' => {
+                let right = self.screen().scroll_right;
+                self.screen_mut().insert_chars_to(arg(params, 0), right, blank);
+            }
+            'P' => {
+                let right = self.screen().scroll_right;
+                self.screen_mut().delete_chars_to(arg(params, 0), right, blank);
+            }
             'L' => self.screen_mut().insert_lines(arg(params, 0), blank),
             'M' => self.screen_mut().delete_lines(arg(params, 0), blank),
             'S' => self.screen_mut().scroll_up(arg(params, 0), blank),
@@ -491,7 +499,23 @@ impl State {
                     self.cursor_position(0, 0);
                 }
             }
-            's' => self.save_cursor(),
+            // CSI s is ambiguous by design: DECSLRM when DECLRMM is enabled, plain
+            // save-cursor otherwise. The oracle defers exactly this decision to its
+            // handler (`stream.zig` left_and_right_margin_ambiguous) rather than to
+            // the parser, because only the terminal knows the mode.
+            's' => {
+                if self.left_right_margin {
+                    let left = if params.len() > 0 { arg_or_zero(params, 0) } else { 0 };
+                    let right = if params.len() > 1 { arg_or_zero(params, 1) } else { 0 };
+                    if self.screen_mut().set_margins(left, right) {
+                        // A successful DECSLRM homes the cursor (setCursorPos(1,1)),
+                        // which under DECOM means the region origin.
+                        self.cursor_position(0, 0);
+                    }
+                } else {
+                    self.save_cursor();
+                }
+            }
             'u' => self.restore_cursor(),
             _ => {}
         }
@@ -517,7 +541,9 @@ impl State {
             }
             b'E' => {
                 self.index(blank);
-                self.screen_mut().x = 0;
+                // NEL is index + carriage return, so it lands on the left margin.
+                let x = self.carriage_column();
+                self.screen_mut().x = x;
                 self.last_print = None;
             }
             b'7' => self.save_cursor(),

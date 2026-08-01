@@ -235,11 +235,28 @@ impl Grid {
 
     /// Shifts cells on a row right from `at_x`, discarding what falls off the end (ICH).
     pub fn shift_right(&mut self, y: u16, at_x: u16, count: u16, blank: Cell) {
-        if self.cols == 0 || at_x >= self.cols {
+        self.shift_right_to(y, at_x, self.cols.saturating_sub(1), count, blank)
+    }
+
+    /// ICH bounded by a right edge: cells falling off `last` are discarded rather
+    /// than pushed past it, so an insert inside a column band cannot smear into the
+    /// text a program parked outside the band.
+    pub fn shift_right_to(
+        &mut self,
+        y: u16,
+        at_x: u16,
+        last: u16,
+        count: u16,
+        blank: Cell,
+    ) {
+        if self.cols == 0 || at_x >= self.cols || at_x > last {
             return;
         }
-        let last = self.cols - 1;
-        let count = count.min(self.cols - at_x);
+        let last = last.min(self.cols - 1);
+        let count = count.min(last + 1 - at_x);
+        if count == 0 {
+            return;
+        }
         let mut x = last;
         while x >= at_x + count {
             let source = self.index(x - count, y);
@@ -255,16 +272,106 @@ impl Grid {
 
     /// Shifts cells on a row left into `at_x`, blanking the tail (DCH).
     pub fn shift_left(&mut self, y: u16, at_x: u16, count: u16, blank: Cell) {
-        if self.cols == 0 || at_x >= self.cols {
+        self.shift_left_to(y, at_x, self.cols.saturating_sub(1), count, blank)
+    }
+
+    /// DCH bounded by a right edge: the pull-left stops at `last`, and the blanks
+    /// it leaves land inside the band rather than at the screen edge.
+    pub fn shift_left_to(&mut self, y: u16, at_x: u16, last: u16, count: u16, blank: Cell) {
+        if self.cols == 0 || at_x >= self.cols || at_x > last {
             return;
         }
-        let count = count.min(self.cols - at_x);
-        for x in at_x..(self.cols - count) {
+        let last = last.min(self.cols - 1);
+        let count = count.min(last + 1 - at_x);
+        if count == 0 {
+            return;
+        }
+        // Exclusive upper bound, deliberately: deleting the WHOLE span makes
+        // `last - count` equal `at_x - 1`, which underflows a u16 at column 0. The
+        // inclusive form panicked inside the pty pump thread, so the terminal simply
+        // stopped answering and esctest hung for the full 600s timeout instead of
+        // failing - a crash that presents as a hang is the expensive kind.
+        for x in at_x..(last + 1 - count) {
             let source = self.index(x + count, y);
             let target = self.index(x, y);
             self.move_cell(source, target);
         }
-        self.clear_span(y, self.cols - count, self.cols - 1, blank);
+        self.clear_span(y, last + 1 - count, last, blank);
+    }
+
+    /// Scrolls a rectangular band up: rows `top..=bottom`, columns `left..=right`.
+    ///
+    /// With the band spanning the full width this is exactly `scroll_up`, and it
+    /// delegates there so whole-row moves keep their metadata (wrap flags, links,
+    /// grapheme maps) travelling with the row. A NARROWER band cannot: the row's
+    /// wrap flag describes the whole row, not the band, so a banded scroll moves
+    /// cells only and deliberately leaves the flags alone.
+    pub fn scroll_up_in(
+        &mut self,
+        top: u16,
+        bottom: u16,
+        left: u16,
+        right: u16,
+        count: u16,
+        blank: Cell,
+    ) {
+        if left == 0 && right >= self.cols.saturating_sub(1) {
+            return self.scroll_up(top, bottom, count, blank);
+        }
+        let height = bottom.saturating_sub(top) + 1;
+        let count = count.min(height);
+        if count == 0 {
+            return;
+        }
+        for y in top..=bottom.saturating_sub(count) {
+            if y + count <= bottom {
+                self.move_span(y + count, y, left, right);
+            }
+        }
+        for y in (bottom + 1 - count)..=bottom {
+            self.clear_span(y, left, right, blank);
+        }
+    }
+
+    /// The mirror of `scroll_up_in`.
+    pub fn scroll_down_in(
+        &mut self,
+        top: u16,
+        bottom: u16,
+        left: u16,
+        right: u16,
+        count: u16,
+        blank: Cell,
+    ) {
+        if left == 0 && right >= self.cols.saturating_sub(1) {
+            return self.scroll_down(top, bottom, count, blank);
+        }
+        let height = bottom.saturating_sub(top) + 1;
+        let count = count.min(height);
+        if count == 0 {
+            return;
+        }
+        let mut y = bottom;
+        while y >= top + count {
+            self.move_span(y - count, y, left, right);
+            if y == 0 {
+                break;
+            }
+            y -= 1;
+        }
+        for y in top..(top + count) {
+            self.clear_span(y, left, right, blank);
+        }
+    }
+
+    /// Moves one row's `left..=right` cells onto another row's same columns.
+    fn move_span(&mut self, from_y: u16, to_y: u16, left: u16, right: u16) {
+        for x in left..=right.min(self.cols.saturating_sub(1)) {
+            let source = self.index(x, from_y);
+            let target = self.index(x, to_y);
+            self.move_cell(source, target);
+        }
+        self.mark_dirty(to_y);
     }
 
     /// Moves rows within `top..=bottom` up by `count`, blanking the vacated bottom rows.

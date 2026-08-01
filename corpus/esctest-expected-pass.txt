@@ -2,7 +2,7 @@
 # The corpus law in both directions: a line here failing is a regression; a test
 # passing without a line here must be promoted by adding it. Re-triage after suite
 # updates: cargo test -p ruuah-vt-pty --test esctest -- --ignored print_esctest --nocapture
-# Suite pin: esctest.lock. Baseline 2026-08-01 (rect-ops slice + checksum-convention fix): 270 pass of 568. TWO events in one re-baseline: (1) --xterm-checksum=334 declared in esctest.rs - the suite default (0) assumed a pre-279 terminal with NEGATED DECRQCRA sums, so every content-asserting test in every class failed on the convention, never on semantics; declaring the modern convention this core actually implements promoted ~118 tests across EL/ICH/DCH/IND/RI/BS/CR/TAB and more, with ZERO regressions. (2) The rect-ops slice itself: DECFRA/DECERA/DECCRA + DECRQSS (SGR/DECSTBM/DECSCUSR answered; DECSLRM honestly invalid until margins land). NOTE: the Ghostty 141 baseline in docs/ESCTEST-VS-GHOSTTY-20260801.md was measured under the DEFAULT convention; re-measure Ghostty with 334 before quoting any gap.
+# Suite pin: esctest.lock. Baseline 2026-08-01 (DECRQM slice): 291 pass of 568. Promoted 21: the 12 permanently-reset VT180 print-form ANSI modes answer 4 (reply-only xterm-direction divergence; the oracle says 0), KAM/IRM/SRM/LNM tracked (the oracle's own ANSI set; SRM defaults SET), IRM and LNM with REAL behaviour (insert-shift on print, LF returns the carriage - both oracle-implemented and corpus-pinned, insert-replace-mode promoted DIFF->MATCH), DECSCLM/DECSCNM/DECBKM tracked (?4/?5/?67). SM_IRM and SM_LNM came along free. Left deliberately: DECCOLM (column resize), DECLRMM (margins slice), DECHCCM, PFF/PEX/NRCM (oracle does not track them; reply-lying refused), DECSCL levels.
 APCTests.test_APC_Basic
 BSTests.test_BS_Basic
 BSTests.test_BS_CursorStartsInDoWrapPosition
@@ -101,10 +101,29 @@ DECRCTests.test_SaveRestoreCursor_ReverseWrapNotAffected
 DECRCTests.test_SaveRestoreCursor_WorksInLRM
 DECRCTests.test_SaveRestoreCursor_Wrap
 DECRQMTests.test_DECRQM
+DECRQMTests.test_DECRQM_ANSI_EBM
+DECRQMTests.test_DECRQM_ANSI_FEAM
+DECRQMTests.test_DECRQM_ANSI_FETM
+DECRQMTests.test_DECRQM_ANSI_GATM
+DECRQMTests.test_DECRQM_ANSI_HEM
+DECRQMTests.test_DECRQM_ANSI_IRM
+DECRQMTests.test_DECRQM_ANSI_KAM
+DECRQMTests.test_DECRQM_ANSI_LNM
+DECRQMTests.test_DECRQM_ANSI_MATM
+DECRQMTests.test_DECRQM_ANSI_PUM
+DECRQMTests.test_DECRQM_ANSI_SATM
+DECRQMTests.test_DECRQM_ANSI_SRM
+DECRQMTests.test_DECRQM_ANSI_SRTM
+DECRQMTests.test_DECRQM_ANSI_TSM
+DECRQMTests.test_DECRQM_ANSI_TTM
+DECRQMTests.test_DECRQM_ANSI_VEM
 DECRQMTests.test_DECRQM_DEC_DECAWM
+DECRQMTests.test_DECRQM_DEC_DECBKM
 DECRQMTests.test_DECRQM_DEC_DECCKM
 DECRQMTests.test_DECRQM_DEC_DECNKM
 DECRQMTests.test_DECRQM_DEC_DECOM
+DECRQMTests.test_DECRQM_DEC_DECSCLM
+DECRQMTests.test_DECRQM_DEC_DECSCNM
 DECRQMTests.test_DECRQM_DEC_DECTCEM
 DECRQSSTests.test_DECRQSS_DECSCUSR
 DECRQSSTests.test_DECRQSS_DECSTBM
@@ -250,7 +269,9 @@ SDTests.test_SD_DefaultParam
 SDTests.test_SD_ExplicitParam
 SDTests.test_SD_OutsideTopBottomScrollRegion
 SDTests.test_SD_RespectsTopBottomScrollRegion
+SMTests.test_SM_IRM
 SMTests.test_SM_IRM_DoesNotWrapUnlessCursorAtMargin
+SMTests.test_SM_LNM
 SOSTests.test_SOS_Basic
 SUTests.test_SU_CanClearScreen
 SUTests.test_SU_DefaultParam

@@ -192,6 +192,19 @@ pub struct Modes {
     pub ignore_keypad_with_numlock: bool,
     /// DEC private mode 1036 (default ON): alt prefixes ESC in legacy key encoding.
     pub alt_esc_prefix: bool,
+    /// The four tracked ANSI modes (the oracle's own set, modes.zig): KAM 2, IRM 4,
+    /// SRM 12 (the one that DEFAULTS SET), LNM 20. IRM and LNM also have grid- and
+    /// cursor-observable behaviour; the state is compared here so a core that toggles
+    /// without acting, or acts without toggling, is caught either way.
+    pub kam: bool,
+    pub insert: bool,
+    pub send_receive: bool,
+    pub linefeed: bool,
+    /// DEC ?4 (DECSCLM), ?5 (DECSCNM reverse video), ?67 (DECBKM): tracked state,
+    /// consumers live outside the core (renderer, key encoder).
+    pub slow_scroll: bool,
+    pub reverse_colors: bool,
+    pub backarrow: bool,
 }
 
 impl Default for Modes {
@@ -212,6 +225,13 @@ impl Default for Modes {
             keypad_keys: false,
             ignore_keypad_with_numlock: true,
             alt_esc_prefix: true,
+            kam: false,
+            insert: false,
+            send_receive: true,
+            linefeed: false,
+            slow_scroll: false,
+            reverse_colors: false,
+            backarrow: false,
         }
     }
 }

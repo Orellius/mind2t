@@ -63,6 +63,10 @@ fn main() {
         .allowlist_type("Ghostty(CellData|CellWide|CellContentTag|RowData)")
         .allowlist_type("Ghostty(CellSemanticContent|RowSemanticPrompt)")
         .allowlist_type("Ghostty(PointTag|StyleColorTag)")
+        // The colour readout (GHOSTTY_TERMINAL_DATA_COLOR_*) writes these; the parser
+        // is allowlisted so the reply/format rules can be probed against the oracle.
+        .allowlist_type("GhosttyColorRgb")
+        .allowlist_function("ghostty_color_(parse|palette_default)")
         .allowlist_type("GhosttyRenderState(Data|Dirty|RowData|Option|RowOption)?")
         .allowlist_type("Ghostty(SgrUnderline)")
         // GHOSTTY_TERMINAL_DATA_PWD and _TITLE answer through this; no allowlisted

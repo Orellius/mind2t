@@ -305,6 +305,7 @@ pub(crate) struct State {
     /// embedder's concern and the frame does not carry it yet.
     pub(crate) cursor_shape: u8,
     pub(crate) cursor_blink: bool,
+
     /// Round-robin id source for sixel images in their private range.
     pub(crate) sixel_counter: u32,
     /// OSC 8: interned (explicit id, uri) pairs the grids' cell stamps point into.
@@ -529,6 +530,7 @@ impl State {
             // of the input under OSC 133 (finding 27).
             let pen = self.pen;
             let semantic = self.screen().semantic_content;
+            let protected = self.screen().protected;
             let style_id = self.screen_mut().grid.intern_style(pen);
             let (x, y) = (self.screen().x, self.screen().y);
             let index = self.screen().grid.index(x, y);
@@ -538,7 +540,11 @@ impl State {
                     codepoint: 0,
                     style_id,
                     wide: Wide::SpacerHead,
-                    flags: CellFlags::with_semantic(semantic),
+                    flags: {
+                        let mut flags = CellFlags::with_semantic(semantic);
+                        flags.set_protection(protected);
+                        flags
+                    },
                 },
             );
             self.stamp_link(index);
@@ -555,6 +561,7 @@ impl State {
 
         let pen = self.pen;
         let semantic = self.screen().semantic_content;
+        let protected = self.screen().protected;
         let style_id = self.screen_mut().grid.intern_style(pen);
         let (x, y) = (self.screen().x, self.screen().y);
         let index = self.screen().grid.index(x, y);
@@ -564,7 +571,11 @@ impl State {
                 codepoint: c as u32,
                 style_id,
                 wide: if width == 2 { Wide::Wide } else { Wide::Narrow },
-                flags: CellFlags::with_semantic(semantic),
+                flags: {
+                    let mut flags = CellFlags::with_semantic(semantic);
+                    flags.set_protection(protected);
+                    flags
+                },
             },
         );
         self.stamp_link(index);
@@ -577,7 +588,11 @@ impl State {
                     codepoint: 0,
                     style_id,
                     wide: Wide::SpacerTail,
-                    flags: CellFlags::with_semantic(semantic),
+                    flags: {
+                        let mut flags = CellFlags::with_semantic(semantic);
+                        flags.set_protection(protected);
+                        flags
+                    },
                 },
             );
             self.stamp_link(index + 1);
@@ -779,6 +794,18 @@ impl State {
         self.keypad_keys = false;
         self.pen = Style::DEFAULT;
         self.saved_pen = None;
+        // DECSTR's own table includes DECSCA: the pen stops protecting. It ALSO
+        // strips protection from cells already on screen, which no VT manual says
+        // and which is deliberate: protection is designed to survive erasure, so a
+        // protected cell outlives every reset esctest performs between tests
+        // (measured - the oracle spares an ISO cell even from ED 2) and leaks into
+        // the next test's screen. This core already implements DECSTR as a pure
+        // xterm-direction divergence (the oracle has no `!` dispatch at all), and
+        // its whole purpose there is test isolation; stripping protection is that
+        // same purpose applied one layer down. No corpus case can contradict it,
+        // because the oracle ignores the sequence entirely.
+        self.screen_mut().protected = crate::cell::Protection::None;
+        self.screen_mut().clear_protection();
         let screen = self.screen_mut();
         screen.reset_scroll_region();
         screen.pending_wrap = false;

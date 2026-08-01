@@ -2,7 +2,7 @@
 # The corpus law in both directions: a line here failing is a regression; a test
 # passing without a line here must be promoted by adding it. Re-triage after suite
 # updates: cargo test -p ruuah-vt-pty --test esctest -- --ignored print_esctest --nocapture
-# Suite pin: esctest.lock. Baseline 2026-08-01 (DECRQM slice): 291 pass of 568. Promoted 21: the 12 permanently-reset VT180 print-form ANSI modes answer 4 (reply-only xterm-direction divergence; the oracle says 0), KAM/IRM/SRM/LNM tracked (the oracle's own ANSI set; SRM defaults SET), IRM and LNM with REAL behaviour (insert-shift on print, LF returns the carriage - both oracle-implemented and corpus-pinned, insert-replace-mode promoted DIFF->MATCH), DECSCLM/DECSCNM/DECBKM tracked (?4/?5/?67). SM_IRM and SM_LNM came along free. Left deliberately: DECCOLM (column resize), DECLRMM (margins slice), DECHCCM, PFF/PEX/NRCM (oracle does not track them; reply-lying refused), DECSCL levels.
+# Suite pin: esctest.lock. Baseline 2026-08-01 (selective-erase slice): 328 pass of 568. Promoted 37: the DECSED/DECSEL/DECSERA families, DECSCA through DECRQSS and DECSTR, and the ED/EL/ECH ISO-protection tests. Protection is a per-cell KIND (2 bits in the flags byte, Cell still 8 bytes), not the oracle's single bit plus a never-reset last-mode: xterm's matrix has plain erases spare ISO cells and selective erases spare DEC ones, and the kind is the only way to hold both at once. TWO deliberate divergences, both corpus-pinned or test-pinned: DECSED ERASES an ISO-protected cell (esctest's DECSED_doesNotRespectISOProtect asserts it; the oracle spares it), and DECSTR STRIPS protection from the screen - without that, a protected cell survives esctest's own between-test reset (measured: the oracle spares ISO even from ED 2) and poisons the next test, which is exactly how EDTests.test_ED_0 regressed when protection first landed.
 APCTests.test_APC_Basic
 BSTests.test_BS_Basic
 BSTests.test_BS_CursorStartsInDoWrapPosition
@@ -125,15 +125,46 @@ DECRQMTests.test_DECRQM_DEC_DECOM
 DECRQMTests.test_DECRQM_DEC_DECSCLM
 DECRQMTests.test_DECRQM_DEC_DECSCNM
 DECRQMTests.test_DECRQM_DEC_DECTCEM
+DECRQSSTests.test_DECRQSS_DECSCA
 DECRQSSTests.test_DECRQSS_DECSCUSR
 DECRQSSTests.test_DECRQSS_DECSTBM
 DECRQSSTests.test_DECRQSS_SGR
 DECSCLTests.test_DSCSCL_Level2Supports7BitControls
 DECSCLTests.test_DSCSCL_Level3_SupportsDECRQMDoesntSupportDECSLRM
+DECSEDTests.test_DECSED_0
+DECSEDTests.test_DECSED_0_Protection
+DECSEDTests.test_DECSED_0_WithScrollRegion
+DECSEDTests.test_DECSED_0_WithScrollRegion_Protection
+DECSEDTests.test_DECSED_1
+DECSEDTests.test_DECSED_1_Protection
+DECSEDTests.test_DECSED_1_WithScrollRegion
+DECSEDTests.test_DECSED_1_WithScrollRegion_Protection
+DECSEDTests.test_DECSED_2
+DECSEDTests.test_DECSED_2_Protection
+DECSEDTests.test_DECSED_2_WithScrollRegion
+DECSEDTests.test_DECSED_2_WithScrollRegion_Protection
 DECSEDTests.test_DECSED_3
 DECSEDTests.test_DECSED_3_Protection
+DECSEDTests.test_DECSED_DECSCA_2
+DECSEDTests.test_DECSED_Default
+DECSEDTests.test_DECSED_Default_Protection
+DECSELTests.test_DECSEL_0
+DECSELTests.test_DECSEL_0_Protection
+DECSELTests.test_DECSEL_1
+DECSELTests.test_DECSEL_1_Protection
+DECSELTests.test_DECSEL_2
+DECSELTests.test_DECSEL_2_Protection
+DECSELTests.test_DECSEL_Default
+DECSELTests.test_DECSEL_Default_Protection
+DECSELTests.test_DECSEL_IgnoresScrollRegion
+DECSELTests.test_DECSEL_IgnoresScrollRegion_Protection
+DECSERATests.test_DECSERA_basic
 DECSERATests.test_DECSERA_cursorDoesNotMove
+DECSERATests.test_DECSERA_defaultArgs
+DECSERATests.test_DECSERA_doesNotRespectISOProtect
+DECSERATests.test_DECSERA_ignoresMargins
 DECSERATests.test_DECSERA_invalidRectDoesNothing
+DECSERATests.test_DECSERA_overlyLargeSourceClippedToScreenSize
 DECSETTests.test_DECSET_ALTBUF
 DECSETTests.test_DECSET_DECAWM
 DECSETTests.test_DECSET_DECAWM_CursorAtRightMargin
@@ -171,6 +202,7 @@ DECSTRTests.test_DECSTR_DECOM
 DECSTRTests.test_DECSTR_DECRLM
 DECSTRTests.test_DECSTR_DECSASD
 DECSTRTests.test_DECSTR_DECSC
+DECSTRTests.test_DECSTR_DECSCA
 DECSTRTests.test_DECSTR_IRM
 DECSTRTests.test_DECSTR_ReverseWraparound
 DECSTRTests.test_DECSTR_STBM
@@ -185,6 +217,7 @@ ECHTests.test_ECH_ExplicitParam
 ECHTests.test_ECH_IgnoresScrollRegion
 ECHTests.test_ECH_OutsideScrollRegion
 ECHTests.test_ECH_doesNotRespectDECPRotection
+ECHTests.test_ECH_respectsISOProtection
 EDTests.test_ED_0
 EDTests.test_ED_0_WithScrollRegion
 EDTests.test_ED_1
@@ -194,12 +227,14 @@ EDTests.test_ED_2_WithScrollRegion
 EDTests.test_ED_3
 EDTests.test_ED_Default
 EDTests.test_ED_doesNotRespectDECProtection
+EDTests.test_ED_respectsISOProtection
 ELTests.test_EL_0
 ELTests.test_EL_1
 ELTests.test_EL_2
 ELTests.test_EL_Default
 ELTests.test_EL_IgnoresScrollRegion
 ELTests.test_EL_doesNotRespectDECProtection
+ELTests.test_EL_respectsISOProtection
 FFTests.test_FF_Basic
 FFTests.test_FF_Scrolls
 FFTests.test_FF_ScrollsInTopBottomRegionStartingAbove

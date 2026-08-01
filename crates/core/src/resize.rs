@@ -100,11 +100,13 @@ pub fn apply(screen: &mut Screen, cols: u16, rows: u16, mode: Mode) {
             x: anchor.x.min(cols - 1),
             y: clamp_row(anchor.row, overflow, rows),
             pending_wrap: saved.pending_wrap,
+            protected: saved.protected,
         },
         _ => SavedCursor {
             x: 0,
             y: 0,
             pending_wrap: false,
+            protected: crate::cell::Protection::None,
         },
     });
 

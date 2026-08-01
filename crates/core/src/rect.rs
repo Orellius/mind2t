@@ -104,6 +104,22 @@ impl State {
         }
     }
 
+    /// DECSERA (CSI Pt;Pl;Pb;Pr $ {): DECERA's geometry, DECSED's protection rule -
+    /// only unprotected cells are blanked.
+    pub(crate) fn selective_erase_rect(&mut self, top: u16, left: u16, bottom: u16, right: u16) {
+        let Some(rect) = self.resolve_rect(top, left, bottom, right) else { return };
+        let blank = self.blank();
+        let grid = &mut self.screen_mut().grid;
+        for y in rect.top..=rect.bottom {
+            for x in rect.left..=rect.right {
+                let index = grid.index(x, y);
+                if grid.cell(index).flags.protection() != crate::cell::Protection::Dec {
+                    grid.write(index, blank);
+                }
+            }
+        }
+    }
+
     /// DECCRA. Page parameters are accepted and ignored (one page here). The source
     /// clips to the screen; the destination clips on write. Capture-then-write makes
     /// overlap safe in both directions, and carries grapheme continuations and link
@@ -284,5 +300,64 @@ mod tests {
         terminal.write(b"\x1b[1;1;1;1;1;2;1;1$v");
         let snapshot = terminal.snapshot();
         assert_eq!(snapshot.grid[1].cells[0].text, "b\u{05B8}", "the cluster travelled whole");
+    }
+}
+
+#[cfg(test)]
+mod protection_tests {
+    use crate::terminal::Terminal;
+
+    fn rows(terminal: &Terminal, n: u16) -> Vec<String> {
+        let snapshot = terminal.snapshot();
+        (0..n).map(|y| snapshot.row_text(y.into())).collect()
+    }
+
+    /// The esctest shape: protected text survives a selective erase, unprotected
+    /// neighbours do not, and DECSCA 2 unprotects exactly like DECSCA 0.
+    #[test]
+    fn decsed_spares_protected_cells_only() {
+        let mut terminal = Terminal::new(8, 2);
+        terminal.write(b"\x1b[1\"qbcd\x1b[2\"qX\x1b[1;1H\x1b[?0J");
+        assert_eq!(rows(&terminal, 2)[0], "bcd");
+    }
+
+    #[test]
+    fn plain_ed_erases_protected_cells_too() {
+        let mut terminal = Terminal::new(8, 2);
+        terminal.write(b"\x1b[1\"qbcd\x1b[1;1H\x1b[0J");
+        assert_eq!(rows(&terminal, 2)[0], "");
+    }
+
+    #[test]
+    fn decsel_and_decsera_respect_protection_and_decera_does_not() {
+        let mut terminal = Terminal::new(8, 2);
+        terminal.write(b"a\x1b[1\"qb\x1b[0\"qc\x1b[1;1H\x1b[?2K");
+        assert_eq!(rows(&terminal, 2)[0], " b", "DECSEL spares the protected b");
+
+        let mut terminal = Terminal::new(8, 2);
+        terminal.write(b"a\x1b[1\"qb\x1b[0\"qc\x1b[1;1;1;8${");
+        assert_eq!(rows(&terminal, 2)[0], " b", "DECSERA spares the protected b");
+
+        let mut terminal = Terminal::new(8, 2);
+        terminal.write(b"a\x1b[1\"qb\x1b[0\"qc\x1b[1;1;1;8$z");
+        assert_eq!(rows(&terminal, 2)[0], "", "DECERA ignores protection");
+    }
+
+    /// DECSTR drops the protecting pen AND strips protection from the screen -
+    /// deliberate, and the reason is test isolation: protection is built to survive
+    /// erasure, so without this a protected cell outlives every reset esctest runs
+    /// between tests and lands in the next test's screen. Measured: that is exactly
+    /// what regressed EDTests.test_ED_0 when protection first landed.
+    #[test]
+    fn decstr_strips_protection_from_the_screen() {
+        let mut terminal = Terminal::new(8, 2);
+        terminal.write(b"\x1b[1\"qab\x1b[!p\x1b[1;1H\x1b[?0J");
+        assert_eq!(rows(&terminal, 2)[0], "", "DECSTR unprotected ab, so DECSED took it");
+
+        // Without the DECSTR, the same protected cells survive - the control that
+        // proves the strip is what did the work.
+        let mut terminal = Terminal::new(8, 2);
+        terminal.write(b"\x1b[1\"qab\x1b[1;1H\x1b[?0J");
+        assert_eq!(rows(&terminal, 2)[0], "ab");
     }
 }

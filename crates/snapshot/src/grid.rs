@@ -227,6 +227,96 @@ pub struct Cursor {
     pub style: Style,
 }
 
+/// One colour as the terminal stores it: 8 bits per channel, exactly the oracle's
+/// `GhosttyColorRgb`. OSC queries report 16-bit channels, but that is a REPLY encoding
+/// (`v * 0x101`), not stored precision -- storing 16 bits here would let the two sides
+/// agree on every byte while disagreeing about what they would report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rgb {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+/// The OSC-addressable colour state (OSC 4/104 indexed, 10/11/12 + 110/111/112 dynamic).
+///
+/// Like `Modes`, none of this leaves a trace on the grid: a core that ignores OSC 4
+/// entirely scores a perfect match on every cell comparison, because cells carry palette
+/// INDICES and the table those indices resolve through lives here. The oracle exposes it
+/// through `GHOSTTY_TERMINAL_DATA_COLOR_*`, which is what makes this a real differential
+/// observable rather than a source-referenced promise.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Colors {
+    /// Effective foreground: the OSC 10 override, else the embedder default, else `None`.
+    /// `None` is the fresh-terminal state -- the VT core has no opinion about the
+    /// renderer's default ink, and the oracle answers `GHOSTTY_NO_VALUE` there.
+    pub foreground: Option<Rgb>,
+    /// Effective background (OSC 11 override, else embedder default, else `None`).
+    pub background: Option<Rgb>,
+    /// Effective cursor colour (OSC 12 override, else embedder default, else `None`).
+    pub cursor: Option<Rgb>,
+    /// The current 256-entry palette, OSC 4 overrides applied. Always present: unlike
+    /// the dynamic colours the palette has a built-in default, and both implementations
+    /// must agree on it entry for entry or every case diffs here.
+    pub palette: Vec<Rgb>,
+}
+
+impl Default for Colors {
+    fn default() -> Self {
+        Colors {
+            foreground: None,
+            background: None,
+            cursor: None,
+            palette: default_palette(),
+        }
+    }
+}
+
+/// The oracle's built-in palette, measured from its source 2026-08-01
+/// (`color.zig`, `pub const default`): indices 0-15 are Ghostty's own named
+/// defaults (the Tomorrow scheme, NOT classic xterm's CD0000 family), 16-231 the
+/// standard 6x6x6 cube (`0` or `n*40+55` per channel), 232-255 the standard gray
+/// ramp (`(i-232)*10+8`). Both implementations initialize from this one table;
+/// the differential compares every entry, so a drift in either copy surfaces as
+/// `colors.palette[i]` on every case.
+pub fn default_palette() -> Vec<Rgb> {
+    const NAMED: [(u8, u8, u8); 16] = [
+        (0x1D, 0x1F, 0x21),
+        (0xCC, 0x66, 0x66),
+        (0xB5, 0xBD, 0x68),
+        (0xF0, 0xC6, 0x74),
+        (0x81, 0xA2, 0xBE),
+        (0xB2, 0x94, 0xBB),
+        (0x8A, 0xBE, 0xB7),
+        (0xC5, 0xC8, 0xC6),
+        (0x66, 0x66, 0x66),
+        (0xD5, 0x4E, 0x53),
+        (0xB9, 0xCA, 0x4A),
+        (0xE7, 0xC5, 0x47),
+        (0x7A, 0xA6, 0xDA),
+        (0xC3, 0x97, 0xD8),
+        (0x70, 0xC0, 0xB1),
+        (0xEA, 0xEA, 0xEA),
+    ];
+    let mut palette = Vec::with_capacity(256);
+    for (r, g, b) in NAMED {
+        palette.push(Rgb { r, g, b });
+    }
+    let scale = |n: u8| if n == 0 { 0 } else { n * 40 + 55 };
+    for r in 0..6 {
+        for g in 0..6 {
+            for b in 0..6 {
+                palette.push(Rgb { r: scale(r), g: scale(g), b: scale(b) });
+            }
+        }
+    }
+    for i in 0..24u8 {
+        let value = i * 10 + 8;
+        palette.push(Rgb { r: value, g: value, b: value });
+    }
+    palette
+}
+
 /// The full observable state of a terminal at one instant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot {
@@ -256,6 +346,8 @@ pub struct Snapshot {
     /// because a path need not be UTF-8 and lossy decoding would make two different
     /// payloads compare equal.
     pub pwd: Vec<u8>,
+    /// The OSC-addressable colour state (see `Colors`).
+    pub colors: Colors,
 }
 
 impl Style {
@@ -516,6 +608,13 @@ pub fn describe_bytes(bytes: &[u8]) -> String {
         bytes.len() - HEAD - TAIL,
         render(&bytes[bytes.len() - TAIL..]),
     )
+}
+
+pub fn describe_rgb(color: Option<Rgb>) -> String {
+    match color {
+        None => "<unset>".to_string(),
+        Some(Rgb { r, g, b }) => format!("#{r:02x}{g:02x}{b:02x}"),
+    }
 }
 
 pub fn describe_color(color: Color) -> String {

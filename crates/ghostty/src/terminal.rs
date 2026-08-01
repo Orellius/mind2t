@@ -11,7 +11,7 @@
 use std::ffi::c_void;
 use std::mem;
 
-use ruuah_vt_snapshot::{Cell, Color, Cursor, Modes, Row, Screen, Snapshot, Style};
+use ruuah_vt_snapshot::{Cell, Color, Colors, Cursor, Modes, Rgb, Row, Screen, Snapshot, Style};
 
 use crate::convert::{convert_row_semantic, convert_semantic, convert_style, convert_wide};
 use crate::sys;
@@ -141,6 +141,56 @@ impl Terminal {
             history,
             damage: None,
             pwd: self.pwd()?,
+            colors: self.colors()?,
+        })
+    }
+
+    /// One dynamic colour (foreground/background/cursor). Three-state on purpose:
+    /// `GHOSTTY_NO_VALUE` is the documented fresh-terminal answer -- no OSC override
+    /// and no embedder default -- and folding it into the error path would make every
+    /// snapshot of a plain terminal fail.
+    fn dynamic_color(
+        &self,
+        data: sys::GhosttyTerminalData,
+        call: &'static str,
+    ) -> Result<Option<Rgb>, Error> {
+        let mut out: sys::GhosttyColorRgb = unsafe { mem::zeroed() };
+        let code = unsafe {
+            sys::ghostty_terminal_get(self.raw, data, (&raw mut out).cast::<c_void>())
+        };
+        if code == sys::GhosttyResult_GHOSTTY_NO_VALUE {
+            return Ok(None);
+        }
+        check(call, code)?;
+        Ok(Some(Rgb { r: out.r, g: out.g, b: out.b }))
+    }
+
+    /// The OSC-addressable colour state: effective dynamic colours plus the current
+    /// 256-entry palette ("with any OSC overrides" -- `terminal.h`). The palette getter
+    /// is documented to always succeed, so a failure there is a real error.
+    fn colors(&self) -> Result<Colors, Error> {
+        let mut palette: [sys::GhosttyColorRgb; 256] = unsafe { mem::zeroed() };
+        check("ghostty_terminal_get(COLOR_PALETTE)", unsafe {
+            sys::ghostty_terminal_get(
+                self.raw,
+                sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_COLOR_PALETTE,
+                (&raw mut palette).cast::<c_void>(),
+            )
+        })?;
+        Ok(Colors {
+            foreground: self.dynamic_color(
+                sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND,
+                "ghostty_terminal_get(COLOR_FOREGROUND)",
+            )?,
+            background: self.dynamic_color(
+                sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND,
+                "ghostty_terminal_get(COLOR_BACKGROUND)",
+            )?,
+            cursor: self.dynamic_color(
+                sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_COLOR_CURSOR,
+                "ghostty_terminal_get(COLOR_CURSOR)",
+            )?,
+            palette: palette.iter().map(|c| Rgb { r: c.r, g: c.g, b: c.b }).collect(),
         })
     }
 

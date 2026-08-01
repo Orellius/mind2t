@@ -292,6 +292,9 @@ pub(crate) struct State {
     /// the oracle's own (`Terminal.zig`), so a screen switch cannot disturb it and RIS
     /// clears it for free by rebuilding this struct. Empty is the only "unset".
     pub(crate) pwd: Vec<u8>,
+    /// OSC colour state (4/104 indexed, 10/11/12 + 110/111/112 dynamic). Terminal-global,
+    /// and it SURVIVES full_reset -- the oracle's `fullReset` never touches `colors`.
+    pub(crate) colors: crate::colors::ColorState,
     /// Kitty virtual (U=1) placements: (image, cols, rows). Terminal-global rather than
     /// per-screen, because a placeholder cell can be printed on either buffer and the
     /// image it names is one image either way.
@@ -328,6 +331,7 @@ impl State {
             last_print: None,
             events: Vec::new(),
             pwd: Vec::new(),
+            colors: crate::colors::ColorState::default(),
             virtuals: Vec::new(),
             replies: Vec::new(),
             reports_enabled: false,
@@ -438,6 +442,15 @@ impl State {
             history: screen.history.to_rows(),
             damage: None,
             pwd: self.pwd.clone(),
+            // Mirrors the DATA getters, not the query path: GHOSTTY_TERMINAL_DATA_
+            // COLOR_CURSOR is `cursor.get()` with NO foreground fallback (that
+            // fallback is xterm report behaviour, `colorForXterm` only).
+            colors: ruuah_vt_snapshot::Colors {
+                foreground: self.colors.foreground.get(),
+                background: self.colors.background.get(),
+                cursor: self.colors.cursor.get(),
+                palette: self.colors.palette.current.clone(),
+            },
         }
     }
 
@@ -682,8 +695,13 @@ impl State {
         // terminal state -- a child must not be able to revoke it with a RIS (esctest
         // would lose its screen readback mid-run).
         let reports = self.reports_enabled;
+        // Colour state survives too. Measured, not assumed: the oracle's `fullReset`
+        // resets modes, tabs, pwd, title and the screens, and never touches `colors`,
+        // so OSC 4/10/11/12 overrides ride through a RIS (corpus-pinned).
+        let colors = std::mem::take(&mut self.colors);
         *self = State::new(cols, rows, self.max_scrollback);
         self.reports_enabled = reports;
+        self.colors = colors;
         self.mark_full_damage();
     }
 
@@ -810,7 +828,7 @@ impl Perform for State {
         }
     }
 
-    fn osc_dispatch(&mut self, params: &[&[u8]], _bell_terminated: bool) {
+    fn osc_dispatch(&mut self, params: &[&[u8]], bell_terminated: bool) {
         match params.first().copied() {
             Some(b"0") | Some(b"2") => self.osc_title(params),
             Some(b"7") => self.osc_pwd(params),
@@ -819,6 +837,18 @@ impl Perform for State {
             Some(b"9") => self.osc_notify_9(params),
             Some(b"777") => self.osc_notify_777(params),
             _ => {
+                // The colour family (4/5 indexed+special, 10-19 dynamic, 104/105 and
+                // 110-119 resets) is routed by NUMBER: matching byte strings would
+                // need twenty-four arms and still misroute "04".
+                if let Some(op) = params
+                    .first()
+                    .and_then(|p| std::str::from_utf8(p).ok())
+                    .and_then(|s| s.parse::<u16>().ok())
+                    .filter(|op| matches!(op, 4 | 5 | 10..=19 | 104 | 105 | 110..=119))
+                {
+                    self.osc_color(op, &params[1..], bell_terminated);
+                    return;
+                }
                 let blank = self.blank();
                 self.osc(params, blank);
             }

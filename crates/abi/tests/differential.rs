@@ -208,6 +208,33 @@ unsafe fn read_snapshot(handle: GhosttyTerminal, reader: Reader) -> Snapshot {
                     std::slice::from_raw_parts(raw.ptr, raw.len).to_vec()
                 }
             },
+            // Read through the C surface like everything else: the three effective
+            // dynamic colours answer NO_VALUE when unset (never an error), and the
+            // palette getter always succeeds.
+            colors: {
+                let dynamic = |data: GhosttyTerminalData| -> Option<ruuah_vt_snapshot::Rgb> {
+                    let mut c = GhosttyColorRgb { r: 0, g: 0, b: 0 };
+                    let code = ghostty_terminal_get(handle, data, (&raw mut c).cast());
+                    match code {
+                        GHOSTTY_SUCCESS => {
+                            Some(ruuah_vt_snapshot::Rgb { r: c.r, g: c.g, b: c.b })
+                        }
+                        GHOSTTY_NO_VALUE => None,
+                        _ => panic!("terminal_get({data}) returned {code}"),
+                    }
+                };
+                let palette: [GhosttyColorRgb; 256] =
+                    get(handle, GHOSTTY_TERMINAL_DATA_COLOR_PALETTE);
+                ruuah_vt_snapshot::Colors {
+                    foreground: dynamic(GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND),
+                    background: dynamic(GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND),
+                    cursor: dynamic(GHOSTTY_TERMINAL_DATA_COLOR_CURSOR),
+                    palette: palette
+                        .iter()
+                        .map(|c| ruuah_vt_snapshot::Rgb { r: c.r, g: c.g, b: c.b })
+                        .collect(),
+                }
+            },
         }
     }
 }

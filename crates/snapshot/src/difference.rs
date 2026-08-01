@@ -7,7 +7,7 @@
 //! Test strategy: unit tests below, covering agreement, each field class, and the
 //!   short-circuit when dimensions disagree.
 
-use crate::grid::{Cell, Row, Snapshot, Style, describe_bytes, describe_style};
+use crate::grid::{Cell, Row, Snapshot, Style, describe_bytes, describe_rgb, describe_style};
 
 /// One named disagreement between two snapshots.
 ///
@@ -67,6 +67,39 @@ pub fn diff(oracle: &Snapshot, candidate: &Snapshot) -> Vec<Difference> {
             describe_bytes(&oracle.pwd),
             describe_bytes(&candidate.pwd),
         ));
+    }
+
+    // The OSC colour state. Dynamic colours first, then the palette entry by entry --
+    // one difference per index, so a case that overrides index 1 and a wholesale
+    // default-table drift read differently in the report.
+    let dynamic: [(&str, Option<crate::grid::Rgb>, Option<crate::grid::Rgb>); 3] = [
+        ("colors.foreground", oracle.colors.foreground, candidate.colors.foreground),
+        ("colors.background", oracle.colors.background, candidate.colors.background),
+        ("colors.cursor", oracle.colors.cursor, candidate.colors.cursor),
+    ];
+    for (path, o, c) in dynamic {
+        if o != c {
+            out.push(Difference::new(path, describe_rgb(o), describe_rgb(c)));
+        }
+    }
+    if oracle.colors.palette.len() != candidate.colors.palette.len() {
+        out.push(Difference::new(
+            "colors.palette.len",
+            oracle.colors.palette.len(),
+            candidate.colors.palette.len(),
+        ));
+    } else {
+        for (i, (o, c)) in
+            oracle.colors.palette.iter().zip(candidate.colors.palette.iter()).enumerate()
+        {
+            if o != c {
+                out.push(Difference::new(
+                    format!("colors.palette[{i}]"),
+                    describe_rgb(Some(*o)),
+                    describe_rgb(Some(*c)),
+                ));
+            }
+        }
     }
 
     if oracle.modes.bracketed_paste != candidate.modes.bracketed_paste {
@@ -370,6 +403,7 @@ mod tests {
             history: Vec::new(),
             damage: None,
             pwd: Vec::new(),
+            colors: crate::grid::Colors::default(),
         }
     }
 
@@ -448,6 +482,49 @@ mod tests {
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].path, "pwd");
         assert_ne!(found[0].oracle, found[0].candidate);
+    }
+
+    /// The colour comparisons' controls, one per path. Same blind-spot law as pwd:
+    /// cells carry palette INDICES, so a core that ignores OSC 4/10/11/12 entirely
+    /// leaves every cell comparison green -- these four are the only guards.
+    #[test]
+    fn a_dynamic_colour_disagreement_is_reported_per_path() {
+        use crate::grid::Rgb;
+        for (path, set) in [
+            ("colors.foreground", 0usize),
+            ("colors.background", 1),
+            ("colors.cursor", 2),
+        ] {
+            let a = snapshot(4, 2);
+            let mut b = a.clone();
+            let value = Some(Rgb { r: 0xF0, g: 0x00, b: 0x0D });
+            match set {
+                0 => b.colors.foreground = value,
+                1 => b.colors.background = value,
+                _ => b.colors.cursor = value,
+            }
+            let found = diff(&a, &b);
+            assert_eq!(found.len(), 1, "{path}: {found:?}");
+            assert_eq!(found[0].path, path);
+            assert_eq!(found[0].oracle, "<unset>");
+            assert_eq!(found[0].candidate, "#f0000d");
+        }
+    }
+
+    #[test]
+    fn a_palette_entry_disagreement_names_its_index() {
+        use crate::grid::Rgb;
+        let a = snapshot(4, 2);
+        let mut b = a.clone();
+        b.colors.palette[1] = Rgb { r: 0xFF, g: 0x00, b: 0x00 };
+        b.colors.palette[231] = Rgb { r: 0x00, g: 0x00, b: 0x01 };
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found[0].path, "colors.palette[1]");
+        assert_eq!(found[0].oracle, "#cc6666", "index 1 default is the measured Tomorrow red");
+        assert_eq!(found[0].candidate, "#ff0000");
+        assert_eq!(found[1].path, "colors.palette[231]");
     }
 
     /// Same law as bracketed paste: no grid effect, so only this control guards the

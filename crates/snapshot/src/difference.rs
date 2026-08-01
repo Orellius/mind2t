@@ -120,7 +120,14 @@ pub fn diff(oracle: &Snapshot, candidate: &Snapshot) -> Vec<Difference> {
 
     // The nine mouse-mode raw bits, uniformly: one entry per bit so a mutation test can
     // kill each comparison individually (`a_mode_only_one_side_set_is_reported`).
-    let mouse_bits: [(&str, bool, bool); 13] = [
+    let mouse_bits: [(&str, bool, bool); 20] = [
+        ("modes.kam", oracle.modes.kam, candidate.modes.kam),
+        ("modes.insert", oracle.modes.insert, candidate.modes.insert),
+        ("modes.send_receive", oracle.modes.send_receive, candidate.modes.send_receive),
+        ("modes.linefeed", oracle.modes.linefeed, candidate.modes.linefeed),
+        ("modes.slow_scroll", oracle.modes.slow_scroll, candidate.modes.slow_scroll),
+        ("modes.reverse_colors", oracle.modes.reverse_colors, candidate.modes.reverse_colors),
+        ("modes.backarrow", oracle.modes.backarrow, candidate.modes.backarrow),
         ("modes.cursor_keys", oracle.modes.cursor_keys, candidate.modes.cursor_keys),
         ("modes.keypad_keys", oracle.modes.keypad_keys, candidate.modes.keypad_keys),
         (
@@ -545,7 +552,15 @@ mod tests {
     /// assertions, which is what makes the table's nine entries individually real.
     #[test]
     fn each_mouse_mode_bit_disagreement_is_reported_under_its_own_path() {
-        let flips: [(&str, fn(&mut crate::grid::Modes)); 13] = [
+        let flips: [(&str, fn(&mut crate::grid::Modes)); 20] = [
+            ("modes.kam", |m| m.kam = true),
+            ("modes.insert", |m| m.insert = true),
+            // SRM defaults SET; its disagreement direction is a clear.
+            ("modes.send_receive", |m| m.send_receive = false),
+            ("modes.linefeed", |m| m.linefeed = true),
+            ("modes.slow_scroll", |m| m.slow_scroll = true),
+            ("modes.reverse_colors", |m| m.reverse_colors = true),
+            ("modes.backarrow", |m| m.backarrow = true),
             ("modes.cursor_keys", |m| m.cursor_keys = true),
             ("modes.keypad_keys", |m| m.keypad_keys = true),
             // 1035 and 1036 default ON; their disagreement direction is a clear.

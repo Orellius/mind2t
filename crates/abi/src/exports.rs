@@ -319,6 +319,36 @@ pub unsafe extern "C" fn ghostty_terminal_mode_get(
     // Bit 15 of a packed GhosttyMode distinguishes ANSI (set) from DEC private (clear);
     // 2004 is DEC private, so the packed form IS the number.
     match mode {
+        // ANSI modes arrive with bit 15 set (ghostty_mode_new(value, true)) - the
+        // oracle's packing, mirrored so GHOSTTY_MODE_INSERT and friends work here.
+        0x8002 => {
+            unsafe { *out_value = view.modes.kam };
+            GHOSTTY_SUCCESS
+        }
+        0x8004 => {
+            unsafe { *out_value = view.modes.insert };
+            GHOSTTY_SUCCESS
+        }
+        0x800C => {
+            unsafe { *out_value = view.modes.send_receive };
+            GHOSTTY_SUCCESS
+        }
+        0x8014 => {
+            unsafe { *out_value = view.modes.linefeed };
+            GHOSTTY_SUCCESS
+        }
+        4 => {
+            unsafe { *out_value = view.modes.slow_scroll };
+            GHOSTTY_SUCCESS
+        }
+        5 => {
+            unsafe { *out_value = view.modes.reverse_colors };
+            GHOSTTY_SUCCESS
+        }
+        67 => {
+            unsafe { *out_value = view.modes.backarrow };
+            GHOSTTY_SUCCESS
+        }
         2004 => {
             unsafe { *out_value = view.modes.bracketed_paste };
             GHOSTTY_SUCCESS

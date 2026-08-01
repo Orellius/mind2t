@@ -50,6 +50,11 @@ impl State {
                 }
             }
             1049 => self.switch_screen(on, AltMode::M1049),
+            // DECSCLM (?4), DECSCNM (?5), DECBKM (?67): tracked state from the
+            // oracle's own table; their consumers live outside the core.
+            4 => self.slow_scroll = on,
+            5 => self.reverse_colors = on,
+            67 => self.backarrow = on,
             2004 => self.bracketed_paste = on,
             2026 => self.synchronized_output = on,
             // The mouse family (9/1000/1002/1003/1005/1006/1015/1016/1007): raw bit plus
@@ -331,6 +336,21 @@ impl State {
         let blank = self.blank();
         match action {
             'm' => sgr::apply(&mut self.pen, params),
+
+            // SM/RM, the ANSI (non-?) forms: exactly the oracle's four tracked ANSI
+            // modes. Everything else is ignored, matching its table lookup miss.
+            'h' | 'l' => {
+                let on = action == 'h';
+                for item in params.iter() {
+                    match item.first().copied().unwrap_or(0) {
+                        2 => self.kam = on,
+                        4 => self.insert_mode = on,
+                        12 => self.send_receive = on,
+                        20 => self.linefeed_mode = on,
+                        _ => {}
+                    }
+                }
+            }
 
             'n' => self.device_status_report(arg_or_zero(params, 0)),
             't' => self.window_report(arg_or_zero(params, 0)),

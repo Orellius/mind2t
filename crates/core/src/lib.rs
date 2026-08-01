@@ -25,6 +25,7 @@ pub mod kitty_keys;
 pub mod mouse;
 pub mod page;
 mod pwd;
+pub mod rect;
 pub mod reflow;
 mod replies;
 pub mod resize;

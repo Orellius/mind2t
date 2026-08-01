@@ -2,7 +2,7 @@
 # The corpus law in both directions: a line here failing is a regression; a test
 # passing without a line here must be promoted by adding it. Re-triage after suite
 # updates: cargo test -p ruuah-vt-pty --test esctest -- --ignored print_esctest --nocapture
-# Suite pin: esctest.lock. Baseline 2026-08-01 (selective-erase slice): 328 pass of 568. Promoted 37: the DECSED/DECSEL/DECSERA families, DECSCA through DECRQSS and DECSTR, and the ED/EL/ECH ISO-protection tests. Protection is a per-cell KIND (2 bits in the flags byte, Cell still 8 bytes), not the oracle's single bit plus a never-reset last-mode: xterm's matrix has plain erases spare ISO cells and selective erases spare DEC ones, and the kind is the only way to hold both at once. TWO deliberate divergences, both corpus-pinned or test-pinned: DECSED ERASES an ISO-protected cell (esctest's DECSED_doesNotRespectISOProtect asserts it; the oracle spares it), and DECSTR STRIPS protection from the screen - without that, a protected cell survives esctest's own between-test reset (measured: the oracle spares ISO even from ED 2) and poisons the next test, which is exactly how EDTests.test_ED_0 regressed when protection first landed.
+# Suite pin: esctest.lock. Baseline 2026-08-01 (XTERMWINOPS slice): 338 pass of 568. Promoted 12: the winops title family (report icon/window label, push/pop with all three sub-commands, multi-push), the SMTitle set/query pair, and RIS_ResetTitleMode. The window title is a real differential observable (the oracle answers GHOSTTY_TERMINAL_DATA_TITLE); the ICON title and the title STACK are xterm-direction additions the oracle does not carry, so they are unit- and esctest-gated only. Title REPORTING (20/21) is gated behind the reports grant with the checksum readback - reflecting a title the child wrote is the classic injection vector and xterm ships it off by default. The resize/move/maximize winops stay REFUSED on purpose: a child moving the operator's window is not a feature, which is why 16 of this class's 28 tests will never pass here.
 APCTests.test_APC_Basic
 BSTests.test_BS_Basic
 BSTests.test_BS_CursorStartsInDoWrapPosition
@@ -283,6 +283,7 @@ RISTests.test_RIS_ExitAltScreen
 RISTests.test_RIS_RemoveMargins
 RISTests.test_RIS_ResetDECOM
 RISTests.test_RIS_ResetTabs
+RISTests.test_RIS_ResetTitleMode
 RITests.test_RI_Basic
 RITests.test_RI_Scrolls
 RITests.test_RI_ScrollsInTopBottomRegionStartingBelow
@@ -307,6 +308,8 @@ SDTests.test_SD_RespectsTopBottomScrollRegion
 SMTests.test_SM_IRM
 SMTests.test_SM_IRM_DoesNotWrapUnlessCursorAtMargin
 SMTests.test_SM_LNM
+SMTitleTests.test_SMTitle_SetHexQueryHex
+SMTitleTests.test_SMTitle_SetUTF8QueryUTF8
 SOSTests.test_SOS_Basic
 SUTests.test_SU_CanClearScreen
 SUTests.test_SU_DefaultParam
@@ -329,3 +332,12 @@ VTTests.test_VT_Scrolls
 VTTests.test_VT_ScrollsInTopBottomRegionStartingAbove
 VTTests.test_VT_ScrollsInTopBottomRegionStartingWithin
 VTTests.test_VT_StopsAtBottomLineWhenBegunBelowScrollRegion
+XtermWinopsTests.test_XtermWinops_PushIconAndWindow_PopIcon
+XtermWinopsTests.test_XtermWinops_PushIconAndWindow_PopIconAndWindow
+XtermWinopsTests.test_XtermWinops_PushIconAndWindow_PopWindow
+XtermWinopsTests.test_XtermWinops_PushIcon_PopIcon
+XtermWinopsTests.test_XtermWinops_PushMultiplePopMultiple_Icon
+XtermWinopsTests.test_XtermWinops_PushMultiplePopMultiple_Window
+XtermWinopsTests.test_XtermWinops_PushWindow_PopWindow
+XtermWinopsTests.test_XtermWinops_ReportIconLabel
+XtermWinopsTests.test_XtermWinops_ReportWindowLabel

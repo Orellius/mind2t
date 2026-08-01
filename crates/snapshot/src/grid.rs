@@ -368,6 +368,11 @@ pub struct Snapshot {
     pub pwd: Vec<u8>,
     /// The OSC-addressable colour state (see `Colors`).
     pub colors: Colors,
+    /// The window title (OSC 0/2). A real differential observable - the oracle
+    /// carries it and answers GHOSTTY_TERMINAL_DATA_TITLE. The ICON title has no
+    /// oracle surface and is deliberately absent here rather than compared against
+    /// a value the other side cannot hold.
+    pub title: String,
 }
 
 impl Style {

@@ -363,6 +363,16 @@ pub unsafe extern "C" fn ghostty_terminal_mode_get(
             unsafe { *out_value = view.modes.left_right_margin };
             GHOSTTY_SUCCESS
         }
+        // DECCOLM and its gate, mode 40: both in the oracle's own table, so the
+        // drop-in answers the same queries (the corpus reads them through here).
+        3 => {
+            unsafe { *out_value = view.modes.column_132 };
+            GHOSTTY_SUCCESS
+        }
+        40 => {
+            unsafe { *out_value = view.modes.enable_mode_3 };
+            GHOSTTY_SUCCESS
+        }
         2004 => {
             unsafe { *out_value = view.modes.bracketed_paste };
             GHOSTTY_SUCCESS

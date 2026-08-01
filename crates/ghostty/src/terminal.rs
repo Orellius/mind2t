@@ -144,6 +144,8 @@ impl Terminal {
                 reverse_colors: self.dec_mode(5)?,
                 backarrow: self.dec_mode(67)?,
                 left_right_margin: self.dec_mode(69)?,
+                column_132: self.dec_mode(3)?,
+                enable_mode_3: self.dec_mode(40)?,
             },
             grid,
             history,

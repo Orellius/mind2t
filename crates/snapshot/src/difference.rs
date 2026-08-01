@@ -128,12 +128,14 @@ pub fn diff(oracle: &Snapshot, candidate: &Snapshot) -> Vec<Difference> {
 
     // The nine mouse-mode raw bits, uniformly: one entry per bit so a mutation test can
     // kill each comparison individually (`a_mode_only_one_side_set_is_reported`).
-    let mouse_bits: [(&str, bool, bool); 21] = [
+    let mouse_bits: [(&str, bool, bool); 23] = [
         (
             "modes.left_right_margin",
             oracle.modes.left_right_margin,
             candidate.modes.left_right_margin,
         ),
+        ("modes.column_132", oracle.modes.column_132, candidate.modes.column_132),
+        ("modes.enable_mode_3", oracle.modes.enable_mode_3, candidate.modes.enable_mode_3),
         ("modes.kam", oracle.modes.kam, candidate.modes.kam),
         ("modes.insert", oracle.modes.insert, candidate.modes.insert),
         ("modes.send_receive", oracle.modes.send_receive, candidate.modes.send_receive),
@@ -566,8 +568,10 @@ mod tests {
     /// assertions, which is what makes the table's nine entries individually real.
     #[test]
     fn each_mouse_mode_bit_disagreement_is_reported_under_its_own_path() {
-        let flips: [(&str, fn(&mut crate::grid::Modes)); 21] = [
+        let flips: [(&str, fn(&mut crate::grid::Modes)); 23] = [
             ("modes.left_right_margin", |m| m.left_right_margin = true),
+            ("modes.column_132", |m| m.column_132 = true),
+            ("modes.enable_mode_3", |m| m.enable_mode_3 = true),
             ("modes.kam", |m| m.kam = true),
             ("modes.insert", |m| m.insert = true),
             // SRM defaults SET; its disagreement direction is a clear.

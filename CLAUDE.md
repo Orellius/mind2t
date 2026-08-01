@@ -705,6 +705,15 @@ overnight is indistinguishable from a regression you caused.
   slice is GUI-facing), Claude merges the PR and rebuilds+reinstalls the app without
   waiting. A red or skipped gate, a named-divergence question, or anything touching
   the security posture still waits for Orel.**
+- **RELEASE LAW (Orel's order, 2026-08-01; the floor is `~/.claude/MOTOR_CORTEX_EXECUTION.md`
+  section 3b).** Every rebuild+reinstall of the app after merges is a RELEASE: annotated tag
+  `vX.Y.Z` on main in the same session (message = what shipped + gate numbers, the old
+  slice-tag shape; minor bump per rebuild batch, never per PR), then
+  `gh release create <tag> --verify-tag --generate-notes` attaching
+  `ruuah-vt-vX.Y.Z-aarch64-apple-darwin.tar.xz` (libruuah-vt.a + libruuah-vt-host.a +
+  ruuah_host.h), `RUUAH-VT-vX.Y.Z-aarch64-apple-darwin.zip` (the ad-hoc-signed app), and
+  `SHA256SUMS`. Never mint tags through GitHub's release UI (lightweight-tag trap). The
+  57-merge/zero-tag train that forced this rule is backfilled as v0.9.0.
 - **`main` holds verified slices only.** Every commit on it has `cargo test --workspace`
   green and `difftest` exiting 0.
 - **One branch per slice**, `slice-N-<name>`, merged with `--no-ff` so slice boundaries stay

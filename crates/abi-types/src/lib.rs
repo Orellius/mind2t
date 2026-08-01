@@ -20,6 +20,9 @@ pub const GHOSTTY_SUCCESS: GhosttyResult = 0;
 pub const GHOSTTY_OUT_OF_MEMORY: GhosttyResult = -1;
 pub const GHOSTTY_INVALID_VALUE: GhosttyResult = -2;
 pub const GHOSTTY_OUT_OF_SPACE: GhosttyResult = -3;
+/// The query is valid but there is nothing to answer -- the oracle's result for an
+/// unset dynamic colour (`types.h`: `GHOSTTY_NO_VALUE = -4`).
+pub const GHOSTTY_NO_VALUE: GhosttyResult = -4;
 
 /// Opaque handle. A `*mut Terminal` from `exports.rs`, never dereferenced by the caller.
 pub type GhosttyTerminal = *mut c_void;
@@ -48,6 +51,18 @@ pub const GHOSTTY_TERMINAL_DATA_CURSOR_STYLE: GhosttyTerminalData = 10;
 pub const GHOSTTY_TERMINAL_DATA_PWD: GhosttyTerminalData = 13;
 pub const GHOSTTY_TERMINAL_DATA_TOTAL_ROWS: GhosttyTerminalData = 14;
 pub const GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS: GhosttyTerminalData = 15;
+// The colour readouts, values mirroring the oracle's Data enum exactly
+// (`src/terminal/c/terminal.zig`: color_foreground = 18 .. color_palette_default = 25).
+// The effective getters answer GHOSTTY_NO_VALUE when neither an OSC override nor an
+// embedder default exists; the palette getters always succeed.
+pub const GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND: GhosttyTerminalData = 18;
+pub const GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND: GhosttyTerminalData = 19;
+pub const GHOSTTY_TERMINAL_DATA_COLOR_CURSOR: GhosttyTerminalData = 20;
+pub const GHOSTTY_TERMINAL_DATA_COLOR_PALETTE: GhosttyTerminalData = 21;
+pub const GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND_DEFAULT: GhosttyTerminalData = 22;
+pub const GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND_DEFAULT: GhosttyTerminalData = 23;
+pub const GHOSTTY_TERMINAL_DATA_COLOR_CURSOR_DEFAULT: GhosttyTerminalData = 24;
+pub const GHOSTTY_TERMINAL_DATA_COLOR_PALETTE_DEFAULT: GhosttyTerminalData = 25;
 
 pub type GhosttyTerminalScreen = i32;
 pub const GHOSTTY_TERMINAL_SCREEN_PRIMARY: GhosttyTerminalScreen = 0;

@@ -201,6 +201,8 @@ unsafe fn read_snapshot(handle: GhosttyTerminal, reader: Reader) -> Snapshot {
                     reverse_colors: mode(5),
                     backarrow: mode(67),
                     left_right_margin: mode(69),
+                    column_132: mode(3),
+                    enable_mode_3: mode(40),
                 }
             },
             grid,

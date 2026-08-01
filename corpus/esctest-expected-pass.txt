@@ -2,7 +2,20 @@
 # The corpus law in both directions: a line here failing is a regression; a test
 # passing without a line here must be promoted by adding it. Re-triage after suite
 # updates: cargo test -p ruuah-vt-pty --test esctest -- --ignored print_esctest --nocapture
-# Suite pin: esctest.lock. Baseline 2026-08-01 (DECLRMM slice): 368 pass of 568. The slice promoted 31 tests (30 in the slice, plus DECRQSS_DECSLRM, which the Ghostty re-measurement surfaced: it answered that query while we refused, a refusal that was correct before margins existed) across CR, CNL, CPL, CUF, ICH, DCH, IL, DL, SU, SD, SM/IRM, SCORC and DECSET - the plan estimated ~10, because the margin tests hide inside those classes rather than forming one of their own. UNPINNED, deliberately: DSCSCL_Level3_SupportsDECRQMDoesntSupportDECSLRM, which passed only VACUOUSLY while DECSLRM did not exist - it asserts that conformance level 3 REFUSES DECSLRM, and this core does not track DECSCL levels at all, so implementing the feature un-passed it. Same shape as DECSCL_Level2DoesntSupportDECRQM when DECRQM landed; DECSCL level tracking stays its own future item. Margins are differentially measured - the oracle carries scrolling_region.left/right - and the one rule that had to be corrected against a wrong assumption is CUB: it clamps at COLUMN 0 and ignores the left margin, because the oracle's cursorLeft fast path skips the margin logic whenever no reverse-wrap mode is active, while CUF still stops at the right margin.
+# Suite pin: esctest.lock. Baseline 2026-08-01 (DECCOLM slice): 373 pass of 568. The
+# DECCOLM slice promoted 5: the two DECRQM answers it targeted (DEC_DECCOLM,
+# DEC_DECLRMM), DECSET_Allow80To132 and DECSET_DECCOLM (the full 80/132 sequence:
+# resize, erase, home, regions reset - mirrored from the oracle's deccolm and pinned
+# differentially, 7 corpus cases), and DECSCL_Level4_SupportsDECSLRMDoesntSupportDECNCSM
+# (vacuously strengthened: it asserts DECNCSM is NOT supported, which stays true).
+# XTERM WINOPS 8 (character resize) landed with it, reports-gated, because esctest's
+# between-test reset recovers from 132-column mode with CSI 8;25;80 t and a suite
+# that cannot recover poisons every test after the first DECCOLM promotion. WINOPS 8
+# has NO oracle (Ghostty routes CSI t to its app layer) - unit-gated, sixel precedent.
+# test_RIS_ResetDECCOLM stays unpinned DELIBERATELY: the oracle's fullReset clears
+# the mode bits but performs no resize, so width stays 132 where xterm returns to 80;
+# corpus case ris-clears-deccolm-state-but-keeps-the-width pins our side of that.
+# Previous baseline (DECLRMM slice): 368 pass of 568. The slice promoted 31 tests (30 in the slice, plus DECRQSS_DECSLRM, which the Ghostty re-measurement surfaced: it answered that query while we refused, a refusal that was correct before margins existed) across CR, CNL, CPL, CUF, ICH, DCH, IL, DL, SU, SD, SM/IRM, SCORC and DECSET - the plan estimated ~10, because the margin tests hide inside those classes rather than forming one of their own. UNPINNED, deliberately: DSCSCL_Level3_SupportsDECRQMDoesntSupportDECSLRM, which passed only VACUOUSLY while DECSLRM did not exist - it asserts that conformance level 3 REFUSES DECSLRM, and this core does not track DECSCL levels at all, so implementing the feature un-passed it. Same shape as DECSCL_Level2DoesntSupportDECRQM when DECRQM landed; DECSCL level tracking stays its own future item. Margins are differentially measured - the oracle carries scrolling_region.left/right - and the one rule that had to be corrected against a wrong assumption is CUB: it clamps at COLUMN 0 and ignores the left margin, because the oracle's cursorLeft fast path skips the margin logic whenever no reverse-wrap mode is active, while CUF still stops at the right margin.
 APCTests.test_APC_Basic
 BSTests.test_BS_Basic
 BSTests.test_BS_CursorStartsInDoWrapPosition
@@ -130,6 +143,8 @@ DECRQMTests.test_DECRQM_ANSI_VEM
 DECRQMTests.test_DECRQM_DEC_DECAWM
 DECRQMTests.test_DECRQM_DEC_DECBKM
 DECRQMTests.test_DECRQM_DEC_DECCKM
+DECRQMTests.test_DECRQM_DEC_DECCOLM
+DECRQMTests.test_DECRQM_DEC_DECLRMM
 DECRQMTests.test_DECRQM_DEC_DECNKM
 DECRQMTests.test_DECRQM_DEC_DECOM
 DECRQMTests.test_DECRQM_DEC_DECSCLM
@@ -140,6 +155,7 @@ DECRQSSTests.test_DECRQSS_DECSCUSR
 DECRQSSTests.test_DECRQSS_DECSLRM
 DECRQSSTests.test_DECRQSS_DECSTBM
 DECRQSSTests.test_DECRQSS_SGR
+DECSCLTests.test_DECSCL_Level4_SupportsDECSLRMDoesntSupportDECNCSM
 DECSCLTests.test_DSCSCL_Level2Supports7BitControls
 DECSEDTests.test_DECSED_0
 DECSEDTests.test_DECSED_0_Protection
@@ -176,11 +192,13 @@ DECSERATests.test_DECSERA_ignoresMargins
 DECSERATests.test_DECSERA_invalidRectDoesNothing
 DECSERATests.test_DECSERA_overlyLargeSourceClippedToScreenSize
 DECSETTests.test_DECSET_ALTBUF
+DECSETTests.test_DECSET_Allow80To132
 DECSETTests.test_DECSET_DECAWM
 DECSETTests.test_DECSET_DECAWM_CursorAtRightMargin
 DECSETTests.test_DECSET_DECAWM_OffRespectsLeftRightMargin
 DECSETTests.test_DECSET_DECAWM_OnRespectsLeftRightMargin
 DECSETTests.test_DECSET_DECAWM_TabDoesNotWrapAround
+DECSETTests.test_DECSET_DECCOLM
 DECSETTests.test_DECSET_DECLRMM
 DECSETTests.test_DECSET_DECLRMM_MarginsResetByDECSTR
 DECSETTests.test_DECSET_DECLRMM_ModeResetByDECSTR

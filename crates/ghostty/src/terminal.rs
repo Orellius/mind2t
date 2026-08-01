@@ -136,6 +136,13 @@ impl Terminal {
                 keypad_keys: self.dec_mode(66)?,
                 ignore_keypad_with_numlock: self.dec_mode(1035)?,
                 alt_esc_prefix: self.dec_mode(1036)?,
+                kam: self.ansi_mode(2)?,
+                insert: self.ansi_mode(4)?,
+                send_receive: self.ansi_mode(12)?,
+                linefeed: self.ansi_mode(20)?,
+                slow_scroll: self.dec_mode(4)?,
+                reverse_colors: self.dec_mode(5)?,
+                backarrow: self.dec_mode(67)?,
             },
             grid,
             history,
@@ -219,6 +226,15 @@ impl Terminal {
     ///
     /// A `GhosttyMode` packs the numeric value in bits 0-14 with bit 15 clear for DEC
     /// private modes (`modes.h`); a plain mode number below 32768 IS the packed form.
+    /// Reads an ANSI (non-private) mode: bit 15 SET in the packed GhosttyMode.
+    pub fn ansi_mode(&self, mode: u16) -> Result<bool, Error> {
+        let mut value = false;
+        let code =
+            unsafe { sys::ghostty_terminal_mode_get(self.raw, (mode & 0x7FFF) | 0x8000, &mut value) };
+        check("ghostty_terminal_mode_get(ansi)", code)?;
+        Ok(value)
+    }
+
     pub fn dec_mode(&self, mode: u16) -> Result<bool, Error> {
         let mut value = false;
         let code = unsafe { sys::ghostty_terminal_mode_get(self.raw, mode & 0x7FFF, &mut value) };

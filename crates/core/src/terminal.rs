@@ -259,6 +259,22 @@ pub(crate) struct State {
     /// encoding reports is the host's job, because the core does no I/O. `full_reset`
     /// restores defaults via `State::new`, which is what re-enables 1007.
     pub(crate) mouse: crate::mouse::MouseModes,
+    /// The four ANSI modes the oracle tracks (modes.zig): KAM 2 (keyboard action),
+    /// IRM 4 (insert - REAL behaviour, print shifts right), SRM 12 (send/receive,
+    /// the one mode that DEFAULTS SET), LNM 20 (linefeed also returns the carriage -
+    /// REAL behaviour). KAM and SRM are state the host may consult; the core has no
+    /// keyboard to lock or echo to suppress.
+    pub(crate) kam: bool,
+    pub(crate) insert_mode: bool,
+    pub(crate) send_receive: bool,
+    pub(crate) linefeed_mode: bool,
+    /// DEC modes ?4 (DECSCLM smooth scroll - policy state, nothing to smooth here),
+    /// ?5 (DECSCNM reverse video - the renderer's consumer arrives later), and
+    /// ?67 (DECBKM backarrow - the key encoder's concern). All three are in the
+    /// oracle's mode table, so they are corpus-pinnable state.
+    pub(crate) slow_scroll: bool,
+    pub(crate) reverse_colors: bool,
+    pub(crate) backarrow: bool,
     /// Flat index of the last printed cell, so a following zero-width codepoint knows which
     /// cluster it belongs to. Cleared by anything that moves the cursor.
     pub(crate) last_print: Option<usize>,
@@ -337,6 +353,14 @@ impl State {
             bracketed_paste: false,
             synchronized_output: false,
             mouse: crate::mouse::MouseModes::default(),
+            kam: false,
+            insert_mode: false,
+            // SRM means "local echo OFF" and the protocol default is SET.
+            send_receive: true,
+            linefeed_mode: false,
+            slow_scroll: false,
+            reverse_colors: false,
+            backarrow: false,
             last_print: None,
             events: Vec::new(),
             pwd: Vec::new(),
@@ -443,6 +467,13 @@ impl State {
                 keypad_keys: self.keypad_keys,
                 ignore_keypad_with_numlock: self.ignore_keypad_with_numlock,
                 alt_esc_prefix: self.alt_esc_prefix,
+                kam: self.kam,
+                insert: self.insert_mode,
+                send_receive: self.send_receive,
+                linefeed: self.linefeed_mode,
+                slow_scroll: self.slow_scroll,
+                reverse_colors: self.reverse_colors,
+                backarrow: self.backarrow,
             },
             cursor: Cursor {
                 x: screen.x,
@@ -512,6 +543,14 @@ impl State {
             );
             self.stamp_link(index);
             self.wrap(blank);
+        }
+
+        // IRM: shift the rest of the row right before writing, exactly the oracle's
+        // guard (`Terminal.zig:1374`) - only when the cell is not at the end of the
+        // line, so a print in the last column overwrites rather than inserting.
+        if self.insert_mode && self.screen().x + width < cols {
+            let blank_for_insert = self.blank();
+            self.screen_mut().insert_chars(width, blank_for_insert);
         }
 
         let pen = self.pen;
@@ -777,6 +816,12 @@ impl Perform for State {
             0x0a | 0x0b | 0x0c => {
                 let blank = self.blank();
                 self.index(blank);
+                // LNM: a linefeed also returns the carriage (the oracle's own
+                // `linefeed()`: index, then carriageReturn when mode 20 is set).
+                if self.linefeed_mode {
+                    self.screen_mut().x = 0;
+                    self.screen_mut().pending_wrap = false;
+                }
                 self.last_print = None;
             }
             0x0d => {

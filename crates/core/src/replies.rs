@@ -15,6 +15,11 @@
 
 use crate::terminal::State;
 
+/// DECRPM state byte for a tracked boolean: 1 = set, 2 = reset.
+fn report_bool(on: bool) -> u8 {
+    if on { 1 } else { 2 }
+}
+
 impl State {
     /// DSR (CSI Ps n). 5 = operating status, 6 = cursor position report.
     pub(crate) fn device_status_report(&mut self, request: u16) {
@@ -73,10 +78,26 @@ impl State {
     /// and the oracle answers unconditionally.
     pub(crate) fn mode_report(&mut self, mode: u16, ansi: bool) {
         let state: u8 = if ansi {
-            0
+            match mode {
+                // The four ANSI modes actually tracked (the oracle's own set).
+                2 => report_bool(self.kam),
+                4 => report_bool(self.insert_mode),
+                12 => report_bool(self.send_receive),
+                20 => report_bool(self.linefeed_mode),
+                // The VT180-era print-form modes (GATM, SRTM, VEM, HEM, PUM, FEAM,
+                // FETM, MATM, TTM, SATM, TSM, EBM): recognized and PERMANENTLY
+                // RESET, xterm's own answer. This is a reply-only divergence from
+                // the oracle (it says 0 = unknown); 4 is the more truthful claim -
+                // these modes are known, refused, and never coming back.
+                1 | 5 | 7 | 10 | 11 | 13 | 14 | 15 | 16 | 17 | 18 | 19 => 4,
+                _ => 0,
+            }
         } else {
             let tracked = match mode {
                 1 => Some(self.cursor_keys),
+                4 => Some(self.slow_scroll),
+                5 => Some(self.reverse_colors),
+                67 => Some(self.backarrow),
                 6 => Some(self.origin),
                 66 => Some(self.keypad_keys),
                 1035 => Some(self.ignore_keypad_with_numlock),
@@ -463,9 +484,15 @@ mod tests {
         assert_eq!(replies_for(b"\x1b[?2026h\x1b[?2026$p"), b"\x1b[?2026;1$y");
         assert_eq!(replies_for(b"\x1b[?25l\x1b[?25$p"), b"\x1b[?25;2$y");
         assert_eq!(replies_for(b"\x1b[?1049h\x1b[?1049$p"), b"\x1b[?1049;1$y");
-        // Untracked DEC mode and every ANSI-form mode: not recognized, honestly.
+        // Untracked DEC mode: not recognized, honestly. ANSI now has three tiers:
+        // tracked (IRM answers live state), permanently reset (the VT180 print-form
+        // modes answer 4), and genuinely unknown (3 = CRM, answers 0).
         assert_eq!(replies_for(b"\x1b[?2027$p"), b"\x1b[?2027;0$y");
-        assert_eq!(replies_for(b"\x1b[4$p"), b"\x1b[4;0$y");
+        assert_eq!(replies_for(b"\x1b[4$p"), b"\x1b[4;2$y");
+        assert_eq!(replies_for(b"\x1b[4h\x1b[4$p"), b"\x1b[4;1$y");
+        assert_eq!(replies_for(b"\x1b[1$p"), b"\x1b[1;4$y", "GATM is permanently reset");
+        assert_eq!(replies_for(b"\x1b[3$p"), b"\x1b[3;0$y", "CRM is unknown");
+        assert_eq!(replies_for(b"\x1b[12$p"), b"\x1b[12;1$y", "SRM defaults SET");
     }
 
     #[test]

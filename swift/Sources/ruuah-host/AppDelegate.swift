@@ -1082,14 +1082,33 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// Docks or undocks the sidebar. The window does not change size; the terminal pane
     /// gives up the width, which is what makes this a resize of the pty.
     func toggleSidebar() {
+        // A toggle mid-animation would leave the pane at whatever width the interrupted
+        // run had reached, because the closing pass reads the CURRENT frame as its start.
+        guard !sidebarAnimating else { return }
+
         if let sidebar {
-            sidebar.removeFromSuperview()
-            self.sidebar = nil
-            layoutChrome()
-            refitAll()
-            window.makeFirstResponder(view)
+            let content = window.contentView?.bounds ?? .zero
+            let closed = ChromeLayout.compute(
+                content: content.size, tabHeight: TabBarView.height, sidebarWidth: nil)
+            animateSidebar(
+                paneTo: closed.pane,
+                // Slid out past the right edge rather than faded: the sidebar is a
+                // physical wall of the window, and a wall that dissolves reads as a
+                // rendering fault while one that slides reads as a wall.
+                sidebarTo: NSRect(
+                    x: content.width, y: 0, width: sidebar.frame.width,
+                    height: sidebar.frame.height)
+            ) { [weak self] in
+                guard let self else { return }
+                sidebar.removeFromSuperview()
+                self.sidebar = nil
+                self.layoutChrome()
+                self.refitAll()
+                self.window.makeFirstResponder(self.view)
+            }
             return
         }
+
         guard let url = WebPanel.documentURL(override: webDir) else {
             report("sidebar: the panel document was not found (build web/)")
             return
@@ -1097,10 +1116,47 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         guard let panel = WebPanel(documentURL: url, docked: true) else { return }
         panel.onProtocolError = { [weak self] detail in self?.report("sidebar: \(detail)") }
         panel.onMessage = { [weak self] message in self?.handleSidebar(message) }
+
+        let content = window.contentView?.bounds ?? .zero
+        let open = ChromeLayout.compute(
+            content: content.size, tabHeight: TabBarView.height,
+            sidebarWidth: HostAppDelegate.sidebarWidth)
+        guard let target = open.sidebar else { return }
+        // Starts off the right edge at its final size, so the slide is a translation and
+        // the document inside never lays out at a width it will not keep.
+        panel.frame = NSRect(x: content.width, y: target.minY, width: target.width, height: target.height)
         window.contentView?.addSubview(panel)
         sidebar = panel
-        layoutChrome()
-        refitAll()
+        animateSidebar(paneTo: open.pane, sidebarTo: target) { [weak self] in
+            self?.layoutChrome()
+            self?.refitAll()
+        }
+    }
+
+    /// True while the dock animation runs; see `toggleSidebar`.
+    private var sidebarAnimating = false
+
+    /// Slides the pane and the sidebar to their new frames together.
+    ///
+    /// The pty is resized ONCE, in the completion, never per frame: a SIGWINCH per
+    /// display refresh would make the child redraw ~12 times for one toggle, and vim or
+    /// a full-screen TUI reflowing at that rate is exactly the flicker this is meant to
+    /// remove. During the slide the terminal keeps its last frame, anchored top-left
+    /// (`contentsGravity`), so it is CLIPPED by the moving edge instead of squashed.
+    private func animateSidebar(
+        paneTo pane: NSRect, sidebarTo sidebar: NSRect, completion: @escaping () -> Void
+    ) {
+        sidebarAnimating = true
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.18
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            context.allowsImplicitAnimation = true
+            view.animator().frame = pane
+            self.sidebar?.animator().frame = sidebar
+        } completionHandler: { [weak self] in
+            self?.sidebarAnimating = false
+            completion()
+        }
     }
 
     /// Every session is refitted, not just the active one: a background session keeps

@@ -24,3 +24,17 @@ if [ "${1:-}" = "--no-smoke" ]; then
   exit 0
 fi
 .build/release/ruuah-host --smoke
+
+# S6 panels. The web build is optional (no bun, no panels), so its absence SKIPS the
+# probe out loud instead of leaving a silently unproven seam. Both directions run: the
+# probe must round-trip a nonce, and the control -- the same document with the receiver
+# removed -- must load, mount, and fail to answer. The control is the half that matters;
+# on its first run it passed for the wrong reason and hid a real navigation-policy bug.
+if "$ROOT/scripts/build-web.sh"; then
+  .build/release/ruuah-host --smoke-panel --web-dir "$ROOT/web/dist"
+  .build/release/ruuah-host --smoke-panel-control --web-dir "$ROOT/web/dist"
+else
+  status=$?
+  [ "$status" -eq 2 ] || exit "$status"
+  echo "[SKIPPED: panel bridge smoke - no web build]" >&2
+fi

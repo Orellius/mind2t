@@ -47,6 +47,14 @@ pub struct Config {
     /// Whether ASCII segments may form ligatures (needs a font that ships them; the
     /// default stack's Menlo has none, so this changes nothing until font-family does).
     pub font_ligatures: bool,
+    /// Whether the embedder may show web-rendered panels (S6's diff review).
+    ///
+    /// Defaults to FALSE, and the default is the point: a panel is a WKWebView inside
+    /// the terminal's own process, which is a materially larger surface than anything
+    /// else the app draws. Off until its operator turns it on, and off is a complete,
+    /// fully functional terminal. Read by the embedder only -- the core neither knows
+    /// nor cares that panels exist.
+    pub panels: bool,
     /// The theme palette, resolved onto the built-in scheme. Always usable.
     pub palette: Palette,
     /// Every problem hit while loading, newline-joined. `None` when the load was clean.
@@ -64,6 +72,7 @@ impl Default for Config {
             shell: None,
             font_family: None,
             font_ligatures: true,
+            panels: false,
             palette: Palette::default(),
             error: None,
         }
@@ -85,6 +94,7 @@ struct RawConfig {
     font_family: Option<String>,
     #[serde(rename = "font-ligatures")]
     font_ligatures: Option<bool>,
+    panels: Option<bool>,
     theme: Option<String>,
 }
 
@@ -140,6 +150,7 @@ impl Config {
         config.auto_direction = raw.auto_direction;
         config.shell = raw.shell.filter(|shell| !shell.is_empty());
         config.reports = raw.reports.unwrap_or(false);
+        config.panels = raw.panels.unwrap_or(false);
         if let Some(family) = raw.font_family.filter(|family| !family.is_empty()) {
             if ruuah_vt_render::FontStack::family_resolves(&family) {
                 config.font_family = Some(family);
@@ -266,6 +277,31 @@ mod tests {
         let on = Config::load(Some(&on));
         assert_eq!(on.error, None);
         assert!(on.reports, "an explicit grant must be honoured, or the key is decoration");
+    }
+
+    /// Same shape as `reports`, and for the same reason: the default IS the posture.
+    /// A panel is a webview inside the terminal's process, so "off unless asked" has to
+    /// be provable in both directions rather than assumed from reading the assignment.
+    #[test]
+    fn panels_are_off_unless_the_config_asks_for_them() {
+        let absent = tempdir();
+        assert!(!Config::load(Some(&absent)).panels, "no config file must not enable panels");
+
+        let quiet = tempdir();
+        write(&quiet, "config.toml", "font-size = 14\n");
+        let quiet = Config::load(Some(&quiet));
+        assert_eq!(quiet.error, None);
+        assert!(!quiet.panels, "a config that never mentions panels must not enable them");
+
+        let off = tempdir();
+        write(&off, "config.toml", "panels = false\n");
+        assert!(!Config::load(Some(&off)).panels);
+
+        let on = tempdir();
+        write(&on, "config.toml", "panels = true\n");
+        let on = Config::load(Some(&on));
+        assert_eq!(on.error, None);
+        assert!(on.panels, "an explicit opt-in must be honoured, or the key is decoration");
     }
 
     #[test]

@@ -1041,6 +1041,23 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             background: background, foreground: "#e6e6e6", accent: "#5865f2", dim: "#8b8b96")
     }
 
+    /// What a panel paints before its document has, matching the CSS `--panel`
+    /// (`color-mix(in srgb, var(--bg) 88%, white 12%)`).
+    ///
+    /// Duplicated arithmetic, deliberately and narrowly: the container has to have a
+    /// colour BEFORE any message reaches the document, so it cannot come from the theme
+    /// the document is sent. Keeping the two in step is the reason the mix is written
+    /// out here rather than approximated.
+    private func panelBackground() -> NSColor {
+        let base =
+            activeSession?.background.flatMap { NSColor(cgColor: $0) }?
+            .usingColorSpace(.sRGB) ?? NSColor(srgbRed: 0.086, green: 0.082, blue: 0.106, alpha: 1)
+        return NSColor(
+            srgbRed: base.redComponent * 0.88 + 0.12,
+            green: base.greenComponent * 0.88 + 0.12,
+            blue: base.blueComponent * 0.88 + 0.12, alpha: 1)
+    }
+
     /// cmd+shift+D toggles. Only ever reachable when `panels = true`.
     private func toggleDiffPanel() {
         if let webPanel {
@@ -1055,7 +1072,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             report("panels are enabled but the panel document was not found (build web/)")
             return
         }
-        guard let panel = WebPanel(documentURL: url) else { return }
+        guard let panel = WebPanel(documentURL: url, background: panelBackground()) else { return }
         panel.onProtocolError = { [weak self] detail in self?.report("panel bridge: \(detail)") }
         panel.onMessage = { [weak self] message in self?.handle(message) }
         panel.translatesAutoresizingMaskIntoConstraints = false
@@ -1113,7 +1130,8 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             report("sidebar: the panel document was not found (build web/)")
             return
         }
-        guard let panel = WebPanel(documentURL: url, docked: true) else { return }
+        guard let panel = WebPanel(documentURL: url, docked: true, background: panelBackground())
+        else { return }
         panel.onProtocolError = { [weak self] detail in self?.report("sidebar: \(detail)") }
         panel.onMessage = { [weak self] message in self?.handleSidebar(message) }
 

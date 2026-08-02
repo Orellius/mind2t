@@ -225,7 +225,18 @@ final class WebPanel: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         return nil
     }
 
-    init?(documentURL: URL, docked: Bool = false) {
+    /// Whether the document has painted anything yet. Until it has, the web view is
+    /// hidden and only the container's own colour shows.
+    ///
+    /// A WKWebView paints WHITE before its first frame. Sliding one in from off-screen
+    /// therefore flashes white across the panel's whole area, on a dark terminal, for
+    /// exactly as long as WebKit takes to get going -- which is why it was only obvious
+    /// on the FIRST open (operator-reported, 2026-08-02) and merely brief afterwards
+    /// once the web process was warm. "Only sometimes visible" is a timing symptom, not
+    /// a different bug: the white is always drawn.
+    private var painted = false
+
+    init?(documentURL: URL, docked: Bool = false, background: NSColor = .black) {
         self.documentURL = documentURL
         self.docked = docked
         self.documentPath = documentURL.resolvingSymlinksInPath().standardizedFileURL.path
@@ -248,6 +259,16 @@ final class WebPanel: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         // private `drawsBackground`, and the card's rounded corners and border are the
         // container's job anyway -- so there is no reason to reach for it.
         webView.allowsBackForwardNavigationGestures = false
+        // Three layers of the same answer, because one is not enough on its own:
+        //   1. the container paints the panel colour, so there is always something
+        //      correct underneath;
+        //   2. underPageBackgroundColor replaces WebKit's white for the area around and
+        //      behind page content (public API since macOS 12 -- no KVC poke at the
+        //      private `drawsBackground`);
+        //   3. the web view stays HIDDEN until the document says `ready`, which is the
+        //      only one of the three that is a guarantee rather than a colour match.
+        webView.underPageBackgroundColor = background
+        webView.isHidden = true
         // Web Inspector only when explicitly asked for. It is how the panel gets
         // debugged during development and it has no business being reachable otherwise.
         if #available(macOS 13.3, *),
@@ -257,6 +278,7 @@ final class WebPanel: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         }
 
         wantsLayer = true
+        layer?.backgroundColor = background.cgColor
         layer?.masksToBounds = true
         layer?.borderColor = NSColor(white: 1, alpha: 0.14).cgColor
         if docked {
@@ -289,6 +311,10 @@ final class WebPanel: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     deinit {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "ruuah")
     }
+
+    /// Whether the document is on screen yet. False means the container's own colour is
+    /// showing and WebKit's white cannot be. Asserted by `--smoke-panel`.
+    var isContentVisible: Bool { painted && !webView.isHidden }
 
     /// Takes keyboard focus, so Escape and the j/k navigation reach the document.
     func focus() {
@@ -372,6 +398,11 @@ final class WebPanel: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         case .success(let decoded):
             if case .ready = decoded, !ready {
                 ready = true
+                // Revealed only now. `ready` is sent from the document after React has
+                // mounted, so by definition there is something to show and the white
+                // pre-paint state is never on screen.
+                painted = true
+                webView.isHidden = false
                 let pending = queued
                 queued.removeAll()
                 for queuedMessage in pending {

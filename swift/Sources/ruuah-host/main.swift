@@ -225,6 +225,17 @@ func runPanelSmoke(webDir: String?, control: Bool) -> Int32 {
     panel.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
     window.contentView?.addSubview(panel)
 
+    // Before anything: the document cannot be on screen yet, and that is the assertion
+    // that keeps WebKit's white pre-paint off a dark terminal. A panel that revealed its
+    // web view at construction flashes white across its whole area while WebKit starts
+    // up -- obvious on the first open, brief once the web process is warm, and always
+    // drawn (operator-reported, 2026-08-02).
+    guard !panel.isContentVisible else {
+        FileHandle.standardError.write(
+            Data("PANEL SMOKE FAILED: the web view was visible before the document was\n".utf8))
+        return 1
+    }
+
     let nonce = UUID().uuidString
     var pongedWith: String?
     var ready = false
@@ -295,12 +306,19 @@ func runPanelSmoke(webDir: String?, control: Bool) -> Int32 {
             Data("PANEL SMOKE FAILED: the panel answered the probe but never mounted\n".utf8))
         return 1
     }
+    guard panel.isContentVisible else {
+        FileHandle.standardError.write(
+            Data("PANEL SMOKE FAILED: the document reported ready but stayed hidden\n".utf8))
+        return 1
+    }
     guard errors.isEmpty else {
         FileHandle.standardError.write(
             Data("PANEL SMOKE FAILED: bridge errors: \(errors.joined(separator: "; "))\n".utf8))
         return 1
     }
-    print("PANEL SMOKE OK: the panel mounted and nonce \(nonce) crossed to it and back")
+    print(
+        "PANEL SMOKE OK: hidden until ready, then shown; the panel mounted and nonce "
+            + "\(nonce) crossed to it and back")
     return 0
 }
 

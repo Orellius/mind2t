@@ -186,6 +186,18 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
                 }
             }
         }
+        // The S5 live tap, same reasoning: drives createWorkspace directly so a capture
+        // exercises the real worktree + cwd + pill path without synthesizing a modal.
+        if let branch = ProcessInfo.processInfo.environment["RUUAH_WORKSPACE_TAP"],
+            !branch.isEmpty
+        {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                guard let self, let directory = self.activeDirectory(),
+                    let root = Git.repositoryRoot(containing: directory)
+                else { return }
+                self.createWorkspace(root: root, branch: branch)
+            }
+        }
         view.onCloseSession = { [weak self] in
             guard let self, self.activeIndex >= 0 else { return }
             self.closeSession(index: self.activeIndex)
@@ -270,6 +282,141 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         activate(index: sessions.count - 1)
     }
 
+    // MARK: workspaces (S5)
+
+    /// Spawns a session placed in `directory`, labelled with its workspace.
+    private func newSession(in directory: String, workspace: String) {
+        spawnCount += 1
+        let (cols, rows) = gridForPane()
+        let scale = Float(window.backingScaleFactor)
+        guard
+            let session = Session(
+                command: command, cols: cols, rows: rows,
+                fontSize: baseFontSize * scale * fontScale,
+                autoDirection: autoDirection, config: config, title: workspace,
+                cwd: directory, workspace: workspace)
+        else { return }
+        sessions.append(session)
+        activate(index: sessions.count - 1)
+    }
+
+    /// Asks for a name and creates a worktree plus a session in it.
+    ///
+    /// Modal on purpose. This is the app's only repository-mutating action, and a
+    /// confirmation the operator cannot miss is the price of that (`Worktrees.swift`
+    /// header). The prompt is also where the target path is shown, so nobody learns
+    /// where their worktree went by finding it later.
+    private func newWorkspace() {
+        guard let directory = activeDirectory(),
+            let root = Git.repositoryRoot(containing: directory)
+        else {
+            report("new workspace: the active session is not in a git repository")
+            warn(
+                "Not a git repository",
+                "A workspace is a git worktree, so this session has to be inside a "
+                    + "repository first.")
+            return
+        }
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.placeholderString = "branch name"
+        let alert = NSAlert()
+        alert.messageText = "New workspace"
+        alert.informativeText =
+            "Creates a git worktree beside \((root as NSString).lastPathComponent) and opens a "
+            + "session in it. An existing branch is checked out; a new name creates the branch."
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Create")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        createWorkspace(root: root, branch: field.stringValue.trimmingCharacters(in: .whitespaces))
+    }
+
+    /// The half of `newWorkspace` past the prompt: validate, create, open a session.
+    ///
+    /// Split out so the live-tap hook drives the REAL path (worktree creation, the cwd
+    /// spawn, the pill label) rather than a copy of it. The modal above is the only part
+    /// the tap does not cover, and it is named as untested in the PR rather than implied.
+    private func createWorkspace(root: String, branch: String) {
+        if let invalid = Worktrees.validate(branch: branch) {
+            warn("Cannot create that workspace", invalid.description)
+            return
+        }
+
+        gitQueue.async { [weak self] in
+            let outcome = Worktrees.add(root: root, branch: branch)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch outcome {
+                case .success(let worktree):
+                    self.report("workspace \(branch) at \(worktree.path)")
+                    self.newSession(in: worktree.path, workspace: branch)
+                case .failure(let error):
+                    self.report("new workspace failed: \(error.description)")
+                    self.warn("Could not create the workspace", error.description)
+                }
+            }
+        }
+    }
+
+    /// Closes the active session and offers to remove its worktree.
+    ///
+    /// Two separate acts, and the session closes either way: a workspace with
+    /// uncommitted work must still be closable without deleting it. git's refusal to
+    /// remove a dirty tree is shown verbatim rather than forced past.
+    private func closeWorkspace() {
+        guard let session = activeSession, let workspace = session.workspace else {
+            report("close workspace: the active session is not a workspace")
+            return
+        }
+        guard let directory = activeDirectory(),
+            let root = Git.repositoryRoot(containing: directory),
+            case .success(let trees) = Worktrees.list(containing: directory),
+            let worktree = trees.first(where: { $0.branch == workspace })
+        else {
+            report("close workspace: could not resolve the worktree for \(workspace)")
+            closeSession(index: activeIndex)
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Close workspace \"\(workspace)\"?"
+        alert.informativeText =
+            "The session closes either way. Removing the worktree deletes \(worktree.path); "
+            + "git refuses if it has uncommitted changes, and nothing here overrides that."
+        alert.addButton(withTitle: "Close session only")
+        alert.addButton(withTitle: "Close and remove worktree")
+        alert.addButton(withTitle: "Cancel")
+        let choice = alert.runModal()
+        guard choice != .alertThirdButtonReturn else { return }
+
+        closeSession(index: activeIndex)
+        guard choice == .alertSecondButtonReturn else { return }
+
+        gitQueue.async { [weak self] in
+            let outcome = Worktrees.remove(root: root, worktree: worktree)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if case .failure(let error) = outcome {
+                    self.report("worktree remove refused: \(error.description)")
+                    self.warn("The worktree was kept", error.description)
+                } else {
+                    self.report("removed worktree \(worktree.path)")
+                }
+            }
+        }
+    }
+
+    private func warn(_ message: String, _ detail: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = message
+        alert.informativeText = detail
+        alert.runModal()
+    }
+
     private func closeSession(index: Int) {
         guard index >= 0 && index < sessions.count else { return }
         sessions[index].close()
@@ -314,8 +461,16 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     }
 
     private func refreshSidebar() {
+        // A workspace session is labelled by its workspace, prefixed so the strip groups
+        // by eye without a second row. The backlog assumed a sidebar to group in; the
+        // sidebar was replaced by this strip on 2026-07-30, and one flat row of pills
+        // with a visible prefix is a smaller change than reintroducing a tree.
+        let titles = sessions.map { session -> String in
+            guard let workspace = session.workspace else { return session.title }
+            return "\u{2387} \(workspace)"
+        }
         tabBar.update(
-            titles: sessions.map(\.title),
+            titles: titles,
             states: sessions.map(\.workState),
             activeIndex: activeIndex)
     }
@@ -677,6 +832,24 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
                     self.closeSession(index: self.activeIndex)
                 }),
         ]
+        items.append(
+            PaletteItem(
+                title: "New Workspace", subtitle: "a git worktree and a session in it",
+                workflowIndex: nil,
+                // After the palette has torn itself down: both of these open a modal,
+                // and a modal run from inside the dismissing view swallows its own keys.
+                action: { [weak self] in
+                    DispatchQueue.main.async { self?.newWorkspace() }
+                }))
+        if activeSession?.workspace != nil {
+            items.append(
+                PaletteItem(
+                    title: "Close Workspace", subtitle: "session, and optionally the worktree",
+                    workflowIndex: nil,
+                    action: { [weak self] in
+                        DispatchQueue.main.async { self?.closeWorkspace() }
+                    }))
+        }
         if view.onDiffPanel != nil {
             items.append(
                 PaletteItem(

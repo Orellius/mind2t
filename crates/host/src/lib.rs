@@ -63,6 +63,10 @@ pub struct RuuahHostOptions {
     /// settings are read by the embedder through the `ruuah_config_*` getters instead,
     /// because the embedder owns their precedence (CLI flags, Retina scaling).
     pub config: *const RuuahConfig,
+    /// Working directory for the child, or NULL for the default (home for an interactive
+    /// shell, the caller's cwd for an explicit command). A path that does not exist is
+    /// ignored, not an error. S5 workspaces set it to a worktree.
+    pub cwd: *const c_char,
 }
 
 /// The state behind the opaque config handle: one loaded `Config` plus the C strings
@@ -357,6 +361,27 @@ fn build_command(options: &RuuahHostOptions) -> Option<Command> {
         command.args(["-c", text]);
         command
     };
+    // An explicit working directory outranks both defaults above (S5 workspaces: a
+    // session belongs to a worktree). Set LAST so it wins over the home default without
+    // that branch having to know this option exists.
+    //
+    // BOUNDARY, found in the S5 live tap: this places the child's STARTING directory,
+    // and a configured command is free to walk away from it. `command = "cd X && exec
+    // zsh"` lands in X regardless of `cwd`, because the cd runs after the exec. That is
+    // correct precedence (an explicit command outranks a default), but it means a
+    // workspace looks broken for anyone whose config.toml shell line contains a cd.
+    //
+    // A directory that does not exist is IGNORED rather than fatal. `Command::spawn`
+    // reports a bad cwd as a plain ENOENT from the exec, indistinguishable from a missing
+    // shell, and a workspace whose directory was deleted under us should open somewhere
+    // usable rather than fail with a misleading error.
+    if !options.cwd.is_null() {
+        if let Ok(text) = unsafe { CStr::from_ptr(options.cwd) }.to_str() {
+            if !text.is_empty() && std::path::Path::new(text).is_dir() {
+                command.current_dir(text);
+            }
+        }
+    }
     command.env("TERM", "xterm-256color");
     command.env_remove("CLAUDECODE");
     command.env_remove("CLAUDE_CODE_CHILD_SESSION");

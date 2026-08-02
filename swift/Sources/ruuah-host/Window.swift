@@ -7,6 +7,50 @@
 
 import AppKit
 
+/// Where the chrome's three pieces go, as arithmetic with no views in it.
+///
+/// Extracted from `layoutChrome` because docking is the one part of S5.5 with a real
+/// failure mode, and it is a SILENT one: a pane that keeps its full width while a
+/// sidebar is docked simply draws underneath it, and the terminal looks fine until you
+/// notice the right-hand columns are covered. The invariant worth asserting is that the
+/// pane and the sidebar TILE the content exactly -- no overlap, no gap -- and that is
+/// only assertable if the arithmetic exists apart from the NSViews.
+struct ChromeLayout: Equatable {
+    let tabBar: NSRect
+    let pane: NSRect
+    /// nil when the sidebar is not docked.
+    let sidebar: NSRect?
+
+    /// The narrowest the terminal pane may become; past this the sidebar is what gives.
+    static let minimumPaneWidth: CGFloat = 120
+
+    static func compute(
+        content: NSSize, tabHeight: CGFloat, sidebarWidth: CGFloat?
+    ) -> ChromeLayout {
+        let below = max(0, content.height - tabHeight)
+        let tabBar = NSRect(
+            x: 0, y: below, width: content.width, height: min(tabHeight, content.height))
+
+        guard let requested = sidebarWidth else {
+            return ChromeLayout(
+                tabBar: tabBar,
+                pane: NSRect(x: 0, y: 0, width: content.width, height: below),
+                sidebar: nil)
+        }
+        // The pane's floor wins over the sidebar's preferred width, and the sidebar
+        // takes whatever is left. Computing the sidebar as a REMAINDER rather than as a
+        // constant is what keeps the two tiling exactly on a narrow window, where
+        // subtracting a fixed 300 would leave them overlapping.
+        let paneWidth = max(minimumPaneWidth, content.width - requested)
+        let clampedPane = min(paneWidth, content.width)
+        return ChromeLayout(
+            tabBar: tabBar,
+            pane: NSRect(x: 0, y: 0, width: clampedPane, height: below),
+            sidebar: NSRect(
+                x: clampedPane, y: 0, width: content.width - clampedPane, height: below))
+    }
+}
+
 final class TerminalView: NSView {
     /// Breathing room between the glyph grid and the window edge, in points. The grid
     /// itself stays exactly cols x rows; the margin belongs to the window, not the pty.

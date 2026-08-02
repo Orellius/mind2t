@@ -22,6 +22,8 @@ let package = Package(
                 .linkedFramework("Metal"),
                 .linkedFramework("QuartzCore"),
                 .linkedFramework("AppKit"),
+                // S6 panels: the WKWebView that renders them.
+                .linkedFramework("WebKit"),
             ]
         ),
     ]

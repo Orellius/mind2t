@@ -28,6 +28,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// Overrides the workflows directory the same way it overrides config.toml, so
     /// captures and taps never touch (or require) the real ~/.ruuah.
     private let configDir: String?
+    /// Where the built panel document lives, when it is not in the app bundle. The bare
+    /// CLI binary has no resource bundle, so the smoke and any tap pass `--web-dir`.
+    private let webDir: String?
     private var window: NSWindow!
     private var view: TerminalView!
     private var tabBar: TabBarView!
@@ -43,9 +46,24 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// Background sessions are polled once per this many active ticks (~2 Hz at 60).
     private static let backgroundEvery: UInt64 = 30
 
+    // MARK: web panels (S6)
+
+    /// The open panel, or nil. At most one: panels are modal-feeling overlays, and two
+    /// of them competing for Escape is a worse problem than any layout it would buy.
+    private var webPanel: WebPanel?
+    /// The repository the open panel is showing, and the file list it was given. The
+    /// list is the ALLOWED SET for `requestDiff`: a path the host never advertised is
+    /// refused rather than handed to git, so the panel cannot widen its own reach.
+    private var panelRoot: String?
+    private var panelFiles: [ChangedFile] = []
+    /// git runs here, never on the main thread -- `status` on a large tree is tens of
+    /// milliseconds and the terminal is blitting at 60 Hz on the other side of it.
+    private let gitQueue = DispatchQueue(label: "ruuah.git", qos: .userInitiated)
+
     init(
         command: String?, autoDirection: Bool, config: OpaquePointer?,
-        baseFontSize: Float, configError: String?, configDir: String? = nil
+        baseFontSize: Float, configError: String?, configDir: String? = nil,
+        webDir: String? = nil
     ) {
         self.command = command
         self.autoDirection = autoDirection
@@ -53,6 +71,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         self.baseFontSize = baseFontSize
         self.configError = configError
         self.configDir = configDir
+        self.webDir = webDir
         if let config, let family = ruuah_config_font_family(config) {
             self.fontFamily = String(cString: family)
         } else {
@@ -153,6 +172,20 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         }
         view.onNewSession = { [weak self] in self?.newSession() }
         view.onPalette = { [weak self] in self?.togglePalette() }
+        // Left nil when panels are off, so the chord falls through to the child rather
+        // than being swallowed by a feature that is not there.
+        if ruuah_config_panels(config) {
+            view.onDiffPanel = { [weak self] in self?.toggleDiffPanel() }
+            // The live-tap hook (SCAR-014): a panel is a GUI seam, and proving it means
+            // seeing it in a real window. Opening it from the environment is what lets
+            // that be a scripted capture instead of synthesized keystrokes into
+            // whatever the operator happens to be doing.
+            if ProcessInfo.processInfo.environment["RUUAH_PANEL_OPEN"] == "1" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                    self?.toggleDiffPanel()
+                }
+            }
+        }
         view.onCloseSession = { [weak self] in
             guard let self, self.activeIndex >= 0 else { return }
             self.closeSession(index: self.activeIndex)
@@ -644,6 +677,16 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
                     self.closeSession(index: self.activeIndex)
                 }),
         ]
+        if view.onDiffPanel != nil {
+            items.append(
+                PaletteItem(
+                    title: "Review Changes", subtitle: "cmd+shift+D", workflowIndex: nil,
+                    action: { [weak self] in
+                        // After the palette has dismissed itself, or the panel would be
+                        // added under a view that is about to be torn down.
+                        DispatchQueue.main.async { self?.toggleDiffPanel() }
+                    }))
+        }
         for (index, session) in sessions.enumerated() where index != activeIndex {
             items.append(
                 PaletteItem(
@@ -727,6 +770,166 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         ])
         palette = paletteView
         paletteView.focus()
+    }
+
+    // MARK: diff review panel (S6)
+
+    /// The active session's working directory, decoded.
+    ///
+    /// Decoded by the RUST side (`ruuah_cwd_path`), never here: the percent-decode and
+    /// the `file://host` strip already exist in one place, and a second copy in Swift
+    /// is exactly the drift the OSC 7 slice was written to avoid.
+    private func activeDirectory() -> String? {
+        guard let session = activeSession, !session.pwdRaw.isEmpty else { return nil }
+        var length = 0
+        let raw = session.pwdRaw
+        let sized = raw.withUnsafeBufferPointer { pointer in
+            ruuah_cwd_path(pointer.baseAddress, raw.count, nil, 0, &length)
+        }
+        guard sized == RUUAH_HOST_SUCCESS, length > 0 else { return nil }
+        var buffer = [UInt8](repeating: 0, count: length)
+        let copied = raw.withUnsafeBufferPointer { pointer in
+            buffer.withUnsafeMutableBufferPointer { out in
+                ruuah_cwd_path(pointer.baseAddress, raw.count, out.baseAddress, length, &length)
+            }
+        }
+        guard copied == RUUAH_HOST_SUCCESS else { return nil }
+        return String(decoding: buffer, as: UTF8.self)
+    }
+
+    /// The panel wears the terminal's own background; the rest is the app's accent, the
+    /// same indigo the gutter's hot bar uses. Only the background is live today -- the
+    /// frame reports it, and nothing reports a foreground yet.
+    private func panelTheme() -> PanelTheme {
+        var background = "#16151b"
+        if let color = activeSession?.background,
+            let srgb = NSColor(cgColor: color)?.usingColorSpace(.sRGB)
+        {
+            background = String(
+                format: "#%02x%02x%02x", Int((srgb.redComponent * 255).rounded()),
+                Int((srgb.greenComponent * 255).rounded()),
+                Int((srgb.blueComponent * 255).rounded()))
+        }
+        return PanelTheme(
+            background: background, foreground: "#e6e6e6", accent: "#5865f2", dim: "#8b8b96")
+    }
+
+    /// cmd+shift+D toggles. Only ever reachable when `panels = true`.
+    private func toggleDiffPanel() {
+        if let webPanel {
+            webPanel.removeFromSuperview()
+            self.webPanel = nil
+            panelRoot = nil
+            panelFiles = []
+            window.makeFirstResponder(view)
+            return
+        }
+        guard let url = WebPanel.documentURL(override: webDir) else {
+            report("panels are enabled but the panel document was not found (build web/)")
+            return
+        }
+        guard let panel = WebPanel(documentURL: url) else { return }
+        panel.onProtocolError = { [weak self] detail in self?.report("panel bridge: \(detail)") }
+        panel.onMessage = { [weak self] message in self?.handle(message) }
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(panel)
+        // 1080pt wide where there is room, otherwise the window minus a margin. The
+        // preferred width is breakable so the required inequality wins on a narrow
+        // window instead of the layout engine reporting a conflict.
+        let preferredWidth = panel.widthAnchor.constraint(equalToConstant: 1080)
+        preferredWidth.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            panel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            panel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            panel.widthAnchor.constraint(
+                lessThanOrEqualTo: view.widthAnchor, constant: -48),
+            preferredWidth,
+            panel.heightAnchor.constraint(equalTo: view.heightAnchor, multiplier: 0.82),
+        ])
+        webPanel = panel
+        panel.focus()
+    }
+
+    private func handle(_ message: PanelMessage) {
+        switch message {
+        case .ready:
+            webPanel?.post(.initialize(theme: panelTheme()))
+            refreshDiffPanel()
+        case .refresh:
+            refreshDiffPanel()
+        case .dismiss:
+            if webPanel != nil { toggleDiffPanel() }
+        case .requestDiff(let path):
+            sendDiff(path: path)
+        case .pong:
+            // Only the smoke asserts on this; the window has nothing to do with it.
+            break
+        case .decodeError(let detail):
+            report("panel could not read a host message: \(detail)")
+        }
+    }
+
+    /// Recomputes the changed-file list off the main thread and posts it.
+    private func refreshDiffPanel() {
+        guard let directory = activeDirectory() else {
+            panelRoot = nil
+            panelFiles = []
+            webPanel?.post(.files(repo: nil, files: [], error: nil))
+            return
+        }
+        gitQueue.async { [weak self] in
+            let root = Git.repositoryRoot(containing: directory)
+            let outcome = root.map { Git.changedFiles(root: $0) }
+            DispatchQueue.main.async {
+                guard let self, self.webPanel != nil else { return }
+                self.panelRoot = root
+                switch outcome {
+                case .none:
+                    self.panelFiles = []
+                    self.webPanel?.post(.files(repo: nil, files: [], error: nil))
+                case .some(.success(let files)):
+                    self.panelFiles = files
+                    self.webPanel?.post(.files(repo: root, files: files, error: nil))
+                case .some(.failure(let error)):
+                    self.panelFiles = []
+                    self.webPanel?.post(.files(repo: root, files: [], error: error.description))
+                }
+            }
+        }
+    }
+
+    /// Answers one `requestDiff`.
+    ///
+    /// The path is checked against the list this host advertised. That is not paranoia
+    /// about our own React: it is the IPC rule -- an argument arriving from the other
+    /// side of a boundary is validated by the side that acts on it, and here acting
+    /// means reading a file off disk.
+    private func sendDiff(path: String) {
+        guard let root = panelRoot, let file = panelFiles.first(where: { $0.path == path }) else {
+            report("panel asked for a diff of an unlisted path: \(path)")
+            webPanel?.post(.fileDiff(path: path, patch: "", error: "not a listed change"))
+            return
+        }
+        let untracked = file.status.hasPrefix("??")
+        gitQueue.async { [weak self] in
+            let outcome = Git.diff(root: root, path: path, untracked: untracked)
+            DispatchQueue.main.async {
+                guard let self, self.webPanel != nil else { return }
+                switch outcome {
+                case .success(let patch):
+                    self.webPanel?.post(.fileDiff(path: path, patch: patch, error: nil))
+                case .failure(let error):
+                    self.webPanel?.post(
+                        .fileDiff(path: path, patch: "", error: error.description))
+                }
+            }
+        }
+    }
+
+    /// One line to stderr per seam event (SCAR-014): a panel that shows nothing must be
+    /// distinguishable from a panel that was never asked anything.
+    private func report(_ detail: String) {
+        FileHandle.standardError.write(Data("[panel] \(detail)\n".utf8))
     }
 
     private func showBlockMenu(_ block: Block, with event: NSEvent) {

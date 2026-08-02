@@ -237,6 +237,17 @@ RuuahHostResult ruuah_history_suggest(const RuuahHistory *handle, const uint8_t 
                                       size_t len, const uint8_t *cwd, size_t cwd_len,
                                       uint8_t *out, size_t cap, size_t *out_len);
 
+/* The filesystem path a RAW OSC 7 report names, written into `out` as UTF-8.
+ *
+ * The same normalizer the history calls use. Exposed so an embedder that needs the
+ * decoded directory (running a command in it, say) does not write a second
+ * percent-decoder in another language -- there is exactly one, and it is here.
+ *
+ * Returns Ignored with *out_len = 0 when the report names no directory, which is
+ * distinguishable from a buffer that was too small. Pass out = NULL to size first. */
+RuuahHostResult ruuah_cwd_path(const uint8_t *raw, size_t len, uint8_t *out, size_t cap,
+                               size_t *out_len);
+
 /* Scrolls the displayed view through scrollback: positive rows climbs into history,
  * negative returns toward the live bottom, INT32_MIN snaps straight to it. Deltas
  * accumulate on the pump thread and are clamped against what history actually holds;
@@ -329,6 +340,10 @@ const char *ruuah_config_shell(const RuuahConfig *config);
  * question as OSC 52 clipboard reads. The grant itself travels through
  * RuuahHostOptions.config at spawn; this is for showing the posture. */
 bool ruuah_config_reports(const RuuahConfig *config);
+
+/* Whether the embedder may show web-rendered panels (config panels = true).
+ * False for a NULL handle, and false unless the config says otherwise. */
+bool ruuah_config_panels(const RuuahConfig *config);
 
 /* The configured lead font family (config font-family), or NULL when unset.
  * Borrowed: valid until ruuah_config_free. */

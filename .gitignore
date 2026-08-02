@@ -1,3 +1,6 @@
 /target
 /vendor
 /swift/.build
+/web/node_modules
+# The panel document is a build product (scripts/build-web.sh), like the Rust archives.
+/web/dist

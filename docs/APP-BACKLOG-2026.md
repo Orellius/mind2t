@@ -8,8 +8,15 @@
 > omitted -- no collaborators exist). Default window now 1120x700. App bundle is now
 > properly ad-hoc signed (TCC can attribute it -- Desktop/Documents prompts work; an
 > unsigned bundle was silently denied with no prompt). Config grew font-family,
-> font-ligatures. REMAINING QUEUE: S3 cmd+K palette + workflows, S4 autosuggestions,
-> S5+ as written below.
+> font-ligatures.
+
+> **REMAINING QUEUE, restated 2026-08-02:** S5 worktree workspaces, then S8
+> persistent sessions and S9 automations/MCP. **S3 shipped 2026-07-30, S4
+> 2026-07-31, S6 v1 2026-08-02**; S7 is refused. The line this replaces still
+> named S3 and S4 as outstanding three days after both had landed, and on
+> 2026-08-02 a session picked S3 as its next slice on that basis and began
+> rebuilding a feature that already existed. Stamp the slice entry in the same
+> PR that lands it. A queue nobody updates is worse than no queue.
 
 
 Written 2026-07-29 (IDT), researched live the same day. `BACKLOG-2026.md` is the
@@ -81,7 +88,15 @@ interplay with our strict parser is unmeasured. Next round: instrument
 decide mark precedence. Until then blocks light up only without those
 frameworks. *V2 later: sticky command header, block search, collapse.*
 
-**S3 - Command palette + workflows.** cmd+K palette (Swift, pure UI): actions
+**S3 - Command palette + workflows. DONE 2026-07-30** (`s3-palette`, PR #10):
+`Palette.swift`'s `PaletteView`, cmd+K in `Window.swift`, workflows loaded from
+`~/.ruuah/workflows/` through the `RUUAH_WORKFLOW_*` exports with file errors
+surfaced as their own palette row. The queue line in this file's header went on
+saying S3 was outstanding for three days after it shipped, and on 2026-08-02 a
+session picked it as the next slice on that basis. A backlog is only as good as
+its stamps: when a slice lands, stamp it HERE, in the same PR.
+
+Original entry: cmd+K palette (Swift, pure UI): actions
 (new session, switch, copy block, theme switch) + **workflows** = parameterized
 command templates in YAML/TOML under `~/.ruuah/workflows/` (Warp's shape;
 plain data, our format). Picking one fills the input with placeholders. Cheap,
@@ -139,7 +154,49 @@ as a product validates the direction; RUUAH absorbing it is Orel's call on
 convoy's future. Oracle: spawn → `git worktree list` shows it; close → gone;
 two agents editing in parallel never touch each other's tree.
 
-**S6 - Diff review panel.** Superset's dashboard, one workspace at a time:
+**S6 - Diff review panel. v1 DONE 2026-08-02** (`s6-web-panel`): changed files +
+unified diff for the ACTIVE SESSION'S repository, refreshed on demand. Two
+departures from the sketch below, both deliberate.
+
+**It is rendered in a WKWebView, not in AppKit** - the first web-rendered panel
+in the app, and the reason the seam exists at all. Orel raised `simion/termic`
+(Tauri 2 + React 19 + xterm.js, AGPL-3.0) on 2026-08-02 and asked whether RUUAH
+should be wrapped the same way. The answer was half no, half yes, and the split
+is the architecture: **the terminal surface stays native** (xterm.js carries its
+own VT parser and its own screen model, so a webview terminal would bypass this
+project's entire core and every gate on it), **while document-shaped panels get
+a browser engine**, where AppKit costs days and buys nothing. The rule that
+keeps it honest: no terminal pixels, no keystrokes bound for a pty, and no frame
+data ever enter the webview. The panel is a sibling of the grid, never a layer
+over it.
+
+**It does not need S5.** The sketch paired it with worktree workspaces; a diff of
+wherever the active session is standing is useful on its own and needs none of
+that machinery. S5 later widens the scope from "this session's repo" to "this
+workspace".
+
+Off unless `panels = true` in `config.toml` (`ruuah_config_panels`, default
+false and tested in both directions). Reachable by cmd+shift+D or the palette's
+"Review Changes". Read-only by construction: nothing in `Git.swift` mutates a
+repository, and a `requestDiff` for a path the host never advertised is refused
+rather than passed to git.
+
+Harness first, as always, and it earned its keep twice on first contact:
+`--smoke-panel` round-trips a nonce through the bridge and `--smoke-panel-control`
+runs the same document with the receiver stripped out. Run one, the CONTROL
+PASSED VACUOUSLY - a navigation-policy bug (URL equality against a
+symlink-resolved path) refused the document outright, so the missing nonce
+proved nothing; the control now also demands the document loaded and mounted.
+Run two caught a real race: the bundle is an ES module and module scripts are
+deferred, so WKWebView's `didFinish` fires BEFORE `window.__ruuahReceive`
+exists. The queue now flushes on the panel's own `ready`, which cannot precede
+its bridge module by construction.
+
+Still open here: syntax highlighting, markdown preview, "open in editor" per
+file, and side-by-side. Deliberately not in v1 - the point of the slice was the
+seam, and a seam is proven by the smallest real panel, not the richest one.
+
+Original sketch: Superset's dashboard, one workspace at a time:
 changed files + unified diff, refreshed on demand (`git status`/`diff`
 host-side, rendered Swift-side), "open in editor" per file. Pairs with S5.
 Oracle: scripted mutation in a worktree must appear in the panel byte-exact.

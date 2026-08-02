@@ -46,6 +46,13 @@ PLIST
 
 cp swift/.build/release/ruuah-host "$BUILD/Contents/MacOS/ruuah-host"
 cp swift/Resources/banner.sh "$BUILD/Contents/Resources/banner.sh"
+# S6 panels: one self-contained document, or none at all. A bundle without it still
+# runs -- WebPanel.documentURL returns nil and the chord reports rather than opening a
+# blank card. build-swift.sh above has already built it when bun is available.
+if [ -f web/dist/index.html ]; then
+  mkdir -p "$BUILD/Contents/Resources/web"
+  cp web/dist/index.html "$BUILD/Contents/Resources/web/index.html"
+fi
 # Shell integration (S2): the ZDOTDIR bootstrap + the OSC 133 hooks the blocks read.
 mkdir -p "$BUILD/Contents/Resources/shell/zdotdir"
 cp shell/ruuah-integration.zsh "$BUILD/Contents/Resources/shell/ruuah-integration.zsh"

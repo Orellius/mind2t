@@ -714,6 +714,39 @@ pub unsafe extern "C" fn ruuah_history_suggest(
     }
 }
 
+/// The filesystem path a raw OSC 7 report names, written into `out`.
+///
+/// The same normalizer the history calls use, exposed because the embedder needs the
+/// decoded path for its own purposes (S6 runs git in it) and the repo's rule is that
+/// exactly ONE place knows how to undo percent-escapes. A second decoder in Swift would
+/// be a second implementation of a fiddly transform, in another language, with nothing
+/// comparing the two -- which is precisely how the emitter/decoder pair drifted before.
+///
+/// `Ignored` (with `*out_len` set to 0) when the report names no directory, so "not a
+/// path" is distinguishable from "buffer too small". Call with `out` NULL to size.
+///
+/// # Safety
+/// `raw` readable for `len` bytes or NULL when `len` is 0; `out` writable for `cap`
+/// bytes or NULL; `out_len` writable or NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_cwd_path(
+    raw: *const u8,
+    len: usize,
+    out: *mut u8,
+    cap: usize,
+    out_len: *mut usize,
+) -> RuuahHostResult {
+    match unsafe { normalized_cwd(raw, len) } {
+        Some(path) => copy_out(&path, out, cap, out_len),
+        None => {
+            if !out_len.is_null() {
+                unsafe { out_len.write(0) };
+            }
+            RuuahHostResult::Ignored
+        }
+    }
+}
+
 /// A raw OSC 7 report as a directory key, or `None` for NULL, empty, or unusable input.
 ///
 /// # Safety
@@ -1695,6 +1728,22 @@ pub unsafe extern "C" fn ruuah_config_reports(config: *const RuuahConfig) -> boo
         return false;
     }
     unsafe { &*config }.config.reports
+}
+
+/// Whether the embedder may show web-rendered panels (S6 diff review).
+///
+/// FALSE unless `config.toml` says `panels = true`, and false for a NULL handle. The
+/// core is unaffected either way; this is purely the embedder asking what its operator
+/// allowed.
+///
+/// # Safety
+/// `config` must be NULL or a live handle from `ruuah_config_load`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_config_panels(config: *const RuuahConfig) -> bool {
+    if config.is_null() {
+        return false;
+    }
+    unsafe { &*config }.config.panels
 }
 
 /// The configured lead font family, or NULL when unset. Borrowed: valid until

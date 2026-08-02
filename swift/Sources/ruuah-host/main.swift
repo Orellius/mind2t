@@ -163,12 +163,160 @@ func runHistorySmoke() -> Int32 {
     return 0
 }
 
+/// Headless proof of the web-panel bridge, both directions, with no window.
+///
+/// The seam this asserts is the one that fails SILENTLY (SCAR-004): WKWebView does not
+/// throw when a script message handler was never registered, and evaluateJavaScript
+/// against a document whose receiver is missing reports a JS exception nobody reads. So
+/// a panel that is completely disconnected looks exactly like a panel that is working
+/// and simply has nothing to show. The probe is therefore a ROUND TRIP with a nonce: the
+/// host posts `ping`, the panel's bridge module answers `pong` with the same nonce, and
+/// only receiving that nonce back proves both directions of the channel carried data.
+///
+/// Run against a built `web/dist` via `--web-dir`, since the bare CLI binary has no
+/// resource bundle. The control is `--smoke-panel-control`, which loads a document with
+/// the bridge stripped out and must NOT get its nonce back.
+func runPanelSmoke(webDir: String?, control: Bool) -> Int32 {
+    guard var url = WebPanel.documentURL(override: webDir) else {
+        FileHandle.standardError.write(
+            Data("panel document not found; build web/ or pass --web-dir\n".utf8))
+        return 1
+    }
+
+    // The control's document is the real one with the host's entry point removed --
+    // the single line that makes the bridge exist. Everything else about the load,
+    // the handler registration and the probe is identical, so a pass here would mean
+    // the assertion is not measuring the bridge at all.
+    if control {
+        guard let html = try? String(contentsOf: url, encoding: .utf8) else {
+            FileHandle.standardError.write(Data("could not read the panel document\n".utf8))
+            return 1
+        }
+        let broken = html.replacingOccurrences(
+            of: "window.__ruuahReceive=", with: "window.__ruuahDisconnected=")
+        guard broken != html else {
+            FileHandle.standardError.write(
+                Data("control could not find the receiver to remove; the bundle changed shape\n".utf8))
+            return 1
+        }
+        let path = NSTemporaryDirectory() + "ruuah-panel-control.html"
+        guard (try? broken.write(toFile: path, atomically: true, encoding: .utf8)) != nil else {
+            FileHandle.standardError.write(Data("could not write the control document\n".utf8))
+            return 1
+        }
+        url = URL(fileURLWithPath: path)
+    }
+
+    guard let panel = WebPanel(documentURL: url) else {
+        FileHandle.standardError.write(Data("panel could not be constructed\n".utf8))
+        return 1
+    }
+    // Off-screen but in a real window: WKWebView does not run a document that is in no
+    // window at all, and this must exercise the same path the app uses.
+    let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+        styleMask: [.titled], backing: .buffered, defer: false)
+    panel.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+    window.contentView?.addSubview(panel)
+
+    let nonce = UUID().uuidString
+    var pongedWith: String?
+    var ready = false
+    var errors: [String] = []
+    panel.onProtocolError = { errors.append($0) }
+    panel.onMessage = { message in
+        switch message {
+        case .ready: ready = true
+        case .pong(let echoed): pongedWith = echoed
+        default: break
+        }
+    }
+    panel.post(.ping(nonce: nonce))
+
+    // Waits for BOTH signals. `ready` comes from the React layer once it has mounted and
+    // `pong` from the bridge module, so requiring both means the document is proven to
+    // have executed AND the channel is proven to carry data. Waiting only for the pong
+    // would pass against a bundle whose UI never rendered at all.
+    let deadline = Date().addingTimeInterval(15)
+    while Date() < deadline, pongedWith == nil || !ready {
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+    }
+
+    if control {
+        // The control is only worth something if it fails for the RIGHT reason. Removing
+        // the receiver does not stop React mounting, so a correct control still reports
+        // `ready` -- and demanding that here is what distinguishes "the bridge is dead"
+        // from "the document never loaded", which is how this control passed VACUOUSLY
+        // on its first run (a navigation-policy bug refused the document outright, and
+        // the missing nonce proved nothing at all).
+        guard ready else {
+            FileHandle.standardError.write(
+                Data("""
+                    CONTROL INVALID: the document never reported ready, so a missing nonce \
+                    says nothing about the bridge. errors=\
+                    \(errors.isEmpty ? "none" : errors.joined(separator: "; "))
+
+                    """.utf8))
+            return 1
+        }
+        guard pongedWith == nil else {
+            FileHandle.standardError.write(
+                Data("CONTROL FAILED: a document with no receiver still answered the probe\n".utf8))
+            return 1
+        }
+        print(
+            "PANEL CONTROL OK: the document loaded and reported ready, and with the "
+                + "receiver removed the nonce never came back")
+        return 0
+    }
+
+    guard let pongedWith else {
+        FileHandle.standardError.write(
+            Data("""
+                PANEL SMOKE FAILED: no pong within 15s. ready=\(ready), \
+                errors=\(errors.isEmpty ? "none" : errors.joined(separator: "; "))
+
+                """.utf8))
+        return 1
+    }
+    guard pongedWith == nonce else {
+        FileHandle.standardError.write(
+            Data("PANEL SMOKE FAILED: echoed \(pongedWith), sent \(nonce)\n".utf8))
+        return 1
+    }
+    guard ready else {
+        FileHandle.standardError.write(
+            Data("PANEL SMOKE FAILED: the panel answered the probe but never mounted\n".utf8))
+        return 1
+    }
+    guard errors.isEmpty else {
+        FileHandle.standardError.write(
+            Data("PANEL SMOKE FAILED: bridge errors: \(errors.joined(separator: "; "))\n".utf8))
+        return 1
+    }
+    print("PANEL SMOKE OK: the panel mounted and nonce \(nonce) crossed to it and back")
+    return 0
+}
+
 let arguments = CommandLine.arguments
 if arguments.contains("--smoke") {
     exit(runSmoke())
 }
 if arguments.contains("--smoke-history") {
     exit(runHistorySmoke())
+}
+
+var webDirArgument: String?
+if let index = arguments.firstIndex(of: "--web-dir"), index + 1 < arguments.count {
+    webDirArgument = arguments[index + 1]
+}
+if arguments.contains("--smoke-panel") || arguments.contains("--smoke-panel-control") {
+    // A WKWebView needs an application object to run its document.
+    let probeApp = NSApplication.shared
+    probeApp.setActivationPolicy(.prohibited)
+    exit(
+        runPanelSmoke(
+            webDir: webDirArgument, control: arguments.contains("--smoke-panel-control")))
 }
 
 var command: String?
@@ -241,6 +389,7 @@ let app = NSApplication.shared
 app.setActivationPolicy(.regular)
 let delegate = HostAppDelegate(
     command: command, autoDirection: autoDirection, config: config,
-    baseFontSize: baseFontSize, configError: configError, configDir: configDir)
+    baseFontSize: baseFontSize, configError: configError, configDir: configDir,
+    webDir: webDirArgument)
 app.delegate = delegate
 app.run()

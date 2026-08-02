@@ -24,6 +24,9 @@ final class TerminalView: NSView {
     var onNewSession: (() -> Void)?
     /// cmd+K: the receiver presents (or toggles) the command palette.
     var onPalette: (() -> Void)?
+    /// cmd+shift+D: the receiver toggles the diff review panel (S6). Unset, and so a
+    /// dead chord, unless `panels = true` in the config.
+    var onDiffPanel: (() -> Void)?
     /// A bare right-arrow while a ghost suggestion shows: returns whether the
     /// receiver accepted it (typed the remainder); false lets the key go to the child.
     var onAcceptSuggestion: (() -> Bool)?
@@ -323,6 +326,13 @@ final class TerminalView: NSView {
         // The zoom pair also answers with shift held: cmd+shift+= is how most fingers
         // type "cmd plus", and nothing else owns those chords.
         let zoomKey = event.keyCode == 24 || event.keyCode == 27
+        // cmd+shift+D is the panel. Shift-qualified deliberately: bare cmd+D belongs to
+        // the child (it is EOF-adjacent muscle memory) and taking it would be a chord
+        // the terminal stole from every program running in it.
+        if mods == [.command, .shift], event.keyCode == 2, let onDiffPanel {
+            onDiffPanel()
+            return true
+        }
         guard mods == [.command] || (mods == [.command, .shift] && zoomKey)
         else { return super.performKeyEquivalent(with: event) }
         switch event.keyCode {

@@ -30,6 +30,11 @@ fi
 # deleting an agent's unpushed work. Mutant seen red (adding --force fails it).
 .build/release/ruuah-host --smoke-worktree
 
+# S5.5 dock geometry. A pane that keeps its full width while the sidebar is docked
+# draws UNDERNEATH it -- the terminal looks normal and its right columns are covered,
+# which no screenshot reveals. Mutant seen red (sidebar as a constant, not a remainder).
+.build/release/ruuah-host --smoke-dock
+
 # S6 panels. The web build is optional (no bun, no panels), so its absence SKIPS the
 # probe out loud instead of leaving a silently unproven seam. Both directions run: the
 # probe must round-trip a nonce, and the control -- the same document with the receiver

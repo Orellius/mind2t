@@ -56,6 +56,10 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// refused rather than handed to git, so the panel cannot widen its own reach.
     private var panelRoot: String?
     private var panelFiles: [ChangedFile] = []
+    /// The docked workspace sidebar (S5.5), or nil when it is closed.
+    private var sidebar: WebPanel?
+    /// Points the sidebar takes from the terminal pane when docked.
+    private static let sidebarWidth: CGFloat = 300
     /// git runs here, never on the main thread -- `status` on a large tree is tens of
     /// milliseconds and the terminal is blitting at 60 Hz on the other side of it.
     private let gitQueue = DispatchQueue(label: "ruuah.git", qos: .userInitiated)
@@ -180,9 +184,15 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             // seeing it in a real window. Opening it from the environment is what lets
             // that be a scripted capture instead of synthesized keystrokes into
             // whatever the operator happens to be doing.
-            if ProcessInfo.processInfo.environment["RUUAH_PANEL_OPEN"] == "1" {
+            // "1"/"diff" opens the review card, "sidebar" docks the workspace sidebar.
+            let open = ProcessInfo.processInfo.environment["RUUAH_PANEL_OPEN"]
+            if open == "1" || open == "diff" || open == "sidebar" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                    self?.toggleDiffPanel()
+                    if open == "sidebar" {
+                        self?.toggleSidebar()
+                    } else {
+                        self?.toggleDiffPanel()
+                    }
                 }
             }
         }
@@ -249,14 +259,24 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// resize (manual frames; two views do not earn Auto Layout here).
     private func layoutChrome() {
         guard let content = window.contentView else { return }
-        let bounds = content.bounds
-        tabBar.frame = NSRect(
-            x: 0, y: bounds.height - TabBarView.height,
-            width: bounds.width, height: TabBarView.height)
+        // The sidebar is DOCKED: it takes width away from the terminal rather than
+        // floating over it. Everything downstream follows for free, because
+        // `gridForPane` derives cols and rows from `view.bounds` -- so shrinking the
+        // view is what resizes the pty, and no geometry math learns about sidebars.
+        let layout = ChromeLayout.compute(
+            content: content.bounds.size, tabHeight: TabBarView.height,
+            sidebarWidth: sidebar == nil ? nil : HostAppDelegate.sidebarWidth)
+        tabBar.frame = layout.tabBar
         tabBar.autoresizingMask = [.width, .minYMargin]
-        view.frame = NSRect(
-            x: 0, y: 0, width: bounds.width, height: bounds.height - TabBarView.height)
-        view.autoresizingMask = [.width, .height]
+        view.frame = layout.pane
+        // Manual frames only: with the sidebar docked the pane is no longer the full
+        // width, and an autoresizing mask would silently stretch it back over the
+        // sidebar on the next window resize.
+        view.autoresizingMask = []
+        if let sidebar, let frame = layout.sidebar {
+            sidebar.frame = frame
+            sidebar.autoresizingMask = []
+        }
     }
 
     private var activeSession: Session? {
@@ -1023,10 +1043,133 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         panel.focus()
     }
 
+    // MARK: workspace sidebar (S5.5)
+
+    /// Docks or undocks the sidebar. The window does not change size; the terminal pane
+    /// gives up the width, which is what makes this a resize of the pty.
+    func toggleSidebar() {
+        if let sidebar {
+            sidebar.removeFromSuperview()
+            self.sidebar = nil
+            layoutChrome()
+            refitAll()
+            window.makeFirstResponder(view)
+            return
+        }
+        guard let url = WebPanel.documentURL(override: webDir) else {
+            report("sidebar: the panel document was not found (build web/)")
+            return
+        }
+        guard let panel = WebPanel(documentURL: url, docked: true) else { return }
+        panel.onProtocolError = { [weak self] detail in self?.report("sidebar: \(detail)") }
+        panel.onMessage = { [weak self] message in self?.handleSidebar(message) }
+        window.contentView?.addSubview(panel)
+        sidebar = panel
+        layoutChrome()
+        refitAll()
+    }
+
+    /// Every session is refitted, not just the active one: a background session keeps
+    /// running with its own geometry, and one that missed the dock would repaint at the
+    /// old width the moment it is activated.
+    private func refitAll() {
+        for session in sessions {
+            fitToPane(session)
+        }
+        if let session = activeSession, let image = session.poll() ?? session.lastImage {
+            view.contentLayer.contents = image
+        }
+    }
+
+    private func handleSidebar(_ message: PanelMessage) {
+        switch message {
+        case .ready:
+            sidebar?.post(.initialize(theme: panelTheme(), panel: .workspaces))
+            refreshSidebarPanel()
+        case .refresh:
+            refreshSidebarPanel()
+        case .dismiss:
+            if sidebar != nil { toggleSidebar() }
+        case .createWorkspace:
+            DispatchQueue.main.async { [weak self] in self?.newWorkspace() }
+        case .openWorkspace(let path):
+            openWorkspace(path: path)
+        case .decodeError(let detail):
+            report("sidebar could not read a host message: \(detail)")
+        default:
+            break
+        }
+    }
+
+    /// Focuses the session already living in `path`, or opens one there.
+    ///
+    /// The path is checked against the worktrees this host listed, for the same reason
+    /// the diff panel checks its file paths: an argument that crosses the boundary is
+    /// validated by the side that acts on it, and acting here means spawning a shell.
+    private func openWorkspace(path: String) {
+        guard let directory = activeDirectory(),
+            case .success(let trees) = Worktrees.list(containing: directory),
+            let worktree = trees.first(where: { $0.path == path })
+        else {
+            report("sidebar asked to open an unlisted worktree: \(path)")
+            return
+        }
+        if let index = sessions.firstIndex(where: { $0.workspace == worktree.branch }) {
+            activate(index: index)
+            refreshSidebarPanel()
+            return
+        }
+        newSession(in: worktree.path, workspace: worktree.label)
+        refreshSidebarPanel()
+    }
+
+    /// Recomputes the worktree list off the main thread and posts it.
+    private func refreshSidebarPanel() {
+        guard sidebar != nil else { return }
+        guard let directory = activeDirectory() else {
+            sidebar?.post(.workspaces(repo: nil, rows: [], error: nil))
+            return
+        }
+        let openSessions = sessions.map { ($0.workspace, $0.title) }
+        let activeWorkspace = activeSession?.workspace
+        gitQueue.async { [weak self] in
+            let root = Git.repositoryRoot(containing: directory)
+            let outcome = Worktrees.list(containing: directory)
+            DispatchQueue.main.async {
+                guard let self, self.sidebar != nil else { return }
+                switch outcome {
+                case .success(let trees):
+                    let rows = trees.map { tree in
+                        // Sessions in the PRIMARY tree carry no workspace label -- they
+                        // are ordinary sessions that happen to be in the repository, and
+                        // labelling them would mean every window claimed a workspace it
+                        // never opened. So the primary row claims the unlabelled ones,
+                        // or it renders as active-with-no-session, which is a
+                        // contradiction the operator sees immediately (caught in the
+                        // S5.5 live tap).
+                        let mine =
+                            tree.isPrimary
+                            ? openSessions.filter { $0.0 == nil }
+                            : openSessions.filter { $0.0 == tree.branch }
+                        return WorkspaceRow(
+                            branch: tree.label, path: tree.path, isPrimary: tree.isPrimary,
+                            sessions: mine.map(\.1),
+                            isActive: activeWorkspace == tree.branch
+                                || (tree.isPrimary && activeWorkspace == nil))
+                    }
+                    self.sidebar?.post(.workspaces(repo: root, rows: rows, error: nil))
+                case .failure(let error):
+                    self.sidebar?.post(
+                        .workspaces(repo: root, rows: [], error: error.description))
+                }
+            }
+        }
+    }
+
     private func handle(_ message: PanelMessage) {
         switch message {
         case .ready:
-            webPanel?.post(.initialize(theme: panelTheme()))
+            webPanel?.post(.initialize(theme: panelTheme(), panel: .diff))
             refreshDiffPanel()
         case .refresh:
             refreshDiffPanel()
@@ -1034,6 +1177,8 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             if webPanel != nil { toggleDiffPanel() }
         case .requestDiff(let path):
             sendDiff(path: path)
+        case .openWorkspace, .createWorkspace:
+            break
         case .pong:
             // Only the smoke asserts on this; the window has nothing to do with it.
             break
@@ -1183,5 +1328,13 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     func tabBarDidRequestClose(index: Int) {
         closeSession(index: index)
+    }
+
+    func tabBarCanToggleSidebar() -> Bool {
+        ruuah_config_panels(config)
+    }
+
+    func tabBarDidToggleSidebar() {
+        toggleSidebar()
     }
 }

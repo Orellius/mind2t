@@ -33,6 +33,35 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
+**S5.5 workspace sidebar, `[tested]` 2026-08-02 (`s55-workspace-sidebar`).** The tab
+strip's right-hand button was decoration copied 1:1 from the Warp reference; it now
+docks a sidebar listing every worktree, the sessions open in each, and which one is
+active. Clicking a workspace focuses its session or opens one there. Off unless
+`panels = true`.
+
+- **Docked, not floating.** The sidebar takes width FROM the terminal pane, and
+  everything downstream follows for free: `gridForPane` derives cols and rows from
+  `view.bounds`, so shrinking the view is what resizes the pty and no geometry math
+  learns that sidebars exist.
+- **`ChromeLayout` is pure arithmetic** (`Window.swift`), extracted so the dock is
+  assertable without NSViews. The invariant is EXACT TILING - pane and sidebar sum to
+  the content width, no overlap and no gap - because the failure here is silent: a pane
+  that keeps full width simply draws under the sidebar and looks normal with its right
+  columns covered. `--smoke-dock` asserts it; the mutant (sidebar as a constant width
+  instead of a remainder) fails on the narrow-window case.
+- **One document, many panels.** `init` names the panel kind, so a new panel never adds
+  a bundle to build, sign or ship. `Root.tsx` owns the handshake and the bridge replays
+  the latest message per kind, which is what makes mount order irrelevant: the root
+  sends `ready`, the host answers `init` plus data, and the panel mounts only after the
+  kind is known - so its data provably arrives before it exists.
+- The live tap caught a contradiction no test would: the primary row rendered as
+  ACTIVE while claiming no session, because sessions in the primary tree carry no
+  workspace label. The primary row now claims the unlabelled ones.
+
+Gates: **605 tests + 6 web / difftest 207/207 / esctest 373 pinned / exports 14 + 52 /
+five smokes (base, worktree, dock, panel, panel-control)**. Sidebar aesthetics are
+`[untested - needs your eyes]`.
+
 **S5 workspaces v1, `[tested]` headlessly and by live tap, 2026-08-02
 (`s5-worktree-workspaces`).** "New Workspace" in the palette creates a git
 worktree beside the repository and opens a session inside it; the tab pill shows

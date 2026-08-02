@@ -6,7 +6,7 @@ import "./styles.css";
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { DiffPanel } from "./DiffPanel";
+import { Root } from "./Root";
 
 const root = document.getElementById("root");
 if (root === null) {
@@ -16,7 +16,7 @@ if (root === null) {
 } else {
   createRoot(root).render(
     <StrictMode>
-      <DiffPanel />
+      <Root />
     </StrictMode>,
   );
 }

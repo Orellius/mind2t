@@ -32,8 +32,33 @@ struct PanelFailure: Error, CustomStringConvertible {
 }
 
 /// Host to panel. Mirrors `web/src/protocol.ts`; the two are edited together.
+/// Which view the document should render. One bundle serves every panel; the host says
+/// which one at init, so adding a panel never adds a document to build, sign or ship.
+enum PanelKind: String {
+    case diff
+    case workspaces
+}
+
+struct WorkspaceRow {
+    let branch: String
+    let path: String
+    let isPrimary: Bool
+    /// Titles of open sessions living in this worktree.
+    let sessions: [String]
+    /// True when one of those sessions is the active one.
+    let isActive: Bool
+
+    var json: [String: Any] {
+        [
+            "branch": branch, "path": path, "isPrimary": isPrimary,
+            "sessions": sessions, "isActive": isActive,
+        ]
+    }
+}
+
 enum HostMessage {
-    case initialize(theme: PanelTheme)
+    case initialize(theme: PanelTheme, panel: PanelKind)
+    case workspaces(repo: String?, rows: [WorkspaceRow], error: String?)
     case files(repo: String?, files: [ChangedFile], error: String?)
     case fileDiff(path: String, patch: String, error: String?)
     /// Liveness probe. The panel answers from its bridge module, not its UI, so a
@@ -42,8 +67,13 @@ enum HostMessage {
 
     var json: [String: Any] {
         switch self {
-        case .initialize(let theme):
-            return ["kind": "init", "theme": theme.json]
+        case .initialize(let theme, let panel):
+            return ["kind": "init", "theme": theme.json, "panel": panel.rawValue]
+        case .workspaces(let repo, let rows, let error):
+            return [
+                "kind": "workspaces", "repo": repo ?? NSNull(),
+                "rows": rows.map(\.json), "error": error ?? NSNull(),
+            ]
         case .files(let repo, let files, let error):
             return [
                 "kind": "files", "repo": repo ?? NSNull(),
@@ -87,6 +117,9 @@ enum PanelMessage: Equatable {
     case requestDiff(path: String)
     case pong(nonce: String)
     case decodeError(detail: String)
+    /// Sidebar: focus the session at this index, or open one in this worktree.
+    case openWorkspace(path: String)
+    case createWorkspace
 
     /// Decodes a raw script-message body.
     ///
@@ -113,6 +146,13 @@ enum PanelMessage: Equatable {
                 return .failure(PanelFailure("pong.nonce missing or not a string"))
             }
             return .success(PanelMessage.pong(nonce: nonce))
+        case "openWorkspace":
+            guard let path = object["path"] as? String else {
+                return .failure(PanelFailure("openWorkspace.path missing or not a string"))
+            }
+            return .success(PanelMessage.openWorkspace(path: path))
+        case "createWorkspace":
+            return .success(PanelMessage.createWorkspace)
         case "decodeError":
             guard let detail = object["detail"] as? String else {
                 return .failure(PanelFailure("decodeError.detail missing or not a string"))
@@ -145,6 +185,10 @@ final class WebPanel: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     /// and the panel refused to display anything at all (caught by --smoke-panel,
     /// 2026-08-02).
     private let documentPath: String
+    /// A docked panel is a wall of the window, not a card floating on it: square, with a
+    /// single dividing edge. Rounding a docked edge leaves a sliver of terminal showing
+    /// through the corner, which reads as a rendering bug rather than a style.
+    private let docked: Bool
     /// Whether the panel has announced itself. NOT the same as the document having
     /// loaded.
     ///
@@ -181,8 +225,9 @@ final class WebPanel: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         return nil
     }
 
-    init?(documentURL: URL) {
+    init?(documentURL: URL, docked: Bool = false) {
         self.documentURL = documentURL
+        self.docked = docked
         self.documentPath = documentURL.resolvingSymlinksInPath().standardizedFileURL.path
 
         let configuration = WKWebViewConfiguration()
@@ -212,10 +257,20 @@ final class WebPanel: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         }
 
         wantsLayer = true
-        layer?.cornerRadius = 12
         layer?.masksToBounds = true
-        layer?.borderWidth = 1
         layer?.borderColor = NSColor(white: 1, alpha: 0.14).cgColor
+        if docked {
+            // One edge only. A full border would draw a line along the window frame.
+            layer?.borderWidth = 0
+            let divider = CALayer()
+            divider.backgroundColor = NSColor(white: 1, alpha: 0.14).cgColor
+            divider.autoresizingMask = [.layerHeightSizable]
+            divider.frame = CGRect(x: 0, y: 0, width: 1, height: 4000)
+            layer?.addSublayer(divider)
+        } else {
+            layer?.cornerRadius = 12
+            layer?.borderWidth = 1
+        }
 
         addSubview(webView)
         NSLayoutConstraint.activate([

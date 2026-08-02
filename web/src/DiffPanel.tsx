@@ -1,15 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { send, subscribe } from "./bridge";
 import { parsePatch, type DiffLine } from "./diff";
-import type { ChangedFile, Theme } from "./protocol";
-
-function applyTheme(theme: Theme): void {
-  const root = document.documentElement.style;
-  root.setProperty("--bg", theme.background);
-  root.setProperty("--fg", theme.foreground);
-  root.setProperty("--accent", theme.accent);
-  root.setProperty("--dim", theme.dim);
-}
+import type { ChangedFile } from "./protocol";
 
 /** `crates/host/src` + `lib.rs`, so the leaf reads at full contrast and the path dims. */
 function splitPath(path: string): { dir: string; name: string } {
@@ -75,9 +67,6 @@ export function DiffPanel() {
   useEffect(() => {
     const unsubscribe = subscribe((message) => {
       switch (message.kind) {
-        case "init":
-          applyTheme(message.theme);
-          break;
         case "files": {
           setRepo(message.repo);
           setFiles(message.files);
@@ -105,7 +94,9 @@ export function DiffPanel() {
           break;
       }
     });
-    send({ kind: "ready" });
+    // `ready` belongs to Root: it is the handshake for the whole document, and sending
+    // it from a panel would mean the host learns the document exists only after it has
+    // already told the document which panel to be.
     return unsubscribe;
   }, []);
 

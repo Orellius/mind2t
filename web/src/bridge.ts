@@ -16,9 +16,17 @@ interface WebKitBridge {
   };
 }
 
-/** Messages that arrive before a subscriber exists, replayed in order once one does. */
-const pending: HostMessage[] = [];
-let subscriber: Subscriber | null = null;
+/**
+ * The most recent message of each kind, replayed to every new subscriber.
+ *
+ * Not an optimisation -- it is what makes mounting order irrelevant. The root sends
+ * `ready`, the host answers `init` plus the panel's data, and only THEN does the root
+ * know which panel to render; without a replay the panel mounts after its own data has
+ * already arrived and shows an empty card forever. Keyed by kind rather than queued,
+ * because a panel wants the current state, not the history of it.
+ */
+const latest = new Map<HostMessage["kind"], HostMessage>();
+const subscribers = new Set<Subscriber>();
 
 function handler(): { postMessage(body: unknown): void } | null {
   const webkit = (window as { webkit?: WebKitBridge }).webkit;
@@ -44,13 +52,12 @@ export function send(message: PanelMessage): boolean {
 }
 
 export function subscribe(next: Subscriber): () => void {
-  subscriber = next;
-  while (pending.length > 0) {
-    const message = pending.shift();
-    if (message !== undefined) next(message);
+  subscribers.add(next);
+  for (const message of latest.values()) {
+    next(message);
   }
   return () => {
-    if (subscriber === next) subscriber = null;
+    subscribers.delete(next);
   };
 }
 
@@ -69,11 +76,12 @@ function receive(raw: unknown): void {
     send({ kind: "pong", nonce: message.nonce });
     return;
   }
-  if (subscriber === null) {
-    pending.push(message);
-    return;
+  // `ping` is answered above and never stored: replaying a stale probe to a later
+  // subscriber would answer a question nobody asked.
+  latest.set(message.kind, message);
+  for (const subscriber of subscribers) {
+    subscriber(message);
   }
-  subscriber(message);
 }
 
 declare global {

@@ -157,6 +157,7 @@ fn spawn_zsh(with_integration: bool) -> *mut RuuahHost {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(

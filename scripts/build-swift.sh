@@ -25,6 +25,11 @@ if [ "${1:-}" = "--no-smoke" ]; then
 fi
 .build/release/ruuah-host --smoke
 
+# S5 workspaces. The load-bearing assertion is the REFUSAL: remove() never passes
+# --force, and a dirty worktree surviving is what stands between this feature and
+# deleting an agent's unpushed work. Mutant seen red (adding --force fails it).
+.build/release/ruuah-host --smoke-worktree
+
 # S6 panels. The web build is optional (no bun, no panels), so its absence SKIPS the
 # probe out loud instead of leaving a silently unproven seam. Both directions run: the
 # probe must round-trip a nonce, and the control -- the same document with the receiver

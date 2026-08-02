@@ -33,6 +33,28 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
+**S5 workspaces v1, `[tested]` headlessly and by live tap, 2026-08-02
+(`s5-worktree-workspaces`).** "New Workspace" in the palette creates a git
+worktree beside the repository and opens a session inside it; the tab pill shows
+`⎇ branch`. "Close Workspace" closes the session and offers to remove the tree.
+
+- **`RuuahHostOptions.cwd`** places the child. Applied LAST so it beats the home
+  default. It sets where the child STARTS: a configured command containing its
+  own `cd` still wins, which is correct precedence and cost one live tap to see.
+- **`Worktrees.swift` is the only file in the app that mutates a repository**,
+  and `remove` NEVER passes `--force`. git's refusal to delete a worktree with
+  uncommitted changes is the feature; it is surfaced verbatim, never retried.
+- **Worktrees are siblings** at `<repo>-worktrees/<branch>`, never nested inside
+  the repository (which would pollute the parent's `git status` forever).
+- Mutants seen red both times: dropping `current_dir` made the child report the
+  test's own directory, and adding `--force` made `--smoke-worktree` fail on the
+  dirty-tree assertion.
+
+Gates: **605 tests / difftest 207/207 / esctest 373 pinned / exports 14 + 52 /
+four smokes (base, worktree, panel, panel-control)**. The two modals (create
+prompt, close confirmation) are `[untested - needs your eyes]`; the tap drives
+the path past them, not the dialogs.
+
 **S6 web panels, `[tested]` through the C surface and the bridge, 2026-08-02
 (`s6-web-panel`).** The app grew its first WKWebView panel: a React + TS diff
 review card (changed files, unified diff with both line-number gutters) over the

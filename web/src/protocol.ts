@@ -25,8 +25,26 @@ export interface ChangedFile {
   readonly deletions: number;
 }
 
+/** Which view to render. One bundle serves every panel; the host picks at init. */
+export type PanelKind = "diff" | "workspaces";
+
+export interface WorkspaceRow {
+  readonly branch: string;
+  readonly path: string;
+  readonly isPrimary: boolean;
+  /** Titles of open sessions living in this worktree. */
+  readonly sessions: readonly string[];
+  readonly isActive: boolean;
+}
+
 export type HostMessage =
-  | { readonly kind: "init"; readonly theme: Theme }
+  | { readonly kind: "init"; readonly theme: Theme; readonly panel: PanelKind }
+  | {
+      readonly kind: "workspaces";
+      readonly repo: string | null;
+      readonly rows: readonly WorkspaceRow[];
+      readonly error: string | null;
+    }
   | {
       readonly kind: "files";
       readonly repo: string | null;
@@ -47,6 +65,8 @@ export type PanelMessage =
   | { readonly kind: "refresh" }
   | { readonly kind: "dismiss" }
   | { readonly kind: "requestDiff"; readonly path: string }
+  | { readonly kind: "openWorkspace"; readonly path: string }
+  | { readonly kind: "createWorkspace" }
   | { readonly kind: "pong"; readonly nonce: string }
   | { readonly kind: "decodeError"; readonly detail: string };
 
@@ -133,6 +153,33 @@ function decodeChangedFile(value: unknown, index: number): Decoded<ChangedFile> 
   });
 }
 
+function decodeWorkspaceRow(value: unknown, index: number): Decoded<WorkspaceRow> {
+  const where = `rows[${index}]`;
+  if (!isRecord(value)) return fail(`${where} must be an object`);
+  const branch = stringField(value, "branch", where);
+  if (!branch.ok) return branch;
+  const path = stringField(value, "path", where);
+  if (!path.ok) return path;
+  const isPrimary = value["isPrimary"];
+  if (typeof isPrimary !== "boolean") return fail(`${where}.isPrimary must be a boolean`);
+  const isActive = value["isActive"];
+  if (typeof isActive !== "boolean") return fail(`${where}.isActive must be a boolean`);
+  const raw = value["sessions"];
+  if (!Array.isArray(raw)) return fail(`${where}.sessions must be an array`);
+  const sessions: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string") return fail(`${where}.sessions must hold strings`);
+    sessions.push(entry);
+  }
+  return succeed({
+    branch: branch.value,
+    path: path.value,
+    isPrimary,
+    isActive,
+    sessions,
+  });
+}
+
 /** The one entry point for anything arriving from Swift. */
 export function decodeHostMessage(value: unknown): Decoded<HostMessage> {
   if (!isRecord(value)) return fail("message must be an object");
@@ -142,7 +189,27 @@ export function decodeHostMessage(value: unknown): Decoded<HostMessage> {
   switch (kind) {
     case "init": {
       const theme = decodeTheme(value["theme"]);
-      return theme.ok ? succeed({ kind: "init", theme: theme.value }) : theme;
+      if (!theme.ok) return theme;
+      const panel = value["panel"];
+      if (panel !== "diff" && panel !== "workspaces") {
+        return fail(`init.panel must be "diff" or "workspaces", got ${String(panel)}`);
+      }
+      return succeed({ kind: "init", theme: theme.value, panel });
+    }
+    case "workspaces": {
+      const repo = nullableStringField(value, "repo", "workspaces");
+      if (!repo.ok) return repo;
+      const error = nullableStringField(value, "error", "workspaces");
+      if (!error.ok) return error;
+      const raw = value["rows"];
+      if (!Array.isArray(raw)) return fail("workspaces.rows must be an array");
+      const rows: WorkspaceRow[] = [];
+      for (let index = 0; index < raw.length; index += 1) {
+        const row = decodeWorkspaceRow(raw[index], index);
+        if (!row.ok) return row;
+        rows.push(row.value);
+      }
+      return succeed({ kind: "workspaces", repo: repo.value, rows, error: error.value });
     }
     case "files": {
       const repo = nullableStringField(value, "repo", "files");

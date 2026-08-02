@@ -11,24 +11,30 @@
 import AppKit
 import CRuuahHost
 
+/// Runs `body` with a borrowed C string, or with NULL when there is nothing to lend.
+///
+/// `withCString` has no optional form, and the alternative -- a branch per optional
+/// argument -- doubles with each one. Two of them would already be four spawn sites
+/// that have to stay in step.
+private func withOptionalCString<R>(
+    _ value: String?, _ body: (UnsafePointer<CChar>?) -> R
+) -> R {
+    guard let value else { return body(nil) }
+    return value.withCString { body($0) }
+}
+
 func spawnHost(
     cols: UInt16, rows: UInt16, fontSize: Float, command: String?, autoDirection: Bool = false,
-    config: OpaquePointer? = nil
+    config: OpaquePointer? = nil, cwd: String? = nil
 ) -> OpaquePointer? {
     var host: OpaquePointer?
-    let result: RuuahHostResult
-    if let command {
-        result = command.withCString { pointer in
+    let result = withOptionalCString(command) { commandPointer in
+        withOptionalCString(cwd) { cwdPointer in
             var options = RuuahHostOptions(
-                cols: cols, rows: rows, font_size: fontSize, command: pointer,
-                auto_direction: autoDirection, config: config)
+                cols: cols, rows: rows, font_size: fontSize, command: commandPointer,
+                auto_direction: autoDirection, config: config, cwd: cwdPointer)
             return ruuah_host_spawn(&options, &host)
         }
-    } else {
-        var options = RuuahHostOptions(
-            cols: cols, rows: rows, font_size: fontSize, command: nil,
-            auto_direction: autoDirection, config: config)
-        result = ruuah_host_spawn(&options, &host)
     }
     guard result == RUUAH_HOST_SUCCESS, let host else {
         FileHandle.standardError.write(Data("spawn failed: \(result)\n".utf8))
@@ -298,9 +304,115 @@ func runPanelSmoke(webDir: String?, control: Bool) -> Int32 {
     return 0
 }
 
+/// Headless proof of the workspace layer (S5), against a real repository.
+///
+/// The assertion that carries the weight is the REFUSAL. `Worktrees.remove` never passes
+/// --force, so git declines to delete a worktree with uncommitted changes, and that is
+/// the one behaviour standing between this feature and destroying an agent's unpushed
+/// work. A remove that quietly succeeded on a dirty tree would look identical to a
+/// correct one from the outside: the session closes, the tab disappears, and the loss is
+/// discovered later. So the test dirties the tree, requires the removal to FAIL and the
+/// directory to survive, then cleans it and requires the same call to succeed.
+func runWorktreeSmoke() -> Int32 {
+    let base = NSTemporaryDirectory() + "ruuah-worktree-smoke-\(ProcessInfo.processInfo.processIdentifier)"
+    let root = base + "/repo"
+    try? FileManager.default.removeItem(atPath: base)
+    defer { try? FileManager.default.removeItem(atPath: base) }
+
+    func fail(_ message: String) -> Int32 {
+        FileHandle.standardError.write(Data("WORKTREE SMOKE FAILED: \(message)\n".utf8))
+        return 1
+    }
+
+    do {
+        try FileManager.default.createDirectory(
+            atPath: root, withIntermediateDirectories: true)
+    } catch {
+        return fail("could not create \(root): \(error)")
+    }
+    // A repository with one commit: `git worktree add` has nothing to point at otherwise.
+    for arguments in [
+        ["init", "--initial-branch=main"],
+        ["config", "user.email", "smoke@ruuah.local"],
+        ["config", "user.name", "ruuah smoke"],
+    ] {
+        let result = Git.run(arguments, in: root)
+        guard result.status == 0 else { return fail("git \(arguments[0]): \(result.err)") }
+    }
+    guard (try? "seed\n".write(toFile: root + "/seed.txt", atomically: true, encoding: .utf8))
+        != nil
+    else { return fail("could not seed the repository") }
+    for arguments in [["add", "-A"], ["commit", "-m", "seed"]] {
+        let result = Git.run(arguments, in: root)
+        guard result.status == 0 else { return fail("git \(arguments[0]): \(result.err)") }
+    }
+
+    // Create.
+    let branch = "smoke-workspace"
+    guard case .success(let worktree) = Worktrees.add(root: root, branch: branch) else {
+        return fail("worktree add did not succeed")
+    }
+    guard FileManager.default.fileExists(atPath: worktree.path) else {
+        return fail("worktree add reported success but \(worktree.path) does not exist")
+    }
+    // The sibling convention, asserted rather than assumed: a worktree nested inside its
+    // own parent's tree pollutes that parent's status forever.
+    guard !worktree.path.hasPrefix(root + "/") else {
+        return fail("the worktree landed INSIDE the repository: \(worktree.path)")
+    }
+
+    // List, through the real porcelain parser.
+    guard case .success(let trees) = Worktrees.list(containing: root) else {
+        return fail("worktree list did not succeed")
+    }
+    guard trees.first?.isPrimary == true else {
+        return fail("the first record must be the primary work tree")
+    }
+    guard let listed = trees.first(where: { $0.branch == branch }) else {
+        return fail("the new worktree is missing from the list: \(trees.map(\.label))")
+    }
+    guard !listed.isPrimary else { return fail("a secondary worktree was marked primary") }
+
+    // The refusal. This is the assertion the whole file exists for.
+    guard (try? "unsaved\n".write(
+        toFile: listed.path + "/work-in-progress.txt", atomically: true, encoding: .utf8)) != nil
+    else { return fail("could not dirty the worktree") }
+    let refused = Worktrees.remove(root: root, worktree: listed)
+    guard case .failure(let refusal) = refused else {
+        return fail(
+            "A DIRTY WORKTREE WAS REMOVED. This is the case that destroys unpushed work; "
+                + "remove() must never pass --force.")
+    }
+    guard FileManager.default.fileExists(atPath: listed.path) else {
+        return fail("removal reported failure but the directory is gone anyway")
+    }
+
+    // And the other direction, so the refusal above is not simply "remove never works".
+    try? FileManager.default.removeItem(atPath: listed.path + "/work-in-progress.txt")
+    guard case .success = Worktrees.remove(root: root, worktree: listed) else {
+        return fail("a clean worktree could not be removed either, so the refusal proves nothing")
+    }
+    guard !FileManager.default.fileExists(atPath: listed.path) else {
+        return fail("removal reported success but the directory survives")
+    }
+
+    // The primary is never removable, whatever the caller asks.
+    guard case .failure = Worktrees.remove(root: root, worktree: trees[0]) else {
+        return fail("the primary work tree was removed")
+    }
+
+    print(
+        "WORKTREE SMOKE OK: created \(listed.path), removal REFUSED while dirty "
+            + "(\(refusal.description.split(separator: "\n").first ?? "")), succeeded once clean")
+    return 0
+}
+
 let arguments = CommandLine.arguments
 if arguments.contains("--smoke") {
     exit(runSmoke())
+}
+if arguments.contains("--smoke-worktree") {
+    exit(runWorktreeSmoke())
 }
 if arguments.contains("--smoke-history") {
     exit(runHistorySmoke())

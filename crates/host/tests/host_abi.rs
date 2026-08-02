@@ -81,6 +81,7 @@ fn host_pixels_match_a_reference_renderer_fed_the_same_bytes() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     let result = unsafe { ruuah_host_spawn(&options, &mut host) };
@@ -145,6 +146,7 @@ fn a_refused_spawn_nulls_the_out_param() {
         command: ptr::null(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::dangling_mut();
     let result = unsafe { ruuah_host_spawn(&options, &mut host) };
@@ -169,6 +171,7 @@ fn a_host_that_skips_a_row_is_caught() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     let result = unsafe { ruuah_host_spawn(&options, &mut host) };
@@ -236,6 +239,7 @@ fn send_reaches_the_child_and_comes_back_as_pixels() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -298,6 +302,7 @@ fn auto_direction_reorders_a_hebrew_row_through_the_c_boundary() {
         command: command.as_ptr(),
         auto_direction: true,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     let result = unsafe { ruuah_host_spawn(&options, &mut host) };
@@ -372,6 +377,7 @@ fn a_paste_is_fenced_when_the_child_enabled_2004() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -412,6 +418,7 @@ fn a_paste_is_bare_when_the_child_did_not_enable_2004() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -456,6 +463,7 @@ fn a_click_is_reported_when_the_child_enabled_sgr_mouse() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -505,6 +513,7 @@ fn a_click_is_ignored_when_the_child_never_asked_for_mouse() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -544,6 +553,7 @@ fn a_wheel_becomes_arrows_on_the_alternate_screen() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -587,6 +597,7 @@ fn a_wheel_takes_the_application_form_under_decckm() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -624,6 +635,7 @@ fn a_wheel_on_the_primary_screen_is_the_embedders() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -662,6 +674,7 @@ fn a_key_takes_the_kitty_form_when_the_child_pushed_flags() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -698,6 +711,7 @@ fn a_key_takes_the_legacy_form_without_negotiation() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -828,6 +842,7 @@ fn a_theme_background_reaches_the_pixels_and_survives_a_resize() {
         command: command.as_ptr(),
         auto_direction: false,
         config,
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -868,6 +883,7 @@ fn a_null_config_keeps_the_builtin_scheme() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -963,6 +979,7 @@ fn osc133_rows_cross_the_c_surface_with_their_text() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -1040,6 +1057,7 @@ fn rows_without_osc133_all_read_as_output() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -1126,6 +1144,7 @@ fn a_live_font_size_change_reaches_the_polled_pixels() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -1195,6 +1214,7 @@ fn a_hyperlink_is_readable_at_its_cell_through_the_c_surface() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -1275,6 +1295,7 @@ fn host_events_cross_in_order_and_exactly_once() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -1370,6 +1391,7 @@ fn a_pwd_report_crosses_the_c_boundary_raw() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -1439,6 +1461,7 @@ fn a_dsr_reply_travels_back_down_the_pty() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -1508,6 +1531,7 @@ fn a_kitty_image_lands_as_pixels_through_the_c_surface() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -1609,6 +1633,7 @@ fn scrolling_through_the_c_surface_shows_scrollback_pixels() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -1685,6 +1710,7 @@ fn a_unicode_placeholder_reaches_the_polled_pixels() {
         command: command.as_ptr(),
         auto_direction: false,
         config: ptr::null(),
+        cwd: ptr::null(),
     };
     let mut host: *mut RuuahHost = ptr::null_mut();
     assert_eq!(
@@ -1814,4 +1840,93 @@ fn history_prefers_the_directory_a_command_was_run_in() {
 
     unsafe { ruuah_history_free(handle) };
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `RuuahHostOptions.cwd` actually places the child, and NULL actually does not.
+///
+/// Both directions in one test, because the failure mode is silent: a session spawned
+/// for a workspace whose cwd was quietly dropped starts in the wrong repository and
+/// still looks like a working terminal. The control is the same spawn with `cwd` NULL,
+/// which must land on this process's directory instead -- without it, a test running
+/// from inside the target directory would pass against a `cwd` that does nothing.
+///
+/// `pwd -P` rather than bare `pwd`: the builtin prefers the inherited `PWD` environment
+/// variable, which still names the PARENT's directory after `Command::current_dir`, so
+/// the plain form reports the wrong answer for a correct implementation.
+#[test]
+fn an_explicit_cwd_places_the_child_and_null_leaves_it_alone() {
+    let target = std::env::temp_dir().join(format!("ruuah-cwd-{}", std::process::id()));
+    std::fs::create_dir_all(&target).expect("target directory");
+    let target = std::fs::canonicalize(&target).expect("canonical target");
+    let here = std::fs::canonicalize(std::env::current_dir().expect("cwd")).expect("canonical cwd");
+    assert_ne!(target, here, "the control needs the two directories to differ");
+
+    let command = CString::new("pwd -P").expect("command");
+    let target_c = CString::new(target.to_str().expect("utf-8 target")).expect("cwd");
+
+    let first_row = |cwd: *const std::ffi::c_char| -> String {
+        let options = RuuahHostOptions {
+            cols: COLS,
+            rows: ROWS,
+            font_size: 0.0,
+            command: command.as_ptr(),
+            auto_direction: false,
+            config: ptr::null(),
+            cwd,
+        };
+        let mut host: *mut RuuahHost = ptr::null_mut();
+        assert_eq!(
+            unsafe { ruuah_host_spawn(&options, &mut host) },
+            RuuahHostResult::Success
+        );
+
+        // Drain until the child has exited and its last frame is drawn, so the row is
+        // final rather than whatever had arrived when we first looked.
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            let mut frame = empty_frame();
+            assert_eq!(
+                unsafe { ruuah_host_poll(host, &mut frame) },
+                RuuahHostResult::Success
+            );
+            if frame.child_exited && !frame.drew {
+                break;
+            }
+            assert!(Instant::now() < deadline, "child never settled");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let mut len = 0usize;
+        assert_eq!(
+            unsafe { ruuah_host_row_text(host, 0, 0, ptr::null_mut(), 0, &mut len) },
+            RuuahHostResult::Success
+        );
+        let mut buffer = vec![0u8; len];
+        assert_eq!(
+            unsafe { ruuah_host_row_text(host, 0, 0, buffer.as_mut_ptr(), len, &mut len) },
+            RuuahHostResult::Success
+        );
+        unsafe { ruuah_host_free(host) };
+        String::from_utf8_lossy(&buffer).trim().to_string()
+    };
+
+    let placed = first_row(target_c.as_ptr());
+    assert_eq!(
+        placed,
+        target.to_str().expect("utf-8 target"),
+        "an explicit cwd must place the child; the child reported {placed:?}"
+    );
+
+    let control = first_row(ptr::null());
+    assert_ne!(
+        control, placed,
+        "with cwd NULL the child must NOT land in the target, or the option proves nothing"
+    );
+    assert_eq!(
+        control,
+        here.to_str().expect("utf-8 cwd"),
+        "with cwd NULL the child inherits this process's directory"
+    );
+
+    std::fs::remove_dir_all(&target).ok();
 }

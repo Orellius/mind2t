@@ -47,14 +47,22 @@ final class Session {
     private(set) var viewportOffset = 0
     private(set) var exited = false
 
+    /// The workspace (S5 worktree) this session belongs to, or nil for an ordinary
+    /// session in whatever directory it opened. Purely a label plus the directory the
+    /// session was PLACED in; the live cwd still comes from OSC 7, because the child is
+    /// free to walk away from where it started.
+    let workspace: String?
+
     init?(
         command: String?, cols: UInt16, rows: UInt16, fontSize: Float, autoDirection: Bool,
-        config: OpaquePointer? = nil, title: String
+        config: OpaquePointer? = nil, title: String, cwd: String? = nil,
+        workspace: String? = nil
     ) {
+        self.workspace = workspace
         guard
             let host = spawnHost(
                 cols: cols, rows: rows, fontSize: fontSize, command: command,
-                autoDirection: autoDirection, config: config)
+                autoDirection: autoDirection, config: config, cwd: cwd)
         else { return nil }
         self.host = host
         self.cols = cols

@@ -122,6 +122,14 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         view.layer?.addSublayer(view.contentLayer)
         view.contentLayer.contentsScale = window.backingScaleFactor
         view.contentLayer.magnificationFilter = .nearest
+        // A frame is NEVER scaled to fit its layer. The default gravity is `.resize`,
+        // which stretches whatever was last drawn across the new bounds -- so during a
+        // resize, before the pty has caught up, the terminal renders as soft, oversized
+        // glyphs with the previous frame's edges smeared over the gap. Anchoring at the
+        // top-left leaves a stale frame at its true pixel size with the background
+        // showing past it, which is what every terminal does mid-drag and reads as
+        // "not repainted yet" instead of "broken". (Operator-reported, 2026-08-02.)
+        view.contentLayer.contentsGravity = .topLeft
 
         // Standalone CALayers implicitly ANIMATE property changes -- a 0.25s crossfade on
         // every `contents` swap. At a 60 Hz blit the overlapping fades read as typing at
@@ -694,9 +702,35 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             width: CGFloat(cellW) / device, height: CGFloat(cellH) / device)
     }
 
+    /// Re-lays the chrome on every resize step.
+    ///
+    /// REGRESSION FIXED HERE (found by the operator, 2026-08-02, the same day S5.5
+    /// shipped): the chrome used to be laid out ONCE and kept correct during a resize by
+    /// autoresizing masks. S5.5 removed those masks -- correctly, because `.width` on the
+    /// pane stretches it straight under a docked sidebar -- and did not put anything back
+    /// in their place, so the pane and sidebar simply kept their old frames while the
+    /// window moved around them. The masks were half of a mechanism and only half was
+    /// replaced.
+    ///
+    /// Fires continuously through a live resize, which is what the frames need. The pty
+    /// deliberately does NOT follow at this rate; that stays at end-of-resize below.
+    func windowDidResize(_ notification: Notification) {
+        layoutChrome()
+        // A drag is throttled to its end (below) because resizing the pty per step spams
+        // SIGWINCH at the child. Everything else -- zoom, full screen, tiling, an
+        // accessibility client setting the size -- produces no live-resize session at
+        // all, so `windowDidEndLiveResize` never fires and the pty would keep the old
+        // grid indefinitely. Found by resizing through the accessibility API while
+        // verifying the fix above, which is exactly the case that does not fire.
+        if !view.inLiveResize {
+            refitAll()
+        }
+    }
+
     func windowDidEndLiveResize(_ notification: Notification) {
-        guard let session = activeSession else { return }
-        fitToPane(session)
+        // Every session, not just the active one: a background session that missed the
+        // resize repaints at the old geometry the moment it is activated.
+        refitAll()
     }
 
     func windowWillClose(_ notification: Notification) {

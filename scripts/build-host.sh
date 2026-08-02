@@ -70,6 +70,7 @@ EXPECTED=(
   ruuah_history_free
   ruuah_history_append
   ruuah_history_suggest
+  ruuah_cwd_path
   ruuah_workflows_load
   ruuah_workflows_free
   ruuah_workflows_count
@@ -83,6 +84,7 @@ EXPECTED=(
   ruuah_config_auto_direction
   ruuah_config_shell
   ruuah_config_reports
+  ruuah_config_panels
   ruuah_config_font_family
   ruuah_config_error
   ruuah_config_free

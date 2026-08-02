@@ -33,6 +33,57 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
+**S6 web panels, `[tested]` through the C surface and the bridge, 2026-08-02
+(`s6-web-panel`).** The app grew its first WKWebView panel: a React + TS diff
+review card (changed files, unified diff with both line-number gutters) over the
+active session's repository, opened with cmd+shift+D or the palette's "Review
+Changes". **Off unless `panels = true` in `config.toml`.**
+
+The architectural line, and the reason this is not a Tauri rewrite. Orel asked
+about wrapping RUUAH the way `simion/termic` wraps a terminal (Tauri 2 + React 19
++ **xterm.js**, AGPL-3.0). xterm.js carries its OWN VT parser and screen model
+and consumes bytes rather than grids, so putting it in front of this core runs
+two terminal emulators and bypasses ours entirely; 604 tests, difftest and
+esctest would all be measuring code nothing calls. Blitting our RGBA into a
+canvas instead is worse (1120x700 at 2x is 12.5 MB a frame). So: **the terminal
+surface stays native, and only document-shaped panels get a browser engine.** No
+terminal pixels, no pty-bound keystrokes and no frame data cross into a webview.
+
+Rules this slice fixed in place:
+
+- **Exactly one percent-decoder.** Swift needed the session's cwd to run git in
+  it, and the decode already existed in Rust, so it got a C export
+  (`ruuah_cwd_path`, reusing `cwd::normalize`) rather than a second
+  implementation in another language. Exports 50 to 52.
+- **The panel document is one self-contained file** (`vite-plugin-singlefile`),
+  loaded from `file://` with a navigation policy that refuses everything else.
+  Nothing resolves subresources, so the read-access grant has no blast radius.
+- **The advertised file list is the allowed set.** A `requestDiff` for a path the
+  host never sent is refused instead of handed to git.
+- **`Git.swift` never mutates a repository**, and that boundary is deliberate.
+- **git runs off the main thread** and both pipes are drained before `waitUntilExit`;
+  draining after would deadlock past the 64 KiB pipe buffer, which any real diff
+  passes at once.
+
+Two defects the harness caught on first contact, both of the silent kind:
+
+- **The control passed VACUOUSLY on run one.** `--smoke-panel-control` loads the
+  same document with `window.__ruuahReceive` stripped and must not answer the
+  probe. It "passed" while a navigation-policy bug (URL equality against a
+  symlink-resolved path, `/tmp` vs `/private/tmp`) was refusing the document
+  outright, so no nonce came back for a reason that had nothing to do with the
+  bridge. The control now also demands the document loaded and mounted.
+- **`didFinish` is not "the script ran".** The bundle is an ES module and module
+  scripts are deferred, so WebKit reports the navigation finished before
+  `window.__ruuahReceive` exists, and delivering to it throws "undefined is not a
+  function". The queued messages now flush on the panel's own `ready`, which
+  cannot arrive before its bridge module by construction.
+
+Gates: **604 tests / difftest 207/207 / esctest 373 pinned / exports 14 + 52 /
+Swift smoke / panel bridge smoke + control**. The panel's LOOK is
+`[untested - needs your eyes]` (SCAR-014: aesthetics are Orel's verdict).
+
+
 **cwd-keyed ghost history, 2026-07-31 (`s4-cwd-history`).** History entries carry the
 directory they ran in; a suggestion PREFERS a match from the current directory and falls
 back to the newest match anywhere (fish's rule -- requiring the directory would make the

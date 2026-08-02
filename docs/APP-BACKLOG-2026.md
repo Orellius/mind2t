@@ -145,7 +145,50 @@ itself, the same way it already emits the OSC 133 marks - which is good news
 for the consumer slice, because it means the reported format is ours to fix
 (`file://$HOST$PWD`, percent-encoded) rather than something to sniff.
 
-**S5 - Worktree workspaces (the Superset/convoy shape).** "New workspace" =
+**S5 - Worktree workspaces. v1 DONE 2026-08-02** (`s5-worktree-workspaces`):
+"New Workspace" in the palette creates a git worktree beside the repository
+and opens a session placed in it; the tab pill carries the branch. "Close
+Workspace" closes the session and OFFERS to remove the worktree.
+
+Three things this settled.
+
+**`RuuahHostOptions` grew `cwd`.** Placing a session used to mean
+`command = "cd X && exec zsh"`, which breaks on quoting and, as the live tap
+proved, silently loses to any configured shell line that contains its own cd.
+The option is applied last so it beats the home default. Boundary, documented
+at the code site: it sets where the child STARTS, and an explicit command is
+still free to walk away from it.
+
+**This file mutates repositories, and it is the only one that does.** S6's
+`Git.swift` states the opposite for itself and means it. `Worktrees.remove`
+NEVER passes `--force`: git refuses to delete a worktree holding uncommitted
+changes, and that refusal is the feature, because the whole premise of a
+workspace is that an agent is working in it. The refusal is surfaced verbatim,
+never retried. `--smoke-worktree` asserts exactly this - dirty tree must
+survive removal, clean tree must not - and the mutant (adding `--force`) was
+seen to fail it.
+
+**Worktrees are SIBLINGS**, at `<repo>-worktrees/<branch>`, matching the
+convention already in use by hand on this machine. Never nested inside the
+repository: a worktree under its own parent's tree pollutes that parent's
+`git status` forever. Asserted in the smoke, not assumed.
+
+Deliberately not in v1: launching a CLI agent into a new workspace
+automatically, and grouping the strip into rows. The pill prefix groups by eye,
+which is the smaller change now that the sidebar the original sketch assumed
+was replaced by the top strip on 2026-07-30.
+
+**S5.5 - Workspace sidebar (NEXT, Orel 2026-08-02).** The tab strip's
+right-hand button is decoration today, copied 1:1 from the Warp reference. It
+becomes a docked sidebar listing worktrees, their sessions, and their changed
+files - the S5 surface that is currently missing, reusing S6's git layer. A
+file tree can hang off it later, with clicking a file opening the read-only
+syntax-highlighted viewer, which keeps the "viewing code" boundary below
+intact. The real cost is not the content: a DOCKED panel shrinks the grid, so
+the pty resizes on toggle and the reflow has to be right. Editing files stays
+out (see "Deliberately NOT taken"); reversing that is a separate decision.
+
+Original sketch: "New workspace" =
 create a git worktree of the current repo + spawn a session (optionally
 launching a CLI agent - claude, codex) inside it. Sidebar groups sessions by
 workspace; closing a workspace offers to remove the worktree. This is

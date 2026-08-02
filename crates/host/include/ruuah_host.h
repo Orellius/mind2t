@@ -72,6 +72,12 @@ typedef struct {
    * settings are read through the ruuah_config_* getters instead, because the embedder
    * owns their precedence (CLI flags, Retina scaling). */
   const RuuahConfig *config;
+  /* Working directory for the child, or NULL for the default (home for an interactive
+   * shell, the caller's cwd for an explicit command). A path that does not exist is
+   * IGNORED rather than fatal: a bad cwd surfaces from exec as a bare ENOENT that looks
+   * exactly like a missing shell, and a workspace whose directory vanished should still
+   * open somewhere usable. S5 workspaces set this to a worktree. */
+  const char *cwd;
 } RuuahHostOptions;
 
 /* One rendered frame, filled by ruuah_host_poll. */

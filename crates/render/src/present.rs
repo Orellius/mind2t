@@ -184,39 +184,65 @@ impl Blitter {
         clear: wgpu::Color,
         origin: (u32, u32),
     ) {
-        surface.flush();
+        self.blit_all(&mut [(surface, origin)], target, clear);
+    }
 
+    /// Draws SEVERAL surfaces into one target: one clear, one pass, one submit.
+    ///
+    /// This is the whole of B3's compositing, and the reason it is not a loop over [`blit`] is a
+    /// silent failure: that method's pass CLEARS the target on entry, so N calls leave only the
+    /// last pane on screen and the rest are erased by the neighbour drawn after them. Nothing
+    /// errors, and a two-pane window shows one pane and a field of clear colour - which reads as
+    /// "the second terminal did not start" rather than as a compositing bug.
+    ///
+    /// Panes are drawn in order and are expected to be disjoint; the layout tree above is what
+    /// guarantees that, and where they do overlap the later one wins, which is ordinary painter's
+    /// order rather than a special case.
+    pub fn blit_all(
+        &self,
+        panes: &mut [(&mut GpuSurface, (u32, u32))],
+        target: &wgpu::TextureView,
+        clear: wgpu::Color,
+    ) {
         let device = self.context.device();
 
-        let bounds = Bounds {
-            width: crate::surface::Surface::width(surface),
-            height: crate::surface::Surface::height(surface),
-            origin_x: origin.0,
-            origin_y: origin.1,
-        };
-        let uniform = wgpu::util::DeviceExt::create_buffer_init(
-            device,
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("blit bounds"),
-                contents: bytemuck::bytes_of(&bounds),
-                usage: wgpu::BufferUsages::UNIFORM,
-            },
-        );
+        // Every surface is flushed BEFORE any bind group is built. Flushing inside the draw loop
+        // would be correct too, but this keeps the GPU work of the panes together and the CPU
+        // work of recording them together, which is what makes the whole frame one submit.
+        let mut bind_groups = Vec::with_capacity(panes.len());
+        for (surface, origin) in panes.iter_mut() {
+            surface.flush();
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ruuah-vt blit"),
-            layout: &self.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: surface.pixel_buffer().as_entire_binding(),
+            let bounds = Bounds {
+                width: crate::surface::Surface::width(*surface),
+                height: crate::surface::Surface::height(*surface),
+                origin_x: origin.0,
+                origin_y: origin.1,
+            };
+            let uniform = wgpu::util::DeviceExt::create_buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("blit bounds"),
+                    contents: bytemuck::bytes_of(&bounds),
+                    usage: wgpu::BufferUsages::UNIFORM,
                 },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: uniform.as_entire_binding(),
-                },
-            ],
-        });
+            );
+
+            bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("ruuah-vt blit"),
+                layout: &self.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: surface.pixel_buffer().as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: uniform.as_entire_binding(),
+                    },
+                ],
+            }));
+        }
 
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("blit") });
@@ -247,10 +273,12 @@ impl Blitter {
                 occlusion_query_set: None,
             });
             pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
-            // One oversized triangle rather than two: no vertex buffer, and no seam down the
-            // diagonal where two triangles would meet.
-            pass.draw(0..3, 0..1);
+            for bind_group in &bind_groups {
+                pass.set_bind_group(0, bind_group, &[]);
+                // One oversized triangle rather than two: no vertex buffer, and no seam down the
+                // diagonal where two triangles would meet.
+                pass.draw(0..3, 0..1);
+            }
         }
         self.context.queue().submit(Some(encoder.finish()));
     }
@@ -479,6 +507,50 @@ impl WindowTarget {
             ..Default::default()
         });
         self.blitter.blit(surface, &view, clear, self.origin);
+        frame.present();
+        Ok(())
+    }
+
+    /// Presents SEVERAL surfaces as one frame, each at its own origin.
+    ///
+    /// The window's own `origin` is not used here: with one terminal it is what reserves the
+    /// chrome strip, but with a layout tree every pane's position comes from its rect, and the
+    /// strip is already accounted for in those rects. Two sources for one number is how a pane
+    /// ends up offset by exactly the strip height.
+    ///
+    /// One acquire, one clear, one present, however many panes. Calling [`present`] per pane
+    /// would acquire and present N times for a single frame - which is not tiling, it is N
+    /// frames racing to the display, and it looks like tearing rather than like a bug.
+    pub fn present_all(
+        &mut self,
+        panes: &mut [(&mut GpuSurface, (u32, u32))],
+        clear: [u8; 4],
+    ) -> Result<(), PresentError> {
+        let clear = wgpu::Color {
+            r: f64::from(clear[0]) / 255.0,
+            g: f64::from(clear[1]) / 255.0,
+            b: f64::from(clear[2]) / 255.0,
+            a: f64::from(clear[3]) / 255.0,
+        };
+        let frame = match self.surface.get_current_texture() {
+            Ok(frame) => frame,
+            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                let view_formats = if self.config_format == self.view_format {
+                    Vec::new()
+                } else {
+                    vec![self.view_format]
+                };
+                self.configure(&view_formats);
+                return Ok(());
+            }
+            Err(error) => return Err(PresentError::Acquire(error.to_string())),
+        };
+
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(self.view_format),
+            ..Default::default()
+        });
+        self.blitter.blit_all(panes, &view, clear);
         frame.present();
         Ok(())
     }

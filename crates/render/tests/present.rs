@@ -64,7 +64,18 @@ fn blit_into(
     // occupies, and a distinctive clear would not change those bytes. The margin colour is
     // the window's concern and is judged on screen.
     blitter.blit(surface, &view, clear, origin);
+    read_back(context, &texture, target_width, target_height)
+}
 
+/// Copies a render target back to the CPU. Test scaffolding only - the real present path never
+/// copies anything back, and `presenting_a_frame_never_copies_it_back_to_the_cpu` pins that.
+fn read_back(
+    context: &GpuContext,
+    texture: &wgpu::Texture,
+    target_width: u32,
+    target_height: u32,
+) -> Vec<u8> {
+    let device = context.device();
     let bytes_per_row = target_width * 4;
     assert_eq!(bytes_per_row % 256, 0, "the test width must keep rows aligned");
     let size = (bytes_per_row * target_height) as u64;
@@ -79,7 +90,7 @@ fn blit_into(
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
     encoder.copy_texture_to_buffer(
         wgpu::TexelCopyTextureInfo {
-            texture: &texture,
+            texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
@@ -237,6 +248,75 @@ fn presenting_a_frame_never_copies_it_back_to_the_cpu() {
 /// window, under the chrome, so the child's first rows are covered and everything below them
 /// looks normal. Nothing errors and no colour is wrong; only the placement is.
 ///
+/// Two panes, side by side, in one frame - B3's whole compositing claim.
+///
+/// The failure this exists to catch is silent and is the obvious implementation: blitting each
+/// pane with its own render pass CLEARS the target every time, so only the last pane survives
+/// and the window shows one terminal beside a field of clear colour. That reads as "the second
+/// session never started", which is a day of debugging the wrong layer.
+///
+/// So the assertion is that BOTH panes are present in the same frame, each identified by its own
+/// corner pixel, plus the gap between them still holding the clear colour - because two panes
+/// that tile correctly and two panes that overlap by a column are otherwise identical at a
+/// glance, and the second one silently hides a column of somebody's output.
+#[test]
+fn two_panes_land_side_by_side_in_one_frame() {
+    const PANE: u32 = 24;
+    const GAP: u32 = 4;
+    const RIGHT: u32 = PANE + GAP;
+
+    let context = GpuContext::new().expect("a GPU");
+    let mut left = GpuSurface::with_context(context.clone(), PANE, HEIGHT).expect("left");
+    let mut right = GpuSurface::with_context(context.clone(), PANE, HEIGHT).expect("right");
+
+    // Each pane is a flat field with a distinct corner pixel: the field says "this pane drew",
+    // the corner says "it drew HERE". A field alone cannot tell placement from size.
+    left.fill(0, 0, PANE, HEIGHT, [200, 40, 10, 255]);
+    left.fill(0, 0, 1, 1, [255, 255, 255, 255]);
+    right.fill(0, 0, PANE, HEIGHT, [10, 60, 220, 255]);
+    right.fill(0, 0, 1, 1, [0, 0, 0, 255]);
+
+    let clear = wgpu::Color { r: 0.0, g: 1.0, b: 0.0, a: 1.0 };
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let blitter = Blitter::new(&context, format).expect("a non-sRGB target is accepted");
+    let device = context.device();
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("two pane target"),
+        size: wgpu::Extent3d { width: WIDTH, height: HEIGHT, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    blitter.blit_all(&mut [(&mut left, (0, 0)), (&mut right, (RIGHT, 0))], &view, clear);
+    let target = read_back(&context, &texture, WIDTH, HEIGHT);
+
+    let pixel = |x: u32, y: u32| {
+        let at = ((y * WIDTH + x) * 4) as usize;
+        [target[at], target[at + 1], target[at + 2], target[at + 3]]
+    };
+
+    assert_eq!(pixel(0, 0), [255, 255, 255, 255], "the left pane's corner is missing");
+    assert_eq!(pixel(1, 0), [200, 40, 10, 255], "the left pane's field is missing");
+    assert_eq!(
+        pixel(RIGHT, 0),
+        [0, 0, 0, 255],
+        "the right pane's corner is missing - a per-pane clear erases every pane but the last"
+    );
+    assert_eq!(pixel(RIGHT + 1, 0), [10, 60, 220, 255], "the right pane's field is missing");
+
+    for x in PANE..RIGHT {
+        assert_eq!(
+            pixel(x, 0),
+            [0, 255, 0, 255],
+            "the gap at x={x} holds pane pixels; the panes overlap instead of tiling"
+        );
+    }
+}
+
 /// Two assertions, and the first is what makes the second mean anything: the pixel AT the
 /// origin must be the surface's first pixel (with origin ignored it would be the surface's
 /// pixel at the origin's coordinates instead, which the asymmetric fixture makes a different

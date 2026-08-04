@@ -13,6 +13,9 @@
 
 pub mod host;
 pub mod key;
+/// macOS virtual keycodes, generated. See its module card before editing (do not).
+#[cfg(target_os = "macos")]
+pub mod keycode;
 pub mod mouse;
 pub mod paste;
 

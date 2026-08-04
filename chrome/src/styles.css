@@ -1,0 +1,66 @@
+/* The chrome is a STRIP, not a page.
+ *
+ * `background: transparent` on html and body is load-bearing: the terminal is a GPU surface
+ * behind this webview, and an opaque page would hide it completely while looking like a
+ * perfectly good window. The strip's own bar is the only thing allowed to be opaque. */
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  color: #e8e8ef;
+  font: 12px/1.4 ui-monospace, Menlo, monospace;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  height: 100%;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 100%;
+  padding: 0 14px;
+  box-sizing: border-box;
+  background: rgba(16, 16, 22, 0.94);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  /* The strip is a title bar in spirit: dragging it should move the window, and selecting its
+   * text should not happen by accident. */
+  user-select: none;
+}
+
+.brand {
+  font-weight: 600;
+  letter-spacing: 0.09em;
+}
+
+.cwd {
+  color: #a7a7b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.grid {
+  margin-left: auto;
+  color: #a7a7b8;
+  font-variant-numeric: tabular-nums;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #35c46a;
+  box-shadow: 0 0 0 3px rgba(53, 196, 106, 0.16);
+}
+
+.dot[data-exited="true"] {
+  background: #d64545;
+  box-shadow: 0 0 0 3px rgba(214, 69, 69, 0.16);
+}

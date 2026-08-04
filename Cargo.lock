@@ -81,6 +81,7 @@ name = "bindary"
 version = "0.1.0"
 dependencies = [
  "muda",
+ "objc2-app-kit",
  "ruuah-vt-host",
  "ruuah-vt-pty",
  "ruuah-vt-render",

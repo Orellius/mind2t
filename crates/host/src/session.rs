@@ -18,6 +18,7 @@
 use std::process::Command;
 
 use ruuah_vt_frame::{Frame, FrameReader};
+use ruuah_vt_pty::key::{KeyOptions, OptionAsAlt};
 use ruuah_vt_pty::{Geometry, Host, Options, SpawnError};
 use ruuah_vt_render::{
     CellMetrics, FontStack, GpuContext, GpuSurface, PresentError, Renderer, WindowTarget,
@@ -117,6 +118,46 @@ impl Session {
     pub fn attach(&mut self, window: WindowTarget) {
         self.window = Some(window);
         self.drawn_generation = 0;
+    }
+
+    /// The last frame read, for a caller that needs terminal STATE rather than pixels.
+    ///
+    /// Read-only on purpose: everything a host asks of it - which modes are on, how big the
+    /// grid is, what a row says - is a question, and the answers all come from the pump's
+    /// published frame rather than from anything the host is allowed to change.
+    pub fn frame(&self) -> &Frame {
+        &self.frame
+    }
+
+    /// The key encoder's options, derived from the modes the CHILD has actually entered.
+    ///
+    /// This is the difference between arrows that work inside `vim` and arrows that do not.
+    /// DECCKM, DECKPAM, 1035, 1036, xterm modifyOtherKeys and the kitty flags are all terminal
+    /// state, so a host that hardcodes the defaults encodes correctly right up until a program
+    /// asks for something else - and then sends `ESC [ A` where `ESC O A` was expected, which
+    /// looks like a broken key rather than a wrong mode.
+    ///
+    /// The one field NOT derived is `macos_option_as_alt`: that is operator policy, not terminal
+    /// state, so it stays at the caller's default and the caller overrides it.
+    pub fn key_options(&self) -> KeyOptions {
+        KeyOptions {
+            cursor_key_application: self.frame.cursor_keys(),
+            keypad_key_application: self.frame.keypad_keys(),
+            ignore_keypad_with_numlock: self.frame.ignore_keypad_with_numlock(),
+            alt_esc_prefix: self.frame.alt_esc_prefix(),
+            modify_other_keys_state_2: self.frame.modify_other_keys_2(),
+            kitty_flags: self.frame.kitty_key_flags(),
+            macos_option_as_alt: OptionAsAlt::False,
+            backarrow_key_mode: false,
+        }
+    }
+
+    /// Whether the child asked for bracketed paste (DEC 2004).
+    ///
+    /// Pasting without the fences into a shell that wanted them is how a multi-line paste
+    /// executes itself line by line instead of arriving as one edit.
+    pub fn bracketed_paste(&self) -> bool {
+        self.frame.bracketed_paste()
     }
 
     /// Places the terminal's top-left inside the window, in PHYSICAL pixels.

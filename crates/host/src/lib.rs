@@ -677,10 +677,25 @@ pub unsafe extern "C" fn ruuah_host_present(host: *mut RuuahHost) -> RuuahHostRe
         return RuuahHostResult::InvalidValue;
     }
     let host = unsafe { &mut *host };
-    let Some(window) = host.window.as_mut() else {
+    if host.window.is_none() {
         return RuuahHostResult::InvalidValue;
+    }
+    // The margin colour, resolved exactly the way the polled frame reports it: from the
+    // top-left cell's STYLE, falling back to the palette default. A grid rounds to whole
+    // cells, so the window is almost never an exact multiple of the surface and the
+    // remainder is visible - clearing it to black while the terminal renders on 0x0d0d0d
+    // draws a hard band down the edge.
+    let clear = {
+        let palette = host.renderer.palette();
+        if host.frame.is_valid() {
+            let style = host.frame.style(host.frame.cell(0, 0).style_id());
+            palette.draw(&style).background
+        } else {
+            palette.default_background
+        }
     };
-    match window.present(host.renderer.surface_mut()) {
+    let window = host.window.as_mut().expect("checked above");
+    match window.present(host.renderer.surface_mut(), clear) {
         Ok(()) => RuuahHostResult::Success,
         Err(_) => RuuahHostResult::RenderFailed,
     }

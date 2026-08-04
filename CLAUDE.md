@@ -643,10 +643,12 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
 
 - **BINDARY'S GATE IS `scripts/smoke-bindary.sh`, AND IT NEEDS NO SCREEN.** Orel's standing order
   (2026-08-04) while he works in parallel sessions: no windows on his display, no synthetic
-  input. The script runs the real Tauri host with its window ordered out and asserts eight
-  invariants about what AppKit, WebKit and the IPC actually did, exit code and all. Run it before
-  committing anything under `crates/bindary`. Four Tauri traps it pins, each of which presents as
-  a blank chrome strip and none of which errors:
+  input. The script runs the real Tauri host with its window ordered out and asserts **twelve**
+  invariants about what AppKit, WebKit, the IPC and the CHILD actually did, exit code and all.
+  Run it before committing anything under `crates/bindary`. It ends as soon as it has collected
+  everything (about 3.5s of run time), and burns its 20s ceiling only when something is wrong.
+  Four Tauri traps it pins, each of which presents as a blank chrome strip and none of which
+  errors:
   1. a `devUrl` in `tauri.conf.json` sends every webview to a dev server in debug builds,
      whatever else the config says - there is deliberately none;
   2. a child webview created before `app.run` never navigates at all;
@@ -656,9 +658,29 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   The chrome is embedded at COMPILE time from `chrome/dist`, so a stale bundle ships silently;
   the script rebuilds it first. `chrome/dist` and `crates/bindary/gen` are gitignored, like
   `web/dist`.
+- **THE GATE DRIVES THE SESSION, NEVER APPKIT - AND THAT BOUNDARY IS THE HONEST PART** (B2.5).
+  Four of the twelve invariants exercise a real child: a directory report, a paste, and a wheel
+  scroll with its stillness control. All three are driven through `Session`, because
+  synthesizing a cmd+V or a wheel event would put input into whatever the operator is doing on
+  this machine. What that leaves untested is the AppKit half - the monitor's event mask, the
+  keycode match for the chord, the pointer-versus-strip test - and it is a live tap, not a
+  covered path. Say "tested through the session" and name the seam (SCAR-014).
+- **A GATE THAT WAITS ON A SHELL MUST HOLD THE SHELL STILL.** Two measurements, both of which
+  turned a correct implementation red first:
+  1. **zsh re-reports its own directory from `precmd`**, so a synthetic OSC 7 report is replaced
+     within milliseconds of the command ending. Reading the session's cwd at the END of a run
+     finds the repository, correctly and uselessly. The gate records the SEQUENCE of directories
+     and asks whether the probe's value ever appeared, and it holds the child inside a long
+     `sleep` so the strip can be read while the value is still current.
+  2. A returning prompt changes the grid **with no input**, which breaks the "nothing else moved"
+     control of the scroll check for reasons that have nothing to do with scrolling. The same
+     long sleep is what keeps that window quiet.
 - **The tao + wry host survives as `cargo run --bin probe`**, on the same rule that keeps the
   Swift host alive: a port with no reference is a rewrite with extra steps. Retire it when the
-  Tauri host reaches parity.
+  Tauri host reaches parity. It no longer carries its own paste: `bindary::clipboard` is the one
+  implementation both hosts call, and the split inside it is deliberate - `paste_text` takes the
+  text as an argument so a gate can drive the whole encode-and-send path with a fixture and
+  never read, let alone disturb, the operator's real clipboard.
 
 - **EVERY SIZE THIS RENDERER TOUCHES IS A DEVICE PIXEL, AND THE FONT SIZE IS THE ONE PEOPLE
   FORGET.** A host builds the session at `font_size * scale_factor`, never at the point size.

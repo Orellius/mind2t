@@ -26,7 +26,7 @@
 //! that is left. Overlapping instead would look identical at a glance and permanently hide the
 //! child's top rows - which is precisely the class of defect B1 kept producing.
 
-use bindary::keys;
+use bindary::{clipboard, keys};
 
 use std::process::Command;
 use std::sync::Arc;
@@ -110,34 +110,6 @@ fn grid_for(width: u32, height: u32, strip: u32, cell_width: u32, cell_height: u
 fn shell() -> Command {
     let path = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     Command::new(path)
-}
-
-/// Sends the clipboard to the child, fenced when the child asked for fences.
-///
-/// The fences are not cosmetic: without DEC 2004 bracketing, a shell receiving a multi-line
-/// paste executes each line as it arrives instead of taking the whole thing as one edit, which
-/// is how a pasted script runs half of itself. Whether to fence is the CHILD's decision, read
-/// from the frame rather than configured here.
-fn paste(session: &Session) {
-    let Some(text) = clipboard_text() else {
-        return;
-    };
-    let bytes = ruuah_vt_pty::paste::encode(text.as_bytes(), session.bracketed_paste());
-    if let Err(error) = session.send(&bytes) {
-        eprintln!("bindary: paste failed: {error:?}");
-    }
-}
-
-/// The general pasteboard's string, or `None` when it holds something else (an image, a file).
-///
-/// Reached through `objc2-app-kit`, which is already in the tree under wry and muda, so this
-/// costs a direct dependency and no new package.
-#[cfg(target_os = "macos")]
-fn clipboard_text() -> Option<String> {
-    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
-    let pasteboard = NSPasteboard::generalPasteboard();
-    let value = unsafe { pasteboard.stringForType(NSPasteboardTypeString) };
-    value.map(|string| string.to_string())
 }
 
 fn main() {
@@ -251,7 +223,7 @@ fn main() {
                     // cmd+V is intercepted BEFORE encoding: the clipboard is the host's to read,
                     // and the child must receive the text, not the chord.
                     if modifiers.super_key() && event.physical_key == KeyCode::KeyV {
-                        paste(&session);
+                        clipboard::paste(&session);
                         return;
                     }
                     // The options come from the SESSION every press, because the child changes

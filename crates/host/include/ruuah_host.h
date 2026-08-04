@@ -362,6 +362,39 @@ const char *ruuah_config_error(const RuuahConfig *config);
 /* Frees a config handle. NULL is a no-op. Strings lent by the getters die here. */
 void ruuah_config_free(RuuahConfig *config);
 
+/* ---- Presenting into a window (macOS) -------------------------------------------
+ *
+ * Without a layer attached, ruuah_host_poll copies the finished frame back across the
+ * bus and lends it through RuuahHostFrame.pixels, and the embedder draws it. That copy
+ * is a whole frame - 12.5 MB at 2240x1400 - on every draw.
+ *
+ * With a layer attached the frame is drawn straight into the window's swapchain on the
+ * GPU and NEVER crosses to the CPU: RuuahHostFrame.pixels stays NULL, and the embedder
+ * calls ruuah_host_present instead of building an image. Detaching restores the old
+ * behaviour on the next poll, so the two paths can be compared against each other.
+ *
+ * All sizes here are PHYSICAL pixels (layer.drawableSize), never points. Passing points
+ * on a Retina display configures a half-resolution swapchain, which looks soft rather
+ * than broken. */
+
+/* Attaches a CAMetalLayer. The layer must outlive the host or be removed with
+ * ruuah_host_detach_layer first. Returns RENDER_FAILED rather than degrading when the
+ * rasterizing adapter cannot drive that window or the window offers no usable format. */
+RuuahHostResult ruuah_host_attach_layer(
+    RuuahHost *host, void *layer, uint32_t width, uint32_t height);
+
+/* Drops the window. The next poll fills RuuahHostFrame.pixels again. */
+RuuahHostResult ruuah_host_detach_layer(RuuahHost *host);
+
+/* Reconfigures the swapchain after the layer's drawableSize changed. */
+RuuahHostResult ruuah_host_resize_layer(RuuahHost *host, uint32_t width, uint32_t height);
+
+/* Draws the current frame into the window and presents it. Separate from poll on
+ * purpose: poll advances the terminal, present puts a frame on screen, and an embedder
+ * drives them at different rates - a resize presents without polling, and a quiet
+ * terminal polls without needing to present. INVALID_VALUE when no layer is attached. */
+RuuahHostResult ruuah_host_present(RuuahHost *host);
+
 #ifdef __cplusplus
 }
 #endif

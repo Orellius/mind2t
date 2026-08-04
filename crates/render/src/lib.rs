@@ -42,7 +42,7 @@ pub use canvas::Canvas;
 pub use color::{Drawn, Palette, Rgba};
 pub use font::{CellMetrics, FontError, FontStack, Resolved};
 pub use gpu::{GpuContext, GpuError, GpuSurface};
-pub use present::{Blitter, PresentError};
+pub use present::{Blitter, PresentError, WindowTarget};
 pub use renderer::Renderer;
 pub use shape::{PositionedGlyph, Shaper, needs_shaping};
 pub use surface::{Surface, TruncatingSurface};

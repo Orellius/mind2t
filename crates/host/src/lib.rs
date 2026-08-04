@@ -127,7 +127,15 @@ pub struct RuuahHost {
     frame: Frame,
     /// Stable storage backing the borrowed `pixels` pointer handed across the boundary.
     /// Replaced on every draw, which is exactly the documented lifetime: one poll.
+    ///
+    /// Left EMPTY while a window is attached: presenting reads the pixels on the GPU, so
+    /// filling this would reinstate the very 12.5 MB per frame readback the window exists to
+    /// avoid. `RuuahHostFrame::pixels` is then null and the embedder draws nothing itself.
     pixels: Vec<u8>,
+    /// The window this host presents into, when one has been attached. `None` keeps the
+    /// original CGImage path exactly as it was, which is what makes the swap reversible and
+    /// keeps the old path available as the oracle.
+    window: Option<ruuah_vt_render::WindowTarget>,
     drawn_generation: u64,
     font_size: f32,
     /// The configured lead font and ligature switch, kept because every renderer
@@ -284,7 +292,14 @@ fn poll_impl(host: &mut RuuahHost, mode: DrawMode) -> RuuahHostFrame {
                 .draw_placeholders(&host.frame, |id| images.get(&id).cloned());
         }
         host.drawn_generation = host.frame.generation;
-        host.pixels = host.renderer.pixels();
+        // The readback exists only for embedders that draw the bytes themselves. With a window
+        // attached the frame goes to the screen on the GPU, and copying it back would cost a
+        // full frame across the bus every poll for nothing.
+        host.pixels = if host.window.is_some() {
+            Vec::new()
+        } else {
+            host.renderer.pixels()
+        };
         // Rebuilt with the pixels so the two borrowed views always describe one frame.
         host.row_semantics.clear();
         host.row_semantics
@@ -486,6 +501,7 @@ pub unsafe extern "C" fn ruuah_host_spawn(
         renderer,
         frame,
         pixels: Vec::new(),
+        window: None,
         drawn_generation: 0,
         font_size,
         font_family,
@@ -517,6 +533,113 @@ pub unsafe extern "C" fn ruuah_host_poll(
     let frame = poll_impl(unsafe { &mut *host }, DrawMode::Full);
     unsafe { out.write(frame) };
     RuuahHostResult::Success
+}
+
+/// Attaches a `CAMetalLayer` so polled frames are presented on the GPU instead of copied back.
+///
+/// Sizes are PHYSICAL pixels, not points. Passing point sizes on a Retina display configures a
+/// half-resolution swapchain, and the result looks soft rather than broken - the kind of wrong
+/// that ships.
+///
+/// Attaching stops `RuuahHostFrame::pixels` being filled: with a window the frame reaches the
+/// screen without ever crossing to the CPU, which is the whole point. An embedder that still
+/// wants the bytes must detach first.
+///
+/// Refuses rather than degrades: an adapter that cannot drive this window, or a window that
+/// offers no usable format, returns `RenderFailed` instead of a silently blank surface.
+///
+/// # Safety
+/// `host` must be a live handle from `ruuah_host_spawn`. `layer` must be a live `CAMetalLayer`
+/// that outlives the host or is removed with `ruuah_host_detach_layer` first.
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_host_attach_layer(
+    host: *mut RuuahHost,
+    layer: *mut std::ffi::c_void,
+    width: u32,
+    height: u32,
+) -> RuuahHostResult {
+    if host.is_null() || layer.is_null() {
+        return RuuahHostResult::InvalidValue;
+    }
+    let host = unsafe { &mut *host };
+    let context = host.renderer.surface_mut().context().clone();
+    match unsafe {
+        ruuah_vt_render::WindowTarget::from_metal_layer(&context, layer, width, height)
+    } {
+        Ok(window) => {
+            host.window = Some(window);
+            // The next poll must repaint: the window has nothing in it yet, and the frame the
+            // embedder already drew lives in a CGImage we are about to stop producing.
+            host.drawn_generation = 0;
+            RuuahHostResult::Success
+        }
+        Err(_) => RuuahHostResult::RenderFailed,
+    }
+}
+
+/// Drops the window, restoring the readback path on the next poll.
+///
+/// # Safety
+/// `host` must be a live handle from `ruuah_host_spawn`.
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_host_detach_layer(host: *mut RuuahHost) -> RuuahHostResult {
+    if host.is_null() {
+        return RuuahHostResult::InvalidValue;
+    }
+    let host = unsafe { &mut *host };
+    host.window = None;
+    host.drawn_generation = 0;
+    RuuahHostResult::Success
+}
+
+/// Reconfigures the swapchain after the layer's drawable size changed. PHYSICAL pixels.
+///
+/// # Safety
+/// `host` must be a live handle from `ruuah_host_spawn`.
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_host_resize_layer(
+    host: *mut RuuahHost,
+    width: u32,
+    height: u32,
+) -> RuuahHostResult {
+    if host.is_null() {
+        return RuuahHostResult::InvalidValue;
+    }
+    let host = unsafe { &mut *host };
+    match host.window.as_mut() {
+        Some(window) => {
+            window.resize(width, height);
+            RuuahHostResult::Success
+        }
+        None => RuuahHostResult::InvalidValue,
+    }
+}
+
+/// Draws the current frame into the attached window and presents it.
+///
+/// Separate from `ruuah_host_poll` on purpose: polling advances the terminal, presenting puts
+/// a frame on screen, and an embedder drives them at different rates - a resize presents
+/// without polling, and a quiet terminal polls without needing to present.
+///
+/// # Safety
+/// `host` must be a live handle from `ruuah_host_spawn`.
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ruuah_host_present(host: *mut RuuahHost) -> RuuahHostResult {
+    if host.is_null() {
+        return RuuahHostResult::InvalidValue;
+    }
+    let host = unsafe { &mut *host };
+    let Some(window) = host.window.as_mut() else {
+        return RuuahHostResult::InvalidValue;
+    };
+    match window.present(host.renderer.surface_mut()) {
+        Ok(()) => RuuahHostResult::Success,
+        Err(_) => RuuahHostResult::RenderFailed,
+    }
 }
 
 /// The same as `ruuah_host_poll`, but every draw silently declines one row.

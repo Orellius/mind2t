@@ -23,7 +23,7 @@ use std::cell::{Cell, RefCell};
 use std::process::Command;
 use std::rc::Rc;
 
-use ruuah_vt_host::session::{Session, SessionGeometry};
+use ruuah_vt_host::session::{MouseAction, MouseMods, Session, SessionGeometry};
 use ruuah_vt_render::WindowTarget;
 use tauri::webview::WebviewBuilder;
 use tauri::window::WindowBuilder;
@@ -67,6 +67,28 @@ const PASTE_PROBE: &str = "bindary-paste-probe";
 /// What the smoke asks the child to print once its scrollback is filled.
 const FILL_MARKER: &str = "BINDARY-FILLED";
 
+/// What the child prints when it has turned mouse reporting on.
+const MOUSE_MARKER: &str = "BINDARY-MOUSE";
+
+/// The SGR report a press in the top-left cell produces, as `cat` echoes it back: ESC is drawn
+/// `^[` by ECHOCTL, so this is the printable form, not the wire form.
+const MOUSE_REPORT: &str = "^[[<0;1;1M";
+
+/// Where the smoke clicks: the first cell under the chrome strip. One pixel in from each edge,
+/// so it is unambiguously inside cell (0,0) at any font size.
+fn click(session: &mut Session, strip: u32) -> bool {
+    let y = strip as f32 + 1.0;
+    let pressed = session
+        .mouse(MouseAction::Press, 1, MouseMods::default(), 1.0, y)
+        .unwrap_or(false);
+    // The release is sent whatever the press did, because the held-button bookkeeping is not
+    // conditional: a press recorded and a release dropped leaves a button held forever.
+    let released = session
+        .mouse(MouseAction::Release, 1, MouseMods::default(), 1.0, y)
+        .unwrap_or(false);
+    pressed && released
+}
+
 /// How long after the chrome announces itself before its DOM is read. One render plus the
 /// replayed state; generous, because the cost of being early is a false failure.
 const SETTLE: std::time::Duration = std::time::Duration::from_millis(400);
@@ -105,6 +127,13 @@ struct Smoke {
     before_scroll: Option<String>,
     steady: Option<String>,
     after_scroll: Option<String>,
+    /// Whether a click was reported to the child BEFORE it asked for mouse reporting, and after.
+    /// Two directions of the same claim: a host that encodes unconditionally answers `true`
+    /// twice, and a host whose mouse is not wired answers `false` twice.
+    click_before_enable: Option<bool>,
+    click_after_enable: Option<bool>,
+    /// Whether the report came back off the child as text - the proof it was not merely encoded.
+    mouse_echo: bool,
 }
 
 impl Smoke {
@@ -136,7 +165,7 @@ impl Smoke {
             && self.after_scroll.is_some()
             && self.after_scroll != self.steady;
 
-        let checks: [(bool, &str); 12] = [
+        let checks: [(bool, &str); 14] = [
             (
                 self.grid.is_some_and(|(cols, rows)| cols > 1 && rows > 1),
                 "the session has a real grid",
@@ -187,6 +216,17 @@ impl Smoke {
                 "the wheel scrolls the viewport, and the grid was otherwise still - a grid that \
                  kept changing would satisfy 'it moved' with the wheel unwired",
             ),
+            (
+                self.click_before_enable == Some(false) && self.click_after_enable == Some(true),
+                "a click belongs to the HOST until the child asks for it and to the child after \
+                 - both directions, because a host that encodes unconditionally and a host with \
+                 no mouse at all each get one of them right",
+            ),
+            (
+                self.mouse_echo,
+                "and the report really reached the child: it came back off the pty as text, \
+                 which encoding it into a buffer nobody wrote would not",
+            ),
         ];
 
         let mut passed = true;
@@ -223,12 +263,17 @@ enum Stage {
     Steadying,
     /// Scrolled; waiting for the pump to publish the moved viewport.
     Scrolled,
+    /// Clicked with reporting on; waiting for the report to come back off the child.
+    Clicking,
     Done,
 }
 
 struct InputProbe {
     stage: Stage,
     since: std::time::Instant,
+    /// The reserved strip, in physical pixels. The probe clicks just below it, so it needs the
+    /// same number the session's mouse geometry was given.
+    strip: u32,
 }
 
 impl InputProbe {
@@ -242,10 +287,11 @@ impl InputProbe {
     /// publish, short enough that the whole gate stays a few seconds.
     const STILLNESS: std::time::Duration = std::time::Duration::from_millis(300);
 
-    fn new() -> InputProbe {
+    fn new(strip: u32) -> InputProbe {
         InputProbe {
             stage: Stage::Waiting,
             since: std::time::Instant::now(),
+            strip,
         }
     }
 
@@ -261,7 +307,7 @@ impl InputProbe {
     /// Advances one step if this stage's condition is met. `settled` is the chrome handshake
     /// plus its render window - the machine starts only after it, because the first thing it
     /// does is change what the strip must say.
-    fn advance(&mut self, session: &Session, smoke: &mut Smoke, settled: bool) {
+    fn advance(&mut self, session: &mut Session, smoke: &mut Smoke, settled: bool) {
         let waited = self.since.elapsed();
         match self.stage {
             Stage::Waiting => {
@@ -274,6 +320,11 @@ impl InputProbe {
                 if let Err(error) = session.send(command.as_bytes()) {
                     eprintln!("bindary: probe command refused: {error:?}");
                 }
+                // The first half of the mouse claim, taken here because it is the only moment
+                // the child provably has NOT asked for reporting. Recorded, never asserted on
+                // its own: silence is what a dead mouse path and a correct one both look like,
+                // and the second half is what tells them apart.
+                smoke.click_before_enable = Some(click(session, self.strip));
                 self.enter(Stage::Filling);
             }
 
@@ -298,20 +349,19 @@ impl InputProbe {
                 // what a person would press, and it is a KEY byte, not a paste - the paste
                 // encoder strips it precisely so a pasted one cannot do this.
                 //
-                // The report is followed by a SLEEP, and that is the whole point of this
-                // stage. zsh re-reports its own directory from `precmd`, so the moment the
-                // command ends the probe's value is replaced - measured, and it is why the
-                // first version of this gate failed while the code was correct. While the
-                // child sleeps there is no prompt, no `precmd`, and the reported directory
-                // stays put long enough for the strip to be read at leisure.
-                // The sleep outlasts the whole budget deliberately. A shorter one ends mid-run,
-                // zsh prints a fresh prompt, and the grid changes with no input - which breaks
-                // the stillness CONTROL of the scroll check for a reason that has nothing to do
-                // with scrolling. Seen: a mutant run where removing the event drain also turned
-                // the wheel check red. The child is reaped by the session's own shutdown, so
-                // the number here costs nothing.
-                let command =
-                    format!("\x15printf '\\033]7;file://localhost{CWD_PROBE}\\a'; sleep 300\r");
+                // Three things in one command, and `exec cat` is what makes all three hold.
+                //
+                // zsh re-reports its own directory from `precmd`, so the moment a command ends
+                // the probe's value is replaced - measured, and it is why the first version of
+                // this gate failed while the code was correct. Replacing the shell means there
+                // is no `precmd` ever again: the directory stays put, the grid stays still (the
+                // stillness the scroll check's control depends on), and `cat` is a child that
+                // echoes whatever it receives - which is the only way a mouse report, whose
+                // whole nature is to travel AWAY from us, can be seen at all. ECHOCTL draws the
+                // escape as printable `^[`.
+                let command = format!(
+                    "\x15printf '\\033]7;file://localhost{CWD_PROBE}\\a\\033[?1000h\\033[?1006h{MOUSE_MARKER}\\n'; exec cat\r"
+                );
                 if let Err(error) = session.send(command.as_bytes()) {
                     eprintln!("bindary: cwd probe refused: {error:?}");
                 }
@@ -341,8 +391,25 @@ impl InputProbe {
             }
 
             Stage::Scrolled => {
-                if waited >= Self::STILLNESS {
-                    smoke.after_scroll = Some(session.visible_text());
+                if waited < Self::STILLNESS {
+                    return;
+                }
+                smoke.after_scroll = Some(session.visible_text());
+
+                // Back to the live bottom BEFORE clicking. The viewport is parked 40 rows up in
+                // history, and a child's answer lands at the bottom - so the echo this stage is
+                // about would be encoded, written, received and simply off-screen, which reads
+                // exactly like a mouse path that does not work.
+                session.scroll(-40);
+                smoke.click_after_enable = Some(click(session, self.strip));
+                self.enter(Stage::Clicking);
+            }
+
+            Stage::Clicking => {
+                if session.visible_text().contains(MOUSE_REPORT) {
+                    smoke.mouse_echo = true;
+                    self.enter(Stage::Done);
+                } else if waited >= Self::PATIENCE {
                     self.enter(Stage::Done);
                 }
             }
@@ -445,6 +512,10 @@ fn main() {
     };
     session.attach(target);
     session.set_origin(0, strip);
+    // The pointer's frame of reference: the whole window, with the chrome strip as a TOP INSET
+    // rather than as part of the grid. Reported cells are counted from below the strip, so a
+    // click one row under the chrome is row 0 - which is also what the operator sees.
+    session.set_mouse_geometry(physical.width, physical.height, 0, strip, 0, 0);
 
     // What the app WOULD serve, asked of the resolver rather than inferred from a blank page.
     // This is the control for the title probe: if the bytes are here and the page is still
@@ -511,6 +582,9 @@ fn main() {
     // Never in headless mode: a local monitor makes the app eat keystrokes the moment it is
     // active, and an invisible window that steals the keyboard is the worst of both worlds.
     #[cfg(target_os = "macos")]
+    accept_mouse_moved(&window);
+
+    #[cfg(target_os = "macos")]
     let _monitor = (!headless()).then(|| input::monitor(Rc::clone(&session), Rc::clone(&focus), BAR_HEIGHT));
 
     // Registered before the run loop: the chrome can announce itself the moment its script
@@ -543,7 +617,7 @@ fn main() {
     let mut probed_at: Option<std::time::Instant> = None;
     let mut ready_at: Option<std::time::Instant> = None;
     let smoke = std::rc::Rc::new(std::cell::RefCell::new(Smoke::default()));
-    let mut probe = InputProbe::new();
+    let mut probe = InputProbe::new(strip);
     let page_finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     // The chrome is attached from INSIDE the run loop, on the first frame.
     //
@@ -663,7 +737,7 @@ fn main() {
                         record.cwd_seen.push(cwd.to_string());
                     }
                 }
-                probe.advance(&session, &mut record, settled);
+                probe.advance(&mut session, &mut record, settled);
             }
 
             // The document must show BOTH the grid and the directory before the run is over.
@@ -755,6 +829,10 @@ fn main() {
                 eprintln!("bindary: grid resize refused: {error:?}");
             }
             session.set_origin(0, strip);
+            // Re-stated on every resize, and it has to be: the encoder converts pixels to cells
+            // against these numbers, so a stale view size reports the cell the pointer USED to
+            // be over. Nothing errors, and the child simply acts on the wrong column.
+            session.set_mouse_geometry(width, height, 0, strip, 0, 0);
 
             // The webview is a child view with no autoresizing mask; nothing moves it but this.
             let logical = size.to_logical::<f64>(scale);
@@ -781,7 +859,7 @@ mod input {
     use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
     use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags};
-    use ruuah_vt_host::session::Session;
+    use ruuah_vt_host::session::{MouseAction, MouseMods, Session};
     use ruuah_vt_pty::key::{
         KEY_MODS_ALT, KEY_MODS_CTRL, KEY_MODS_SHIFT, KEY_MODS_SUPER, Key, KeyAction, KeyEvent,
         KeyMods, encode,
@@ -789,6 +867,77 @@ mod input {
     use ruuah_vt_pty::keycode::key_from_macos_keycode;
 
     use super::Focus;
+
+    /// Where an event landed, in the space the mouse encoder measures in.
+    ///
+    /// Returns surface-space PHYSICAL pixels from the window's top-left, whether the point is
+    /// over the chrome strip, and the backing scale. Three conversions in one place because
+    /// each of them has a wrong version that looks right:
+    /// - AppKit's window space starts at the BOTTOM left, so the strip is the region with the
+    ///   LARGEST y and the report's y is `height - point.y`, not `point.y`;
+    /// - the delta is in POINTS and every size the renderer touches is a DEVICE pixel, so the
+    ///   scale is not optional (project law, learned twice);
+    /// - the title bar is INSIDE the content view here (B2.4), so the window's frame height is
+    ///   the right height to subtract from.
+    fn surface_point(
+        event: &NSEvent,
+        mtm: objc2::MainThreadMarker,
+        bar_height: f64,
+    ) -> Option<(f32, f32, bool, f64)> {
+        let window = event.window(mtm)?;
+        let point = event.locationInWindow();
+        let height = window.frame().size.height;
+        let scale = window.backingScaleFactor();
+        let over_strip = point.y >= height - bar_height;
+        let from_top = height - point.y;
+        Some(((point.x * scale) as f32, (from_top * scale) as f32, over_strip, scale))
+    }
+
+    /// The protocol's button number for the event's button. 1 left, 2 middle, 3 right.
+    ///
+    /// Anything past those becomes 10, which the encoder names `Other`: it takes part in the
+    /// held-button bookkeeping and produces no report, because the protocol's codes 4 and up
+    /// mean the WHEEL - reporting a fourth physical button as code 4 would tell the child the
+    /// view scrolled.
+    fn button_code(event: &NSEvent) -> u32 {
+        match unsafe { event.buttonNumber() } {
+            0 => 1,
+            1 => 3,
+            2 => 2,
+            _ => 10,
+        }
+    }
+
+    fn mods_of(event: &NSEvent) -> MouseMods {
+        let flags = event.modifierFlags();
+        MouseMods {
+            shift: flags.contains(NSEventModifierFlags::Shift),
+            ctrl: flags.contains(NSEventModifierFlags::Control),
+            alt: flags.contains(NSEventModifierFlags::Option),
+        }
+    }
+
+    /// Hands one pointer event to the session. Silence is the common, correct outcome.
+    fn report(
+        session: &Rc<RefCell<Session>>,
+        event: &NSEvent,
+        action: MouseAction,
+        x: f32,
+        y: f32,
+    ) {
+        let code = match action {
+            // Motion with no button held is code 0. A DRAG is motion with its button, and the
+            // encoder needs to know which one, so the two cannot share a constant.
+            MouseAction::Motion if event.r#type() == objc2_app_kit::NSEventType::MouseMoved => 0,
+            _ => button_code(event),
+        };
+        if let Err(error) = session
+            .borrow_mut()
+            .mouse(action, code, mods_of(event), x, y)
+        {
+            eprintln!("bindary: mouse report refused: {error:?}");
+        }
+    }
 
     /// Installs a LOCAL monitor: it sees this app's events before they are dispatched, and the
     /// value it returns decides their fate - the event to pass it on, null to swallow it.
@@ -816,20 +965,51 @@ mod input {
             let pass = event as *const NSEvent as *mut NSEvent;
 
             match event.r#type() {
-                objc2_app_kit::NSEventType::LeftMouseDown => {
+                objc2_app_kit::NSEventType::LeftMouseDown
+                | objc2_app_kit::NSEventType::RightMouseDown
+                | objc2_app_kit::NSEventType::OtherMouseDown => {
                     // AppKit's window coordinates start at the BOTTOM left, so the strip - which
                     // is at the top - is the region with the LARGEST y. Getting this backwards
                     // would put focus exactly where it does not belong and look like the click
                     // being ignored.
-                    let point = event.locationInWindow();
-                    let height = event.window(mtm)
-                        .map(|window| window.frame().size.height)
-                        .unwrap_or(0.0);
-                    focus.set(if point.y >= height - bar_height {
-                        Focus::Chrome
-                    } else {
-                        Focus::Terminal
-                    });
+                    let Some((x, y, over_strip, _)) = surface_point(event, mtm, bar_height) else {
+                        return pass;
+                    };
+                    if event.r#type() == objc2_app_kit::NSEventType::LeftMouseDown {
+                        focus.set(if over_strip { Focus::Chrome } else { Focus::Terminal });
+                    }
+                    if !over_strip {
+                        report(&session, event, MouseAction::Press, x, y);
+                    }
+                    // Passed on regardless. The window still needs the event for its own
+                    // business - dragging by the title bar, the traffic lights, the webview's
+                    // own clicks - and swallowing a mouse-down is how a window stops being
+                    // movable with nothing in the log to say why.
+                    pass
+                }
+
+                objc2_app_kit::NSEventType::LeftMouseUp
+                | objc2_app_kit::NSEventType::RightMouseUp
+                | objc2_app_kit::NSEventType::OtherMouseUp => {
+                    // A RELEASE is forwarded even over the strip, and that asymmetry is the
+                    // point: the held-button bookkeeping lives on the other side of this call,
+                    // so a release the host swallows leaves a button held forever and the next
+                    // motion reports a drag nobody is performing.
+                    if let Some((x, y, _, _)) = surface_point(event, mtm, bar_height) {
+                        report(&session, event, MouseAction::Release, x, y);
+                    }
+                    pass
+                }
+
+                objc2_app_kit::NSEventType::LeftMouseDragged
+                | objc2_app_kit::NSEventType::RightMouseDragged
+                | objc2_app_kit::NSEventType::OtherMouseDragged
+                | objc2_app_kit::NSEventType::MouseMoved => {
+                    if let Some((x, y, over_strip, _)) = surface_point(event, mtm, bar_height)
+                        && !over_strip
+                    {
+                        report(&session, event, MouseAction::Motion, x, y);
+                    }
                     pass
                 }
 
@@ -837,33 +1017,33 @@ mod input {
                 // scrolls the terminal even when the operator last clicked in the chrome, which
                 // is what every other application does and what the hand expects.
                 objc2_app_kit::NSEventType::ScrollWheel => {
-                    let point = event.locationInWindow();
-                    let window = event.window(mtm);
-                    let height = window
-                        .as_ref()
-                        .map(|window| window.frame().size.height)
-                        .unwrap_or(0.0);
-                    // Bottom-left origin again: the strip is the region with the LARGEST y.
-                    if point.y >= height - bar_height {
+                    let Some((x, y, over_strip, scale)) = surface_point(event, mtm, bar_height)
+                    else {
+                        return pass;
+                    };
+                    if over_strip {
                         return pass;
                     }
-                    let scale = window
-                        .as_ref()
-                        .map(|window| window.backingScaleFactor())
-                        .unwrap_or(1.0);
 
-                    let session = session.borrow();
+                    let mut session = session.borrow_mut();
                     let rows = scroll.borrow_mut().rows(
                         event.scrollingDeltaY(),
                         event.hasPreciseScrollingDeltas(),
                         session.cell_metrics().height,
                         scale,
                     );
-                    if rows != 0 {
-                        // VIEWPORT scroll only. A program that asked to receive wheel events
-                        // itself (mouse reporting) is a separate path, wired in neither host -
-                        // and routing the wheel to both would be worse than routing it to one.
-                        session.scroll(rows);
+                    if rows == 0 {
+                        return std::ptr::null_mut();
+                    }
+                    // The CHILD is asked first, and it gets the whole wheel or none of it: a
+                    // program that captured the mouse must not also have the view scrolled out
+                    // from under it, and a pager relying on alternate scroll must not have its
+                    // arrows duplicated by a viewport move. `Ok(false)` is the session saying
+                    // the wheel is ours.
+                    match session.wheel(x, y, rows, mods_of(event)) {
+                        Ok(true) => {}
+                        Ok(false) => session.scroll(rows),
+                        Err(error) => eprintln!("bindary: wheel refused: {error:?}"),
                     }
                     std::ptr::null_mut()
                 }
@@ -956,10 +1136,45 @@ mod input {
 
         unsafe {
             NSEvent::addLocalMonitorForEventsMatchingMask_handler(
-                NSEventMask::KeyDown | NSEventMask::LeftMouseDown | NSEventMask::ScrollWheel,
+                NSEventMask::KeyDown
+                    | NSEventMask::LeftMouseDown
+                    | NSEventMask::LeftMouseUp
+                    | NSEventMask::RightMouseDown
+                    | NSEventMask::RightMouseUp
+                    | NSEventMask::OtherMouseDown
+                    | NSEventMask::OtherMouseUp
+                    | NSEventMask::LeftMouseDragged
+                    | NSEventMask::RightMouseDragged
+                    | NSEventMask::OtherMouseDragged
+                    | NSEventMask::MouseMoved
+                    | NSEventMask::ScrollWheel,
                 &handler,
             )
         }
+    }
+}
+
+/// Asks the window for mouse-moved events, which it does NOT deliver by default.
+///
+/// `acceptsMouseMovedEvents` is NO on a fresh NSWindow, and the consequence is invisible: a
+/// child in mode 1003 (report ALL motion) receives clicks and drags perfectly and never hears
+/// about a bare move, so a menu that highlights under the cursor simply never highlights. No
+/// error, no log, and the half that works makes the half that does not look like the program's
+/// fault (SCAR-004: a guard you cannot see fire).
+#[cfg(target_os = "macos")]
+fn accept_mouse_moved(window: &tauri::Window) {
+    use objc2::runtime::AnyObject;
+
+    let Ok(handle) = window.ns_window() else {
+        return;
+    };
+    let ns_window: *mut AnyObject = handle.cast();
+    if ns_window.is_null() {
+        return;
+    }
+    // Safety: the NSWindow Tauri just created, alive for as long as this window, not retained.
+    unsafe {
+        let _: () = objc2::msg_send![ns_window, setAcceptsMouseMovedEvents: true];
     }
 }
 

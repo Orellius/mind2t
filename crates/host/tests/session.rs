@@ -15,7 +15,7 @@ use std::collections::HashSet;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use ruuah_vt_host::session::{Session, SessionGeometry};
+use ruuah_vt_host::session::{MouseAction, MouseMods, Session, SessionGeometry};
 
 const GEOMETRY: SessionGeometry = SessionGeometry { cols: 24, rows: 6 };
 
@@ -130,6 +130,99 @@ fn the_visible_grid_reads_back_as_text() {
     assert!(
         !silent.visible_text().contains("RUUAH"),
         "a silent child's grid claims to hold text it never printed"
+    );
+}
+
+/// Polls until the grid says `wanted`, or the deadline passes. Returns whether it did.
+///
+/// The report a click produces is invisible by nature - it goes TO the child - so every mouse
+/// test here runs `cat` and reads the ECHOCTL echo back off the grid as printable text. That is
+/// the whole seam in one assertion: mode bits published through the seqlock, geometry converted,
+/// encoder, pty write, and the child's answer parsed back into cells.
+fn wait_for_text(session: &mut Session, wanted: &str, budget: Duration) -> bool {
+    let deadline = Instant::now() + budget;
+    while Instant::now() < deadline {
+        session.poll();
+        if session.visible_text().contains(wanted) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    false
+}
+
+/// A generous screen: only the CELL comes from the renderer's metrics, so pixel (1,1) is inside
+/// cell (0,0) at every font size.
+fn wide_open(session: &mut Session) {
+    session.set_mouse_geometry(10_000, 10_000, 0, 0, 0, 0);
+}
+
+#[test]
+fn a_click_is_reported_when_the_child_enabled_sgr_mouse() {
+    let mut session = spawn("printf '\\033[?1000h\\033[?1006hREADY\\n'; exec cat");
+    assert!(
+        wait_for_text(&mut session, "READY", Duration::from_secs(5)),
+        "the child's READY line never appeared, so its mode bits were never polled"
+    );
+    wide_open(&mut session);
+
+    assert!(
+        session.mouse(MouseAction::Press, 1, MouseMods::default(), 1.0, 1.0).expect("press"),
+        "the press was not reported to a child that asked for mouse events"
+    );
+    assert!(
+        session.mouse(MouseAction::Release, 1, MouseMods::default(), 1.0, 1.0).expect("release"),
+        "the release was not reported"
+    );
+    assert!(
+        wait_for_text(&mut session, "^[[<0;1;1M^[[<0;1;1m", Duration::from_secs(5)),
+        "the SGR press/release pair never reached the child; grid says {:?}",
+        session.visible_text()
+    );
+}
+
+/// The control. A host that encoded unconditionally passes the test above and fails this one,
+/// which is what makes the pair evidence rather than a demonstration.
+#[test]
+fn a_click_is_the_hosts_when_the_child_never_asked_for_mouse() {
+    let mut session = spawn("printf 'READY\\n'; exec cat");
+    assert!(wait_for_text(&mut session, "READY", Duration::from_secs(5)));
+    wide_open(&mut session);
+
+    assert!(
+        !session.mouse(MouseAction::Press, 1, MouseMods::default(), 1.0, 1.0).expect("press"),
+        "a click was reported to a child that never asked for one"
+    );
+}
+
+/// Wheel precedence, both branches that matter to a host: on the alternate screen with 1007 at
+/// its default the wheel becomes arrow keys and the child sees them, while on the primary screen
+/// it is handed back so the host can scroll its own viewport. Getting this backwards scrolls the
+/// view out from under a full-screen program - which looks like a rendering bug, not a routing one.
+#[test]
+fn a_wheel_is_arrows_on_the_alternate_screen_and_the_hosts_on_the_primary() {
+    let mut session = spawn("printf 'READY\\n'; exec cat");
+    assert!(wait_for_text(&mut session, "READY", Duration::from_secs(5)));
+    wide_open(&mut session);
+
+    assert!(
+        !session.wheel(1.0, 1.0, 2, MouseMods::default()).expect("wheel"),
+        "the primary screen's wheel belongs to the host"
+    );
+
+    session.send(b"\x1b[?1049hALT\r\n").expect("enter the alternate screen");
+    assert!(
+        wait_for_text(&mut session, "ALT", Duration::from_secs(5)),
+        "the alternate screen never appeared"
+    );
+    assert!(
+        session.wheel(1.0, 1.0, 2, MouseMods::default()).expect("wheel"),
+        "the alternate screen's wheel is the child's"
+    );
+    assert!(
+        wait_for_text(&mut session, "^[[A^[[A", Duration::from_secs(5)),
+        "two up-ticks did not reach the child as two arrows; grid says {:?}",
+        session.visible_text()
     );
 }
 

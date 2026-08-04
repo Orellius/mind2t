@@ -150,10 +150,14 @@ fn an_srgb_target_is_refused_rather_than_silently_compensated() {
     let context = GpuContext::new().expect("a GPU");
     let error = Blitter::new(&context, wgpu::TextureFormat::Rgba8UnormSrgb)
         .expect_err("an sRGB target must be refused");
+    // Named rather than wildcarded: the refusal must be THIS refusal. A blitter that failed
+    // for some unrelated reason would otherwise satisfy an `is_err` assertion and the guard
+    // would never be exercised at all.
     match error {
         PresentError::SrgbTarget(format) => {
             assert_eq!(format, wgpu::TextureFormat::Rgba8UnormSrgb)
         }
+        other => panic!("expected the sRGB refusal, got {other:?}"),
     }
 }
 

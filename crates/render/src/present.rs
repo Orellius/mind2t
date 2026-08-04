@@ -30,6 +30,24 @@ pub enum PresentError {
          be gamma-encoded twice. Configure the swapchain with the non-sRGB view format."
     )]
     SrgbTarget(wgpu::TextureFormat),
+
+    #[error("creating a surface for the window failed: {0}")]
+    Surface(String),
+
+    /// The device we rasterize on cannot drive this window.
+    ///
+    /// Checked rather than assumed. The context is built before a window exists, so on a
+    /// machine with more than one GPU the adapter that rasterizes may not be the one wired to
+    /// the display. Discovering that as a blank window instead of an error is the failure this
+    /// refuses to allow.
+    #[error("the adapter this context rasterizes on cannot present to that window")]
+    IncompatibleAdapter,
+
+    #[error("the window reported no supported texture format")]
+    NoFormat,
+
+    #[error("acquiring the next frame from the window failed: {0}")]
+    Acquire(String),
 }
 
 /// The uniform the fragment shader reads its bounds from.
@@ -216,6 +234,179 @@ impl Blitter {
             pass.draw(0..3, 0..1);
         }
         self.context.queue().submit(Some(encoder.finish()));
+    }
+}
+
+/// A window's swapchain, plus the blitter that fills it.
+///
+/// This is the half that CANNOT be checked headlessly: it needs a real layer, a real display and
+/// a real compositor. Everything that fails silently was kept out of it deliberately - what is
+/// left here fails loudly (no adapter, no format, a lost swapchain) or is visible at a glance
+/// (nothing on screen, wrong size).
+#[derive(Debug)]
+pub struct WindowTarget {
+    context: GpuContext,
+    surface: wgpu::Surface<'static>,
+    blitter: Blitter,
+    /// The format the swapchain is configured with, which may still be sRGB.
+    config_format: wgpu::TextureFormat,
+    /// The format the VIEW is created with, always non-sRGB. When the two differ, the swapchain
+    /// stores sRGB-tagged texels and we write through a linear view, so the hardware performs no
+    /// conversion on our already-encoded bytes.
+    view_format: wgpu::TextureFormat,
+    width: u32,
+    height: u32,
+}
+
+impl WindowTarget {
+    /// Builds a swapchain over a `CAMetalLayer`.
+    ///
+    /// # Safety
+    /// `layer` must be a live `CAMetalLayer` that outlives this `WindowTarget`. Nothing here can
+    /// check that; it is the caller's contract, and the reason this is the only unsafe entry
+    /// point in the module.
+    #[cfg(target_os = "macos")]
+    pub unsafe fn from_metal_layer(
+        context: &GpuContext,
+        layer: *mut std::ffi::c_void,
+        width: u32,
+        height: u32,
+    ) -> Result<WindowTarget, PresentError> {
+        let surface = unsafe {
+            context
+                .instance()
+                .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(layer))
+        }
+        .map_err(|error| PresentError::Surface(error.to_string()))?;
+
+        WindowTarget::from_surface(context, surface, width, height)
+    }
+
+    fn from_surface(
+        context: &GpuContext,
+        surface: wgpu::Surface<'static>,
+        width: u32,
+        height: u32,
+    ) -> Result<WindowTarget, PresentError> {
+        // Asked, not assumed. The context was built before any window existed, so this is the
+        // first moment the pairing can be checked at all.
+        if !context.adapter().is_surface_supported(&surface) {
+            return Err(PresentError::IncompatibleAdapter);
+        }
+
+        let capabilities = surface.get_capabilities(context.adapter());
+        let preferred = *capabilities.formats.first().ok_or(PresentError::NoFormat)?;
+        let linear = preferred.remove_srgb_suffix();
+
+        // Prefer configuring the swapchain itself as linear. When the platform only offers the
+        // sRGB form, keep it and write through a linear VIEW instead - `view_formats` is what
+        // makes that legal, and the effect is identical: no conversion touches our bytes.
+        let (config_format, view_formats) = if capabilities.formats.contains(&linear) {
+            (linear, Vec::new())
+        } else {
+            (preferred, vec![linear])
+        };
+
+        // Alpha mode is decided in `configure`, which is also the path a resize takes, so the
+        // choice cannot drift between the first configuration and every later one.
+        let blitter = Blitter::new(context, linear)?;
+
+        let target = WindowTarget {
+            context: context.clone(),
+            surface,
+            blitter,
+            config_format,
+            view_format: linear,
+            width: width.max(1),
+            height: height.max(1),
+        };
+        target.configure(&view_formats);
+        Ok(target)
+    }
+
+    fn configure(&self, view_formats: &[wgpu::TextureFormat]) {
+        self.surface.configure(
+            self.context.device(),
+            &wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                format: self.config_format,
+                width: self.width,
+                height: self.height,
+                // Vsync. Always supported, and a terminal has no reason to render faster than
+                // the display can show it.
+                present_mode: wgpu::PresentMode::Fifo,
+                alpha_mode: if self
+                    .surface
+                    .get_capabilities(self.context.adapter())
+                    .alpha_modes
+                    .contains(&wgpu::CompositeAlphaMode::Opaque)
+                {
+                    wgpu::CompositeAlphaMode::Opaque
+                } else {
+                    wgpu::CompositeAlphaMode::Auto
+                },
+                view_formats: view_formats.to_vec(),
+                desired_maximum_frame_latency: 2,
+            },
+        );
+    }
+
+    /// Reconfigures for a new size in PHYSICAL pixels.
+    ///
+    /// Physical, not points: handing this the point size on a Retina display configures a
+    /// swapchain at half resolution and the result looks soft rather than broken, which is the
+    /// kind of wrong that ships.
+    pub fn resize(&mut self, width: u32, height: u32) {
+        let width = width.max(1);
+        let height = height.max(1);
+        if width == self.width && height == self.height {
+            return;
+        }
+        self.width = width;
+        self.height = height;
+        let view_formats = if self.config_format == self.view_format {
+            Vec::new()
+        } else {
+            vec![self.view_format]
+        };
+        self.configure(&view_formats);
+    }
+
+    pub fn size(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+
+    pub fn view_format(&self) -> wgpu::TextureFormat {
+        self.view_format
+    }
+
+    /// Draws the surface into the window's next frame and presents it.
+    ///
+    /// A lost or outdated swapchain is reconfigured and skipped for one frame rather than
+    /// treated as fatal: it happens routinely on resize and display changes, and the next call
+    /// succeeds.
+    pub fn present(&mut self, surface: &mut GpuSurface) -> Result<(), PresentError> {
+        let frame = match self.surface.get_current_texture() {
+            Ok(frame) => frame,
+            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                let view_formats = if self.config_format == self.view_format {
+                    Vec::new()
+                } else {
+                    vec![self.view_format]
+                };
+                self.configure(&view_formats);
+                return Ok(());
+            }
+            Err(error) => return Err(PresentError::Acquire(error.to_string())),
+        };
+
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(self.view_format),
+            ..Default::default()
+        });
+        self.blitter.blit(surface, &view);
+        frame.present();
+        Ok(())
     }
 }
 

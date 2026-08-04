@@ -88,6 +88,10 @@ EXPECTED=(
   ruuah_config_font_family
   ruuah_config_error
   ruuah_config_free
+  ruuah_host_attach_layer
+  ruuah_host_detach_layer
+  ruuah_host_resize_layer
+  ruuah_host_present
 )
 
 # Captured once, not piped per symbol: `nm` exits non-zero on members with no symbols, and

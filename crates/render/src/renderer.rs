@@ -90,8 +90,17 @@ impl<S: Surface> Renderer<S> {
     }
 
     /// The finished pixels, however the backend stores them.
+    ///
+    /// On a GPU backend this is a full frame copied back across the bus. A caller that is
+    /// putting the frame on a screen does not need it and should reach the backend through
+    /// `surface_mut` instead.
     pub fn pixels(&mut self) -> Vec<u8> {
         self.canvas.read_pixels()
+    }
+
+    /// The backend itself, for an embedder that presents rather than reads back.
+    pub fn surface_mut(&mut self) -> &mut S {
+        &mut self.canvas
     }
 
     pub fn atlas(&self) -> &Atlas {

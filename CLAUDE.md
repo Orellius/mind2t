@@ -2,10 +2,37 @@
 
 > **Parent stack layer:** `../CLAUDE.md` (tools/ 2026 stack, auto-inherited; don't restate it).
 > Chain: `~/.claude/CLAUDE.md` (contract) → `Studio/CLAUDE.md` (index) → `tools/CLAUDE.md` (stack) → **this file (ruuah-vt specifics)**.
-> This file = project specifics only. Last update stamp: 2026-07-28 (IDT).
+> This file = project specifics only. Last update stamp: 2026-08-04 (IDT).
 > Posture: the global proactive co-pilot rule (initiative, three-steps-ahead, extreme ownership) is in force here via `~/.claude/CLAUDE.md`.
 
-## What this is
+## What this is NOW - Bindary (decided 2026-08-04, Orel)
+
+This repo builds **two things, and the names are not interchangeable**:
+
+- **`ruuah-vt`** - the engine. The Rust VT core, pty, renderer and C ABI. Keeps its name
+  forever; other people may embed it.
+- **Bindary** - the product built on that engine. An **AGPL, cross-platform agent workbench**:
+  a fleet of coding-agent CLIs in real terminals, in git worktrees, with sessions that do not
+  end because a context governor binds each one to the next.
+
+**Plan of record: `docs/plans/2026-08-04-bindary.md`.** Read it before starting any slice.
+Bindary slices are **`B1..B8`** and are a SEPARATE namespace from the `S1..S9` app slices in
+`docs/APP-BACKLOG-2026.md`. Never mix them.
+
+The wedge, in one line: **we own the VT core, the pty and the renderer**, so agent state comes
+from a typed grid (`Session.rowText(row, semantic:)`) instead of regexing ANSI out of a byte
+stream. BridgeSpace rents xterm.js, Termic rents xterm.js, Claude Squad rents tmux. Evidence:
+`~/Desktop/Studio/docs/research/bridgespace-teardown/`.
+
+Three laws added by this decision:
+1. **The Swift host is the ORACLE, not the corpse.** Do not delete it. Port the Tauri host to
+   parity against it first, the same way the GPU backend is trusted because a CPU reference can
+   disagree with it.
+2. **No terminal bytes in the webview** - not pixels, not keystrokes, not frames. Ever.
+3. **One wgpu surface for all panes.** Pane count is a Rust-side fact; if the webview needs to
+   know it, the design is wrong.
+
+## What this is (engine)
 
 A terminal core in Rust implementing the C ABI Ghostty already publishes as
 **`libghostty-vt`**, so it can drop in behind an existing native GUI. The point is control

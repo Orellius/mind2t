@@ -250,6 +250,15 @@ instantly from the list, closed with its row's X. One thing on screen at a
 time is the model. Revisit only if real daily use produces the sentence "I
 need these two side by side" - and then as a deliberate decision, not a drift.
 
+> **STAMPED 2026-08-04: reversal PENDING, not taken.** The Bindary direction
+> (`docs/plans/2026-08-04-bindary.md`, slice **B3**) needs splits, because the
+> premise changed: this refusal was correct for a single-user terminal, where one
+> thing on screen at a time is the right model, and a fleet controller is N-up by
+> definition - you cannot direct four agents you cannot see. Recorded here rather
+> than acted on, exactly as the line above demands. **B3 does not start without
+> Orel's explicit yes.** If he declines, Bindary stays single-pane and
+> tab-switched, and B4 onward are unaffected.
+
 **S8 - Persistent sessions.** Superset's "closing the laptop doesn't kill the
 sessions". V1 exists today (sessions outlive their window inside the app).
 V2 - sessions survive the app relaunching - means a detached host process

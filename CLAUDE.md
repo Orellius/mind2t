@@ -641,6 +641,19 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
 
 ## Project rules & gotchas
 
+- **EVERY SIZE THIS RENDERER TOUCHES IS A DEVICE PIXEL, AND THE FONT SIZE IS THE ONE PEOPLE
+  FORGET.** A host builds the session at `font_size * scale_factor`, never at the point size.
+  Handing the renderer 16.0 on a 2x display rasterizes the whole grid at half resolution: the
+  terminal works, the colours are right, the layout is right, and it is simply soft and small -
+  nothing errors and no test fails. It has now been written twice, once in the Swift host
+  (slice 8, `backingScaleFactor`) and once in Bindary (B2.3, 2026-08-04), and the second time
+  the operator caught it from the screen before any assertion did.
+  Orel's display makes this trap permanent rather than occasional: an LG 2K panel driven in a
+  faked Retina mode by his own `Studio/macos/opendisplay`, so `scale_factor` is **always 2.0**
+  and a scale bug is always a half-size grid. Full measurement in `~/.claude/DEFAULT_MODE_NETWORK.md` §I.7.
+  The window resize path has the matching gap: the font is built once at launch, so dragging to
+  a display with a different scale does not re-rasterize. Named, not fixed (B2.4).
+
 - **`../ruuah` is read-only, including build artifacts.** Never run `zig build` in it with
   default paths - that writes `zig-out/` and `.zig-cache/`. `scripts/build-oracle.sh`
   redirects both `--prefix` and `--cache-dir` here and then *verifies* the checkout is still

@@ -28,6 +28,18 @@ fn paint(surface: &mut GpuSurface) {
 }
 
 fn blit_to_texture(context: &GpuContext, surface: &mut GpuSurface) -> Vec<u8> {
+    blit_into(context, surface, WIDTH, HEIGHT, wgpu::Color::BLACK, (0, 0))
+}
+
+/// The same blit, into a target of the caller's size and at the caller's origin.
+fn blit_into(
+    context: &GpuContext,
+    surface: &mut GpuSurface,
+    target_width: u32,
+    target_height: u32,
+    clear: wgpu::Color,
+    origin: (u32, u32),
+) -> Vec<u8> {
     let format = wgpu::TextureFormat::Rgba8Unorm;
     let blitter = Blitter::new(context, format).expect("a non-sRGB target is accepted");
 
@@ -35,8 +47,8 @@ fn blit_to_texture(context: &GpuContext, surface: &mut GpuSurface) -> Vec<u8> {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("blit target"),
         size: wgpu::Extent3d {
-            width: WIDTH,
-            height: HEIGHT,
+            width: target_width,
+            height: target_height,
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
@@ -51,11 +63,11 @@ fn blit_to_texture(context: &GpuContext, surface: &mut GpuSurface) -> Vec<u8> {
     // Black here on purpose: the equality assertion covers only the region the surface
     // occupies, and a distinctive clear would not change those bytes. The margin colour is
     // the window's concern and is judged on screen.
-    blitter.blit(surface, &view, wgpu::Color::BLACK);
+    blitter.blit(surface, &view, clear, origin);
 
-    let bytes_per_row = WIDTH * 4;
+    let bytes_per_row = target_width * 4;
     assert_eq!(bytes_per_row % 256, 0, "the test width must keep rows aligned");
-    let size = (bytes_per_row * HEIGHT) as u64;
+    let size = (bytes_per_row * target_height) as u64;
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("blit readback"),
         size,
@@ -77,12 +89,12 @@ fn blit_to_texture(context: &GpuContext, surface: &mut GpuSurface) -> Vec<u8> {
             layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(bytes_per_row),
-                rows_per_image: Some(HEIGHT),
+                rows_per_image: Some(target_height),
             },
         },
         wgpu::Extent3d {
-            width: WIDTH,
-            height: HEIGHT,
+            width: target_width,
+            height: target_height,
             depth_or_array_layers: 1,
         },
     );
@@ -202,7 +214,7 @@ fn presenting_a_frame_never_copies_it_back_to_the_cpu() {
 
     for _ in 0..30 {
         paint(&mut surface);
-        blitter.blit(&mut surface, &view, wgpu::Color::BLACK);
+        blitter.blit(&mut surface, &view, wgpu::Color::BLACK, (0, 0));
     }
 
     assert_eq!(
@@ -216,4 +228,83 @@ fn presenting_a_frame_never_copies_it_back_to_the_cpu() {
     // assertion above would hold just as well for a counter nobody increments.
     let _ = surface.read_pixels();
     assert_eq!(surface.readbacks(), 1, "the readback path did not register");
+}
+
+/// A surface placed at an ORIGIN lands there, and the reserved strip keeps the clear colour.
+///
+/// The failure this catches is quiet by nature. A host that reserves a chrome strip and ignores
+/// the origin still presents a perfectly correct terminal - it just starts at the top of the
+/// window, under the chrome, so the child's first rows are covered and everything below them
+/// looks normal. Nothing errors and no colour is wrong; only the placement is.
+///
+/// Two assertions, and the first is what makes the second mean anything: the pixel AT the
+/// origin must be the surface's first pixel (with origin ignored it would be the surface's
+/// pixel at the origin's coordinates instead, which the asymmetric fixture makes a different
+/// colour), and every pixel above the origin must be the clear colour rather than terminal.
+#[test]
+fn a_surface_blitted_at_an_origin_lands_there_and_leaves_the_strip_clear() {
+    const STRIP: u32 = 8;
+    const INSET: u32 = 16;
+
+    let context = GpuContext::new().expect("a GPU");
+    let (surface_width, surface_height) = (WIDTH - INSET, HEIGHT - STRIP);
+    let mut surface =
+        GpuSurface::with_context(context.clone(), surface_width, surface_height).expect("a surface");
+    // Flat red field with a single blue pixel at the surface's own top-left corner. The corner
+    // is the whole assertion: it is the one pixel whose position in the target proves where the
+    // surface was placed, and a fill alone could not distinguish placement from size.
+    surface.fill(0, 0, surface_width, surface_height, [200, 40, 10, 255]);
+    surface.fill(0, 0, 1, 1, [10, 60, 220, 255]);
+
+    // A clear colour that is neither of the fixture's colours, so "strip kept the clear" cannot
+    // accidentally hold because the strip happened to be terminal-coloured.
+    let clear = wgpu::Color {
+        r: 0.0,
+        g: 1.0,
+        b: 0.0,
+        a: 1.0,
+    };
+    let target = blit_into(
+        &context,
+        &mut surface,
+        WIDTH,
+        HEIGHT,
+        clear,
+        (INSET, STRIP),
+    );
+
+    let pixel = |x: u32, y: u32| {
+        let at = ((y * WIDTH + x) * 4) as usize;
+        [target[at], target[at + 1], target[at + 2], target[at + 3]]
+    };
+
+    assert_eq!(
+        pixel(INSET, STRIP),
+        [10, 60, 220, 255],
+        "the surface's top-left pixel is not at the origin"
+    );
+    assert_eq!(
+        pixel(INSET + 1, STRIP),
+        [200, 40, 10, 255],
+        "the pixel beside the corner is not the surface's field"
+    );
+
+    for y in 0..STRIP {
+        for x in 0..WIDTH {
+            assert_eq!(
+                pixel(x, y),
+                [0, 255, 0, 255],
+                "the reserved strip at ({x},{y}) holds terminal pixels instead of the clear"
+            );
+        }
+    }
+    for y in 0..HEIGHT {
+        for x in 0..INSET {
+            assert_eq!(
+                pixel(x, y),
+                [0, 255, 0, 255],
+                "the left inset at ({x},{y}) holds terminal pixels instead of the clear"
+            );
+        }
+    }
 }

@@ -15,6 +15,10 @@ publish = false
 [dependencies]
 ruuah-vt-host = { path = "../host" }
 ruuah-vt-render.workspace = true
+# The key encoder lives here and is corpus-pinned against the oracle. Reaching for it directly
+# rather than through the host keeps one encoder in the project instead of a second mapping
+# written for this window (the Swift host's `KeyMap.swift` is the same encoder's other caller).
+ruuah-vt-pty = { path = "../pty" }
 tao = "0.35"
 # B2.2. The chrome layer, and the only browser engine in the project - it draws documents, never
 # terminal pixels (the "no terminal bytes in the webview" law). It is WKWebView on macOS, which

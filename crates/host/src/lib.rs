@@ -17,6 +17,9 @@ use ruuah_vt as _;
 
 pub mod config;
 pub mod cwd;
+/// The same pipeline as the C surface below, offered to Rust callers in this workspace.
+/// See its module card for why both exist and when they converge.
+pub mod session;
 pub mod suggest;
 pub mod workflow;
 

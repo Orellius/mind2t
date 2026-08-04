@@ -59,8 +59,14 @@ pub enum PresentError {
 struct Bounds {
     width: u32,
     height: u32,
-    _pad0: u32,
-    _pad1: u32,
+    /// Where the surface's top-left lands in the TARGET, in physical pixels.
+    ///
+    /// Zero for every caller that fills a window with one terminal. A non-zero origin is what
+    /// lets chrome own a strip of the window - the terminal starts below it instead of being
+    /// covered by it, which is the difference between reserving space and hiding rows. Rides
+    /// the two words the uniform was padding out anyway, so the block did not grow.
+    origin_x: u32,
+    origin_y: u32,
 }
 
 /// Copies a `GpuSurface`'s pixels into a render target, on the GPU.
@@ -171,7 +177,13 @@ impl Blitter {
     /// The target may be larger than the surface; fragments outside it are discarded, so a
     /// window mid-resize shows cleared black in the uncovered region instead of sampling past
     /// the end of the buffer.
-    pub fn blit(&self, surface: &mut GpuSurface, target: &wgpu::TextureView, clear: wgpu::Color) {
+    pub fn blit(
+        &self,
+        surface: &mut GpuSurface,
+        target: &wgpu::TextureView,
+        clear: wgpu::Color,
+        origin: (u32, u32),
+    ) {
         surface.flush();
 
         let device = self.context.device();
@@ -179,8 +191,8 @@ impl Blitter {
         let bounds = Bounds {
             width: crate::surface::Surface::width(surface),
             height: crate::surface::Surface::height(surface),
-            _pad0: 0,
-            _pad1: 0,
+            origin_x: origin.0,
+            origin_y: origin.1,
         };
         let uniform = wgpu::util::DeviceExt::create_buffer_init(
             device,
@@ -263,6 +275,13 @@ pub struct WindowTarget {
     view_format: wgpu::TextureFormat,
     width: u32,
     height: u32,
+    /// Where the terminal's top-left sits in the window, in PHYSICAL pixels.
+    ///
+    /// Default zero. A host with chrome above the terminal sets it so the reserved strip is
+    /// clear colour rather than covered terminal - the failure it prevents is the quiet one:
+    /// with origin zero the top rows still render, the chrome draws over them, and the terminal
+    /// looks correct while the child's first lines are permanently hidden.
+    origin: (u32, u32),
 }
 
 impl WindowTarget {
@@ -348,6 +367,7 @@ impl WindowTarget {
             view_format: linear,
             width: width.max(1),
             height: height.max(1),
+            origin: (0, 0),
         };
         target.configure(&view_formats);
         Ok(target)
@@ -409,6 +429,18 @@ impl WindowTarget {
         self.view_format
     }
 
+    /// Places the terminal's top-left inside the window, in PHYSICAL pixels.
+    ///
+    /// The region outside the surface takes the clear colour `present` is given, so reserving a
+    /// strip for chrome costs nothing extra and the seam wears the terminal's own background.
+    pub fn set_origin(&mut self, x: u32, y: u32) {
+        self.origin = (x, y);
+    }
+
+    pub fn origin(&self) -> (u32, u32) {
+        self.origin
+    }
+
     /// Draws the surface into the window's next frame and presents it.
     ///
     /// A lost or outdated swapchain is reconfigured and skipped for one frame rather than
@@ -446,7 +478,7 @@ impl WindowTarget {
             format: Some(self.view_format),
             ..Default::default()
         });
-        self.blitter.blit(surface, &view, clear);
+        self.blitter.blit(surface, &view, clear, self.origin);
         frame.present();
         Ok(())
     }
@@ -456,8 +488,8 @@ const BLIT_SHADER: &str = r#"
 struct Bounds {
     width: u32,
     height: u32,
-    pad0: u32,
-    pad1: u32,
+    origin_x: u32,
+    origin_y: u32,
 }
 
 @group(0) @binding(0) var<storage, read> pixels: array<u32>;
@@ -478,10 +510,19 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     // a window is how an image ends up upside down on exactly one platform.
     let x = u32(position.x);
     let y = u32(position.y);
-    if (x >= bounds.width || y >= bounds.height) {
+    // Outside the surface's rect in the target - above or left of the origin, or past the
+    // surface's extent - is the caller's clear colour, not a wrapped sample. Unsigned
+    // arithmetic makes the first two comparisons load-bearing: without them, a fragment above
+    // the origin underflows to an enormous coordinate and reads whatever that indexes.
+    if (x < bounds.origin_x || y < bounds.origin_y) {
         discard;
     }
-    let value = pixels[y * bounds.width + x];
+    let sx = x - bounds.origin_x;
+    let sy = y - bounds.origin_y;
+    if (sx >= bounds.width || sy >= bounds.height) {
+        discard;
+    }
+    let value = pixels[sy * bounds.width + sx];
     // Red is the LOW byte, matching `pack` in gpu.rs and the CPU canvas byte order. Reversing
     // these four lines is the channel-swap bug the asymmetric test fixture exists to catch.
     let r = f32(value & 0xffu) / 255.0;

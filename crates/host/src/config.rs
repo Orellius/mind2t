@@ -413,14 +413,34 @@ mod tests {
 
     /// A per-test unique directory under the target tmp dir; leaked on purpose (the OS
     /// cleans tmp, and a Drop-deleting guard would hide files from a failing test's eyes).
+    /// A directory this test run has never used before.
+    ///
+    /// The pid and a counter are NOT enough, and the failure they cause is the worst kind.
+    /// `create_dir_all` succeeds on a directory that already exists, pids are reused, the
+    /// counter's assignment to tests depends on scheduling, and nothing here ever cleans up -
+    /// so a run eventually loads a `config.toml` a DIFFERENT test wrote in some previous run.
+    /// Measured 2026-08-04: 1768 leftover directories on this machine, several holding
+    /// `font-size = 18.5`, and `a_missing_config_is_the_default_and_not_an_error` failed with
+    /// exactly that value. It fails loud in that direction and could fail SILENT in the other -
+    /// a leftover `reports = true` would make a security-posture assertion pass for a reason
+    /// that has nothing to do with the code.
+    ///
+    /// The clock makes the name unique across runs; the explicit remove makes it clean even if
+    /// two runs land on the same nanosecond.
     fn tempdir() -> PathBuf {
         use std::sync::atomic::{AtomicU32, Ordering};
+        use std::time::{SystemTime, UNIX_EPOCH};
         static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|since| since.as_nanos())
+            .unwrap_or(0);
         let dir = std::env::temp_dir().join(format!(
-            "ruuah-config-test-{}-{}",
+            "ruuah-config-test-{}-{stamp}-{}",
             std::process::id(),
             COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

@@ -1,0 +1,260 @@
+//! Purpose: the RUST-native composition of pty -> core -> frame -> renderer -> window, for
+//!   embedders that live in this workspace.
+//! Public surface: `Session`, `SessionGeometry`, `SessionError`.
+//! Why this file: `lib.rs` composes the same pieces behind the C ABI, and that surface exists
+//!   for the Swift host and for outside embedders. Bindary is neither - it is a Rust program in
+//!   this workspace, and crossing a foreign-function boundary to reach its own crates would buy
+//!   nothing and cost the type system. So the composition is offered twice, once per audience.
+//! NOT responsible for: policy. It does not decide which shell to run, what the font is called
+//!   or how big the window should be - the caller builds the `Command` and states the geometry.
+//!   Also not responsible yet for kitty image placements, unicode placeholders or row
+//!   semantics; the C path draws those and this one does not. **That gap is deliberate and
+//!   recorded**: it is the convergence debt of having two compositions, and it closes when the
+//!   Swift host retires (B7) and `lib.rs` delegates here rather than duplicating.
+//! Test strategy: `tests/session.rs` spawns a real child through this type and asserts the
+//!   rendered pixels change once the child has written - with the control that makes the
+//!   assertion falsifiable, a session polled before any output must NOT satisfy it.
+
+use std::process::Command;
+
+use ruuah_vt_frame::{Frame, FrameReader};
+use ruuah_vt_pty::{Geometry, Host, Options, SpawnError};
+use ruuah_vt_render::{
+    CellMetrics, FontStack, GpuContext, GpuSurface, PresentError, Renderer, WindowTarget,
+};
+
+/// The grid, in cells. Pixels are derived from it and the font, never the other way round.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionGeometry {
+    pub cols: u16,
+    pub rows: u16,
+}
+
+#[derive(Debug)]
+pub enum SessionError {
+    /// The child could not be started.
+    Spawn(SpawnError),
+    /// No GPU, no font, or a surface that could not be built.
+    Render(String),
+    /// The swapchain refused a frame. Never silently swallowed: a present that fails and falls
+    /// back to another path is how B1's defects stayed invisible.
+    Present(PresentError),
+    /// Writing to the child failed.
+    Send(std::io::Error),
+    /// The requested grid does not fit the frame channel's fixed capacity.
+    Resize(String),
+    /// An operation that needs a window was called before one was attached.
+    NoWindow,
+}
+
+/// One terminal: a child on a pty, a core parsing its bytes, a renderer drawing the grid, and
+/// optionally a window the result is presented into.
+pub struct Session {
+    host: Host,
+    reader: FrameReader,
+    renderer: Renderer<GpuSurface>,
+    frame: Frame,
+    /// One GPU context for the session's whole life. Every renderer rebuild lands on the SAME
+    /// device, because a rebuild on a fresh device orphans an attached window's swapchain and
+    /// the frame simply stops following the window - no error, no log (measured 2026-08-04).
+    gpu: GpuContext,
+    window: Option<WindowTarget>,
+    drawn_generation: u64,
+    geometry: SessionGeometry,
+    font_size: f32,
+    font_family: Option<String>,
+}
+
+impl Session {
+    /// Starts `command` on a pty and builds the pipeline around it.
+    ///
+    /// The renderer is built BEFORE the child, so a machine that cannot render never spawns a
+    /// process it would immediately have to reap.
+    pub fn spawn(
+        command: Command,
+        geometry: SessionGeometry,
+        font_size: f32,
+        font_family: Option<String>,
+    ) -> Result<Session, SessionError> {
+        let gpu = GpuContext::new().map_err(|error| SessionError::Render(error.to_string()))?;
+        let renderer = build(&gpu, geometry, font_size, font_family.as_deref())?;
+        let (host, reader) = Host::spawn(command, Options::new(geometry.cols, geometry.rows))
+            .map_err(SessionError::Spawn)?;
+
+        Ok(Session {
+            host,
+            reader,
+            renderer,
+            frame: Frame::default(),
+            gpu,
+            window: None,
+            drawn_generation: 0,
+            geometry,
+            font_size,
+            font_family,
+        })
+    }
+
+    /// The GPU context a window target must be built on.
+    ///
+    /// Exposed rather than hidden because the caller owns the window: it builds the
+    /// `WindowTarget` from its own window handle and hands it back to [`Session::attach`]. The
+    /// context has to match, or the swapchain belongs to a different device than the frame.
+    pub fn context(&self) -> &GpuContext {
+        &self.gpu
+    }
+
+    pub fn cell_metrics(&self) -> CellMetrics {
+        self.renderer.cell_metrics()
+    }
+
+    pub fn geometry(&self) -> SessionGeometry {
+        self.geometry
+    }
+
+    /// Presents into `window` from now on. The next poll repaints in full: the window has
+    /// nothing in it yet.
+    pub fn attach(&mut self, window: WindowTarget) {
+        self.window = Some(window);
+        self.drawn_generation = 0;
+    }
+
+    /// Places the terminal's top-left inside the window, in PHYSICAL pixels.
+    ///
+    /// A host with chrome above the terminal sets it so the strip is RESERVED rather than
+    /// covered. No-op without a window, because the origin is a property of presenting.
+    pub fn set_origin(&mut self, x: u32, y: u32) {
+        if let Some(window) = self.window.as_mut() {
+            window.set_origin(x, y);
+        }
+    }
+
+    /// Reads the newest published frame and draws it. Returns whether anything was drawn.
+    ///
+    /// A frame no newer than the one already drawn is not redrawn - the seqlock hands back
+    /// whatever is current, and a quiet terminal publishes nothing new.
+    pub fn poll(&mut self) -> bool {
+        self.reader.read_into(&mut self.frame);
+        if !self.frame.is_valid() || self.frame.generation <= self.drawn_generation {
+            return false;
+        }
+        // The very first paint covers every row: rows the child never touched carry no damage
+        // stamp, and only `draw_all` gives them their background.
+        if self.drawn_generation == 0 {
+            self.renderer.draw_all(&self.frame);
+        } else {
+            self.renderer.draw(&self.frame);
+        }
+        self.drawn_generation = self.frame.generation;
+        true
+    }
+
+    /// The drawn pixels, for a caller with no window - tests, and headless assertions.
+    ///
+    /// A full-frame readback, so it is the expensive path by construction; presenting into a
+    /// window never touches it.
+    pub fn pixels(&mut self) -> Vec<u8> {
+        self.renderer.pixels()
+    }
+
+    /// Puts the drawn frame on screen.
+    ///
+    /// Separate from [`Session::poll`] on purpose, exactly as the C surface separates them:
+    /// polling advances the terminal, presenting puts a frame on screen, and the two run at
+    /// different rates - a resize presents without polling, a quiet terminal polls without
+    /// needing to present.
+    pub fn present(&mut self) -> Result<(), SessionError> {
+        // The margin colour comes from the frame's own top-left style, falling back to the
+        // palette default. A grid rounds to whole cells, so a window is almost never an exact
+        // multiple of the surface and the remainder is visible - clearing it to black while the
+        // terminal renders on its own background draws a hard band down the edge.
+        let clear = {
+            let palette = self.renderer.palette();
+            if self.frame.is_valid() {
+                let style = self.frame.style(self.frame.cell(0, 0).style_id());
+                palette.draw(&style).background
+            } else {
+                palette.default_background
+            }
+        };
+        let renderer = &mut self.renderer;
+        let window = self.window.as_mut().ok_or(SessionError::NoWindow)?;
+        window
+            .present(renderer.surface_mut(), clear)
+            .map_err(SessionError::Present)
+    }
+
+    /// Reconfigures the swapchain for a new WINDOW size, in physical pixels.
+    pub fn resize_window(&mut self, width: u32, height: u32) -> Result<(), SessionError> {
+        self.window
+            .as_mut()
+            .ok_or(SessionError::NoWindow)?
+            .resize(width, height);
+        Ok(())
+    }
+
+    /// Resizes the grid: the pty first, then the renderer.
+    ///
+    /// The pty leads because the child reacts to `SIGWINCH` by redrawing, and a renderer still
+    /// sized for the old grid would draw that redraw clipped.
+    pub fn resize(&mut self, geometry: SessionGeometry) -> Result<(), SessionError> {
+        if geometry == self.geometry || geometry.cols == 0 || geometry.rows == 0 {
+            return Ok(());
+        }
+        self.host
+            .resize(Geometry {
+                cols: geometry.cols,
+                rows: geometry.rows,
+            })
+            .map_err(|error| SessionError::Resize(format!("{error:?}")))?;
+
+        self.renderer = build(
+            &self.gpu,
+            geometry,
+            self.font_size,
+            self.font_family.as_deref(),
+        )?;
+        self.geometry = geometry;
+        // Everything on screen belongs to the old grid; the next frame repaints in full.
+        self.drawn_generation = 0;
+        Ok(())
+    }
+
+    pub fn send(&self, bytes: &[u8]) -> Result<(), SessionError> {
+        self.host
+            .send(bytes)
+            .map_err(|errno| SessionError::Send(std::io::Error::from(errno)))
+    }
+
+    pub fn scroll(&self, rows: i32) {
+        self.host.scroll(rows);
+    }
+
+    /// Whether the child has exited. Checked by the caller's event loop, not by a thread.
+    pub fn exited(&mut self) -> bool {
+        matches!(self.host.try_wait(), Ok(Some(_)))
+    }
+}
+
+fn build(
+    gpu: &GpuContext,
+    geometry: SessionGeometry,
+    font_size: f32,
+    family: Option<&str>,
+) -> Result<Renderer<GpuSurface>, SessionError> {
+    let fonts = FontStack::with_primary(family, font_size)
+        .map_err(|error| SessionError::Render(error.to_string()))?;
+    let cell = fonts.metrics();
+    let surface = GpuSurface::with_context(
+        gpu.clone(),
+        cell.width * u32::from(geometry.cols),
+        cell.height * u32::from(geometry.rows),
+    )
+    .map_err(|error| SessionError::Render(error.to_string()))?;
+    Ok(Renderer::<GpuSurface>::from_surface(
+        fonts,
+        surface,
+        geometry.cols,
+        geometry.rows,
+    ))
+}

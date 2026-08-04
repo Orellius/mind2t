@@ -101,13 +101,24 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// crosses the bus - so the argument is nil every time and the work is a present call.
     private func showFrame(_ image: CGImage?) {
         if let session = activeSession, session.presenting {
-            session.present()
+            let ok = session.present()
+            if !ok, !presentReported {
+                presentReported = true
+                FileHandle.standardError.write(Data("RUUAH_PRESENT=failed\n".utf8))
+            }
+            // The CGImage path is NOT run as a fallback here on purpose. Drawing the old way
+            // when a present fails would hide the failure behind a working-looking window,
+            // which is the whole class of bug this instrumentation exists to expose.
             return
         }
         if let image {
             view.contentLayer.contents = image
         }
     }
+
+    /// One report per run. A present that fails does so every frame, and 60 lines a second
+    /// buries the message it is trying to deliver.
+    private var presentReported = false
 
     /// Moves the metal layer to whichever session is active, when presenting is switched on.
     ///
@@ -123,11 +134,28 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         // forever, which looks exactly like a frozen terminal.
         view.contentLayer.contents = nil
         guard let session else { return }
+        // Size the layer BEFORE attaching. Activation can run before any layout pass, and an
+        // unsized CAMetalLayer reports a zero drawable which the swapchain clamps to 1x1 - an
+        // attach that succeeds and then shows nothing, while the stale CGImage underneath
+        // makes the window look correct. Measured 2026-08-04: the first live run reported
+        // `attach=ok drawable=1x1` and the picture on screen was the old path's.
+        view.layoutSubtreeIfNeeded()
         let size = view.presentLayer.drawableSize
-        if session.attachLayer(
+        let ok = session.attachLayer(
             view.presentLayer, width: Int(size.width), height: Int(size.height))
-        {
+        // Reported, always. A failed attach falls back to the readback path and the window
+        // looks EXACTLY the same, so without this line "it drew something" would be taken as
+        // proof the GPU path ran when it is equally what a silent fallback looks like.
+        let report =
+            "RUUAH_PRESENT_ATTACH=\(ok ? "ok" : "failed") "
+            + "drawable=\(Int(size.width))x\(Int(size.height))\n"
+        FileHandle.standardError.write(Data(report.utf8))
+        if ok {
             presentingSession = session
+            // Push the size again now that an owner exists. `onPresentResize` fires from
+            // layout, and a layout that ran while nothing was attached delivered its size to
+            // nobody - so ordering alone decided whether the swapchain was ever correct.
+            session.resizeLayer(width: Int(size.width), height: Int(size.height))
         }
     }
 

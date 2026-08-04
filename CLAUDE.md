@@ -641,6 +641,25 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
 
 ## Project rules & gotchas
 
+- **BINDARY'S GATE IS `scripts/smoke-bindary.sh`, AND IT NEEDS NO SCREEN.** Orel's standing order
+  (2026-08-04) while he works in parallel sessions: no windows on his display, no synthetic
+  input. The script runs the real Tauri host with its window ordered out and asserts eight
+  invariants about what AppKit, WebKit and the IPC actually did, exit code and all. Run it before
+  committing anything under `crates/bindary`. Four Tauri traps it pins, each of which presents as
+  a blank chrome strip and none of which errors:
+  1. a `devUrl` in `tauri.conf.json` sends every webview to a dev server in debug builds,
+     whatever else the config says - there is deliberately none;
+  2. a child webview created before `app.run` never navigates at all;
+  3. Tauri 2 grants a webview NOTHING without a capability file, and denies silently;
+  4. `tauri::WindowEvent` carries no keyboard variant, so the terminal's keys come from `NSEvent`
+     and never from the webview (project law 2).
+  The chrome is embedded at COMPILE time from `chrome/dist`, so a stale bundle ships silently;
+  the script rebuilds it first. `chrome/dist` and `crates/bindary/gen` are gitignored, like
+  `web/dist`.
+- **The tao + wry host survives as `cargo run --bin probe`**, on the same rule that keeps the
+  Swift host alive: a port with no reference is a rewrite with extra steps. Retire it when the
+  Tauri host reaches parity.
+
 - **EVERY SIZE THIS RENDERER TOUCHES IS A DEVICE PIXEL, AND THE FONT SIZE IS THE ONE PEOPLE
   FORGET.** A host builds the session at `font_size * scale_factor`, never at the point size.
   Handing the renderer 16.0 on a 2x display rasterizes the whole grid at half resolution: the

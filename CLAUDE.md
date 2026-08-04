@@ -16,7 +16,7 @@ This repo builds **two things, and the names are not interchangeable**:
   end because a context governor binds each one to the next.
 
 **Plan of record: `docs/plans/2026-08-04-bindary.md`.** Read it before starting any slice.
-Bindary slices are **`B1..B8`** and are a SEPARATE namespace from the `S1..S9` app slices in
+Bindary slices are **`B1..B9`** and are a SEPARATE namespace from the `S1..S9` app slices in
 `docs/APP-BACKLOG-2026.md`. Never mix them.
 
 The wedge, in one line: **we own the VT core, the pty and the renderer**, so agent state comes

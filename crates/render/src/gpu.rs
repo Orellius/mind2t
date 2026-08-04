@@ -35,6 +35,76 @@ pub enum GpuError {
     Readback(String),
 }
 
+/// The GPU objects a surface is built on, held apart from the surface itself.
+///
+/// Why this exists: a window's swapchain and a `GpuSurface` must come from the SAME device, and
+/// the adapter must be one that can actually present to that window. While `GpuSurface::new`
+/// created its own instance and device privately there was no way to satisfy either condition,
+/// which is the whole reason nothing could be drawn to a screen. Splitting the context out
+/// changes no arithmetic - `tests/backend.rs` still compares this backend to the CPU reference
+/// byte for byte - it only makes the device reachable.
+///
+/// The wgpu handles are reference-counted, so cloning a context is cheap and shares one device.
+#[derive(Clone, Debug)]
+pub struct GpuContext {
+    instance: wgpu::Instance,
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+}
+
+impl GpuContext {
+    /// Whatever adapter the system offers. Headless: the caller has no window in hand.
+    pub fn new() -> Result<GpuContext, GpuError> {
+        let instance = wgpu::Instance::default();
+        GpuContext::from_instance(instance, None)
+    }
+
+    /// An adapter chosen because it can present to `compatible`.
+    ///
+    /// Requesting the default adapter and only later discovering it cannot drive the window is
+    /// the multi-GPU failure this avoids. On a single-GPU Mac the two paths pick the same
+    /// adapter, which is exactly why the mistake would survive local testing and surface on
+    /// someone else's Linux box.
+    pub fn from_instance(
+        instance: wgpu::Instance,
+        compatible: Option<&wgpu::Surface<'static>>,
+    ) -> Result<GpuContext, GpuError> {
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            compatible_surface: compatible,
+            ..Default::default()
+        }))
+        .map_err(|error| GpuError::NoAdapter(error.to_string()))?;
+
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+                .map_err(|error| GpuError::NoDevice(error.to_string()))?;
+
+        Ok(GpuContext {
+            instance,
+            adapter,
+            device,
+            queue,
+        })
+    }
+
+    pub fn instance(&self) -> &wgpu::Instance {
+        &self.instance
+    }
+
+    pub fn adapter(&self) -> &wgpu::Adapter {
+        &self.adapter
+    }
+
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+}
+
 /// One recorded drawing operation, replayed on the GPU when pixels are read.
 ///
 /// Recording rather than dispatching immediately is what keeps the ordering honest: a blend
@@ -80,8 +150,7 @@ pub struct GpuSurface {
     /// the whole history onto a cleared one, and the ops can then be retired instead of
     /// accumulating for the lifetime of the surface.
     pixels: wgpu::Buffer,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    context: GpuContext,
     fill: wgpu::ComputePipeline,
     blend: wgpu::ComputePipeline,
     image: wgpu::ComputePipeline,
@@ -102,15 +171,34 @@ impl GpuSurface {
         self.ops.len()
     }
 
-    pub fn new(width: u32, height: u32) -> Result<GpuSurface, GpuError> {
-        let instance = wgpu::Instance::default();
-        let adapter =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-                .map_err(|error| GpuError::NoAdapter(error.to_string()))?;
+    /// The context this surface was built on, so a presenter can share its device.
+    pub fn context(&self) -> &GpuContext {
+        &self.context
+    }
 
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-                .map_err(|error| GpuError::NoDevice(error.to_string()))?;
+    /// The buffer the rasterized pixels live in: straight RGBA, row-major, top-down.
+    ///
+    /// Crate-private on purpose. `present.rs` binds it read-only in a fragment shader so the
+    /// finished frame reaches the screen without ever being copied to the CPU. Nothing outside
+    /// this crate should reach past `read_pixels`.
+    pub(crate) fn pixel_buffer(&self) -> &wgpu::Buffer {
+        &self.pixels
+    }
+
+    pub fn new(width: u32, height: u32) -> Result<GpuSurface, GpuError> {
+        GpuSurface::with_context(GpuContext::new()?, width, height)
+    }
+
+    /// Builds a surface on an existing context, so a window's swapchain and this surface share
+    /// one device. Without this the two live on separate devices and cannot see each other's
+    /// buffers at all.
+    pub fn with_context(
+        context: GpuContext,
+        width: u32,
+        height: u32,
+    ) -> Result<GpuSurface, GpuError> {
+        let device = context.device.clone();
+        let queue = context.queue.clone();
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ruuah-vt raster"),
@@ -192,26 +280,26 @@ impl GpuSurface {
             blend: make("blend"),
             image: make("image"),
             layout,
-            device,
-            queue,
+            context,
             ops: Vec::new(),
             coverage: Vec::new(),
         })
     }
 
-    /// Dispatches the operations recorded since the last read, then reads the buffer back.
+    /// Runs the operations recorded since the last flush, leaving the result in the buffer.
+    ///
+    /// Split out of `execute` so a frame can reach a screen without a readback: presenting
+    /// needs the work DONE, not the pixels in hand. `read_pixels` is now `flush` plus a copy.
     ///
     /// The pixel buffer is NOT cleared here. It carries every earlier operation's result, so
     /// dispatching only the new ones lands on the same pixels as replaying the whole history
     /// onto a fresh buffer -- and lets the log be retired, which is the whole point. Clearing
     /// it and replaying only the recent ops would silently drop everything painted before the
     /// previous read.
-    fn execute(&mut self) -> Result<Vec<u8>, GpuError> {
-        let pixel_bytes = ((self.width as u64) * (self.height as u64) * 4).max(4);
-        let pixels = &self.pixels;
+    pub fn flush(&mut self) {
 
         let alignment = self
-            .device
+            .context.device
             .limits()
             .min_uniform_buffer_offset_alignment
             .max(std::mem::size_of::<Params>() as u32) as usize;
@@ -234,7 +322,7 @@ impl GpuSurface {
         }
 
         let uniforms = self
-            .device
+            .context.device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("params"),
                 contents: &uniform,
@@ -248,14 +336,14 @@ impl GpuSurface {
             coverage.push(0);
         }
         let coverage_buffer = self
-            .device
+            .context.device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("coverage"),
                 contents: &coverage,
                 usage: wgpu::BufferUsages::STORAGE,
             });
 
-        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = self.context.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ruuah-vt raster"),
             layout: &self.layout,
             entries: &[
@@ -278,15 +366,8 @@ impl GpuSurface {
             ],
         });
 
-        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("readback"),
-            size: pixel_bytes,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-
         let mut encoder = self
-            .device
+            .context.device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
         // One pass for every operation. Ordering still holds: in a compute pass each
@@ -313,15 +394,48 @@ impl GpuSurface {
             }
         }
 
-        encoder.copy_buffer_to_buffer(pixels, 0, &readback, 0, pixel_bytes);
-        self.queue.submit(Some(encoder.finish()));
+        self.context.queue.submit(Some(encoder.finish()));
+
+        // Retired: their result now lives in the retained buffer.
+        self.ops.clear();
+        self.coverage.clear();
+    }
+
+    /// Runs the pending work and copies the finished pixels back to the CPU.
+    ///
+    /// The copy is the expensive part - a full frame at 2240x1400 is 12.5 MB across the bus,
+    /// every frame - and it exists only for callers that need the bytes: the CPU differential
+    /// test, the C ABI's `pixels` view, and headless captures. A window does NOT need it;
+    /// `present.rs` binds the same buffer on the GPU instead.
+    fn execute(&mut self) -> Result<Vec<u8>, GpuError> {
+        let pixel_bytes = ((self.width as u64) * (self.height as u64) * 4).max(4);
+
+        self.flush();
+
+        let readback = self.context.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size: pixel_bytes,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        // A separate submission from the dispatch above. Queue order is the guarantee that the
+        // compute work has landed before the copy reads it; sharing one encoder is not required
+        // and would put the readback back on the hot path for every caller.
+        let mut encoder = self
+            .context
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        encoder.copy_buffer_to_buffer(&self.pixels, 0, &readback, 0, pixel_bytes);
+        self.context.queue.submit(Some(encoder.finish()));
 
         let slice = readback.slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
         });
-        self.device
+        self.context
+            .device
             .poll(wgpu::PollType::Wait)
             .map_err(|error| GpuError::Readback(error.to_string()))?;
         receiver
@@ -334,9 +448,6 @@ impl GpuSurface {
         drop(data);
         readback.unmap();
 
-        // Retired: their result now lives in the retained buffer.
-        self.ops.clear();
-        self.coverage.clear();
         Ok(out)
     }
 }

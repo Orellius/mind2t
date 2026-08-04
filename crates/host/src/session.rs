@@ -17,9 +17,13 @@
 
 use std::process::Command;
 
+use crate::pointer::{Input, Pointer, Wheel};
 use ruuah_vt_core::events::Event;
 use ruuah_vt_frame::{Frame, FrameReader};
 use ruuah_vt_pty::key::{KeyOptions, OptionAsAlt};
+// Re-exported under host-facing names: a caller wiring a window should not have to learn that
+// the mouse encoder lives in the pty crate to name a click.
+pub use ruuah_vt_pty::mouse::{Action as MouseAction, Mods as MouseMods};
 use ruuah_vt_pty::{Geometry, Host, Options, SpawnError};
 use ruuah_vt_render::{
     CellMetrics, FontStack, GpuContext, GpuSurface, PresentError, Renderer, WindowTarget,
@@ -68,6 +72,8 @@ pub struct Session {
     /// The child's working directory, decoded from its last OSC 7 report. `None` until it
     /// reports one, and again after it reports an empty one.
     cwd: Option<String>,
+    /// Mouse-reporting state, the same type the C surface carries. One policy, two callers.
+    pointer: Pointer,
 }
 
 impl Session {
@@ -98,6 +104,7 @@ impl Session {
             font_size,
             font_family,
             cwd: None,
+            pointer: Pointer::default(),
         })
     }
 
@@ -342,6 +349,83 @@ impl Session {
 
     pub fn scroll(&self, rows: i32) {
         self.host.scroll(rows);
+    }
+
+    /// The view pointer positions are measured in: surface size and the insets around the grid,
+    /// in PHYSICAL pixels - the same space the frame's pixels use.
+    ///
+    /// Set it at launch and after every resize. Until it is set, every pointer event encodes to
+    /// nothing, which is correct rather than a failure: a report is a grid position, and there
+    /// is no grid to position against.
+    pub fn set_mouse_geometry(
+        &mut self,
+        screen_width: u32,
+        screen_height: u32,
+        padding_left: u32,
+        padding_top: u32,
+        padding_right: u32,
+        padding_bottom: u32,
+    ) {
+        self.pointer.set_geometry(
+            screen_width,
+            screen_height,
+            padding_left,
+            padding_top,
+            padding_right,
+            padding_bottom,
+        );
+    }
+
+    /// Feeds one pointer event to the child. `Ok(false)` means the protocol produced nothing.
+    ///
+    /// `code` is the protocol's button number: 0 motion with nothing held, 1 left, 2 middle, 3
+    /// right, 4..9 wheel and aux. Every press and release must reach this call EVEN WHILE
+    /// REPORTING IS OFF - the held-button bookkeeping happens here, and a release the host
+    /// swallowed leaves a button held forever, which the next drag reports as a phantom.
+    ///
+    /// `Ok(false)` hands the event back: it is the host's again for selection or a context menu.
+    pub fn mouse(
+        &mut self,
+        action: MouseAction,
+        code: u32,
+        mods: MouseMods,
+        x: f32,
+        y: f32,
+    ) -> Result<bool, SessionError> {
+        let cell = self.renderer.cell_metrics();
+        let Some(bytes) = self
+            .pointer
+            .button(&self.frame, cell, Input { action, code, mods, x, y })
+        else {
+            return Ok(false);
+        };
+        self.send(&bytes)?;
+        Ok(true)
+    }
+
+    /// Routes a wheel tick. `Ok(false)` means the child wanted neither a report nor alternate
+    /// scroll, so the wheel is the HOST's: scroll the viewport with [`Session::scroll`].
+    ///
+    /// Never both. A program that captured the mouse must not also have the view scrolled under
+    /// it, which is why this returns a decision rather than doing half of it here and leaving
+    /// the other half to a caller that might also act.
+    pub fn wheel(
+        &mut self,
+        x: f32,
+        y: f32,
+        ticks: i32,
+        mods: MouseMods,
+    ) -> Result<bool, SessionError> {
+        let cell = self.renderer.cell_metrics();
+        match self.pointer.wheel(&self.frame, cell, x, y, ticks, mods) {
+            Wheel::Send(bytes) => {
+                if !bytes.is_empty() {
+                    self.send(&bytes)?;
+                }
+                Ok(true)
+            }
+            Wheel::Viewport => Ok(false),
+        }
     }
 
     /// Ends the child and its pump, cleanly.

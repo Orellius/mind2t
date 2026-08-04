@@ -17,6 +17,9 @@ use ruuah_vt as _;
 
 pub mod config;
 pub mod cwd;
+/// Mouse-reporting state and routing, shared by the C surface below and by `session`. One
+/// policy, two callers - see its module card.
+pub mod pointer;
 /// The same pipeline as the C surface below, offered to Rust callers in this workspace.
 /// See its module card for why both exist and when they converge.
 pub mod session;
@@ -163,27 +166,9 @@ pub struct RuuahHost {
     row_semantics: Vec<u8>,
     /// Mouse-reporting state the embedder cannot carry itself: view geometry (set via
     /// `ruuah_host_mouse_geometry`), which buttons are down, and the motion-dedup cell.
-    mouse: HostMouse,
+    /// The type is shared with `session` so both surfaces route a pointer identically.
+    mouse: crate::pointer::Pointer,
     exited: bool,
-}
-
-/// The host side of mouse reporting. Geometry arrives from the embedder because only
-/// it knows the view's pixel size and content insets; cell metrics come from the live
-/// renderer at encode time because zoom rebuilds change them.
-#[derive(Debug, Default)]
-struct HostMouse {
-    screen_width: u32,
-    screen_height: u32,
-    padding_left: u32,
-    padding_top: u32,
-    padding_right: u32,
-    padding_bottom: u32,
-    /// Buttons currently down, bit N for button code N. Updated BEFORE encoding (the
-    /// oracle records click_state first), so a release's own button is already clear
-    /// and `any_button_pressed` reflects what else is held.
-    buttons_held: u16,
-    /// Last reported cell for motion dedup, the encoder's cross-call state.
-    last_cell: Option<(u32, u32)>,
 }
 
 /// One row's shell-semantic class, derived from the per-cell OSC 133 marks the core
@@ -546,7 +531,7 @@ pub unsafe extern "C" fn ruuah_host_spawn(
         row_semantics: Vec::new(),
         images,
         pending_events: std::collections::VecDeque::new(),
-        mouse: HostMouse::default(),
+        mouse: crate::pointer::Pointer::default(),
         exited: false,
     });
     unsafe { out.write(Box::into_raw(handle)) };
@@ -957,26 +942,6 @@ unsafe fn normalized_cwd(raw: *const u8, len: usize) -> Option<String> {
     crate::cwd::normalize(unsafe { std::slice::from_raw_parts(raw, len) })
 }
 
-/// Builds the encoder geometry from embedder-set view pixels plus the LIVE renderer's
-/// cell metrics (zoom rebuilds move them). `None` until the embedder has called
-/// `ruuah_host_mouse_geometry`.
-fn mouse_size(host: &RuuahHost) -> Option<ruuah_vt_pty::mouse::Size> {
-    if host.mouse.screen_width == 0 || host.mouse.screen_height == 0 {
-        return None;
-    }
-    let cell = host.renderer.cell_metrics();
-    Some(ruuah_vt_pty::mouse::Size {
-        screen_width: host.mouse.screen_width,
-        screen_height: host.mouse.screen_height,
-        cell_width: cell.width,
-        cell_height: cell.height,
-        padding_left: host.mouse.padding_left,
-        padding_top: host.mouse.padding_top,
-        padding_right: host.mouse.padding_right,
-        padding_bottom: host.mouse.padding_bottom,
-    })
-}
-
 fn mouse_mods(mods: u32) -> ruuah_vt_pty::mouse::Mods {
     ruuah_vt_pty::mouse::Mods {
         shift: mods & 1 != 0,
@@ -1006,12 +971,14 @@ pub unsafe extern "C" fn ruuah_host_mouse_geometry(
         return RuuahHostResult::InvalidValue;
     }
     let host = unsafe { &mut *host };
-    host.mouse.screen_width = screen_width;
-    host.mouse.screen_height = screen_height;
-    host.mouse.padding_left = padding_left;
-    host.mouse.padding_top = padding_top;
-    host.mouse.padding_right = padding_right;
-    host.mouse.padding_bottom = padding_bottom;
+    host.mouse.set_geometry(
+        screen_width,
+        screen_height,
+        padding_left,
+        padding_top,
+        padding_right,
+        padding_bottom,
+    );
     RuuahHostResult::Success
 }
 
@@ -1047,51 +1014,21 @@ pub unsafe extern "C" fn ruuah_host_mouse(
     }
     let host = unsafe { &mut *host };
 
-    use ruuah_vt_pty::mouse::{Action, Button, Event, Options};
+    use ruuah_vt_pty::mouse::Action;
     let action = match action {
         0 => Action::Press,
         1 => Action::Release,
         _ => Action::Motion,
     };
-    let button_enum = match button {
-        0 => None,
-        1 => Some(Button::Left),
-        2 => Some(Button::Middle),
-        3 => Some(Button::Right),
-        4 => Some(Button::Four),
-        5 => Some(Button::Five),
-        6 => Some(Button::Six),
-        7 => Some(Button::Seven),
-        8 => Some(Button::Eight),
-        9 => Some(Button::Nine),
-        // Real hardware buttons the protocol has no code for still take part in the
-        // held bookkeeping below; the encoder answers silence for them.
-        _ => Some(Button::Other),
-    };
 
-    // Held-state first, the oracle's order: a release's own button is already clear
-    // when the encoder asks what else is held.
-    if button > 0 {
-        let bit = 1u16 << (button.min(15) as u16);
-        match action {
-            Action::Press => host.mouse.buttons_held |= bit,
-            Action::Release => host.mouse.buttons_held &= !bit,
-            Action::Motion => {}
-        }
-    }
-
-    let Some(size) = mouse_size(host) else {
-        return RuuahHostResult::Ignored;
-    };
-    let encoded = ruuah_vt_pty::mouse::encode(
-        Event { action, button: button_enum, mods: mouse_mods(mods), x, y },
-        Options {
-            event_mode: host.frame.mouse_event(),
-            format: host.frame.mouse_format(),
-            size,
-            any_button_pressed: host.mouse.buttons_held != 0,
-            last_cell: Some(&mut host.mouse.last_cell),
-        },
+    // The policy - held-button bookkeeping, geometry, dedup - lives in `pointer`, because the
+    // Rust surface routes a pointer through the same rules and a second copy of them would
+    // diverge silently. Only the C contract (codes in, result codes out) is here.
+    let cell = host.renderer.cell_metrics();
+    let encoded = host.mouse.button(
+        &host.frame,
+        cell,
+        crate::pointer::Input { action, code: button, mods: mouse_mods(mods), x, y },
     );
     match encoded {
         Some(bytes) => match host.host.send(&bytes) {
@@ -1218,51 +1155,21 @@ pub unsafe extern "C" fn ruuah_host_wheel(
         return RuuahHostResult::Ignored;
     }
 
-    use ruuah_vt_pty::mouse::{Action, Button, Event, Options};
-    if host.frame.mouse_event() != ruuah_vt_core::mouse::MouseEvent::None {
-        let Some(size) = mouse_size(host) else {
-            return RuuahHostResult::Ignored;
-        };
-        let button = if ticks > 0 { Button::Four } else { Button::Five };
-        let mut out = Vec::new();
-        for _ in 0..ticks.unsigned_abs().min(64) {
-            if let Some(bytes) = ruuah_vt_pty::mouse::encode(
-                Event { action: Action::Press, button: Some(button), mods: mouse_mods(mods), x, y },
-                Options {
-                    event_mode: host.frame.mouse_event(),
-                    format: host.frame.mouse_format(),
-                    size,
-                    any_button_pressed: host.mouse.buttons_held != 0,
-                    last_cell: Some(&mut host.mouse.last_cell),
-                },
-            ) {
-                out.extend(bytes);
+    // `Viewport` is the C surface's `Ignored`: this ABI has no viewport of its own, so handing
+    // the wheel back to the embedder IS the answer. The Rust surface acts on it instead.
+    let cell = host.renderer.cell_metrics();
+    match host
+        .mouse
+        .wheel(&host.frame, cell, x, y, ticks, mouse_mods(mods))
+    {
+        crate::pointer::Wheel::Send(bytes) => {
+            if !bytes.is_empty() && host.host.send(&bytes).is_err() {
+                return RuuahHostResult::SendFailed;
             }
+            RuuahHostResult::Success
         }
-        if !out.is_empty() && host.host.send(&out).is_err() {
-            return RuuahHostResult::SendFailed;
-        }
-        return RuuahHostResult::Success;
+        crate::pointer::Wheel::Viewport => RuuahHostResult::Ignored,
     }
-
-    if host.frame.alternate_screen() && host.frame.mouse_alternate_scroll() {
-        let seq: &[u8] = match (host.frame.cursor_keys(), ticks > 0) {
-            (true, true) => b"\x1bOA",
-            (true, false) => b"\x1bOB",
-            (false, true) => b"\x1b[A",
-            (false, false) => b"\x1b[B",
-        };
-        let mut out = Vec::with_capacity(seq.len() * ticks.unsigned_abs().min(64) as usize);
-        for _ in 0..ticks.unsigned_abs().min(64) {
-            out.extend_from_slice(seq);
-        }
-        return match host.host.send(&out) {
-            Ok(()) => RuuahHostResult::Success,
-            Err(_) => RuuahHostResult::SendFailed,
-        };
-    }
-
-    RuuahHostResult::Ignored
 }
 
 /// The state behind the opaque workflows handle: parsed templates plus the loader's

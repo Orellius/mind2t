@@ -643,7 +643,7 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
 
 - **BINDARY'S GATE IS `scripts/smoke-bindary.sh`, AND IT NEEDS NO SCREEN.** Orel's standing order
   (2026-08-04) while he works in parallel sessions: no windows on his display, no synthetic
-  input. The script runs the real Tauri host with its window ordered out and asserts **twelve**
+  input. The script runs the real Tauri host with its window ordered out and asserts **fourteen**
   invariants about what AppKit, WebKit, the IPC and the CHILD actually did, exit code and all.
   Run it before committing anything under `crates/bindary`. It ends as soon as it has collected
   everything (about 3.5s of run time), and burns its 20s ceiling only when something is wrong.
@@ -670,11 +670,28 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   1. **zsh re-reports its own directory from `precmd`**, so a synthetic OSC 7 report is replaced
      within milliseconds of the command ending. Reading the session's cwd at the END of a run
      finds the repository, correctly and uselessly. The gate records the SEQUENCE of directories
-     and asks whether the probe's value ever appeared, and it holds the child inside a long
-     `sleep` so the strip can be read while the value is still current.
+     and asks whether the probe's value ever appeared.
   2. A returning prompt changes the grid **with no input**, which breaks the "nothing else moved"
-     control of the scroll check for reasons that have nothing to do with scrolling. The same
-     long sleep is what keeps that window quiet.
+     control of the scroll check for reasons that have nothing to do with scrolling.
+  The fix for both is **`exec cat`**: replacing the shell means no `precmd` ever runs again, so
+  the directory stays put and the grid goes still - and `cat` echoes what it receives, which is
+  the only way to SEE a mouse report, whose whole nature is to travel away from us. ECHOCTL
+  draws the escape as a printable `^[`, so the assertion is ordinary grid text.
+- **MOUSE POLICY LIVES IN `crates/host/src/pointer.rs`, ONCE** (B2.6). The encoder is pure and
+  measured against the oracle; what it cannot own is the state around it - held buttons, the
+  motion-dedup cell, the view geometry - and that state used to exist only inside the C ABI. Both
+  surfaces now call the same `Pointer`, because the Swift host is the ORACLE for this port and
+  two policies would make "do the two hosts agree?" a question about the hosts rather than about
+  the port. The five end-to-end mouse tests in `tests/host_abi.rs` were written before the
+  extraction and are what proved it changed nothing.
+- **THE WHEEL GOES TO EXACTLY ONE PLACE**, and the order is the rule: a child that captured the
+  mouse gets the report, otherwise the alternate screen with mode 1007 gets arrow keys, otherwise
+  the host scrolls its viewport. `Session::wheel` answers `Ok(false)` for that last case rather
+  than scrolling itself, so the decision cannot be taken twice. Scrolling the view under a
+  full-screen program looks like a rendering bug and is a routing one.
+- **`acceptsMouseMovedEvents` is NO by default on an NSWindow**, and the failure is invisible: a
+  child in mode 1003 receives clicks and drags perfectly and never hears a bare move, so a menu
+  that highlights under the cursor simply never highlights. Set once at launch.
 - **The tao + wry host survives as `cargo run --bin probe`**, on the same rule that keeps the
   Swift host alive: a port with no reference is a rewrite with extra steps. Retire it when the
   Tauri host reaches parity. It no longer carries its own paste: `bindary::clipboard` is the one

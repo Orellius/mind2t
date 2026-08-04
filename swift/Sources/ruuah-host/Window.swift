@@ -60,6 +60,17 @@ final class TerminalView: NSView {
     /// holds only the background color, so the margin matches the terminal's own black.
     let contentLayer = CALayer()
 
+    /// The GPU present target (B1), sized and positioned exactly like `contentLayer` and
+    /// kept directly beneath it.
+    ///
+    /// A sibling rather than a replacement, deliberately. `contentLayer` also carries the
+    /// ghost-suggestion sublayer and supplies the geometry the caret and the wheel arithmetic
+    /// read, so swapping its class would drag unrelated code into a rendering change. With the
+    /// metal layer below it, `contentLayer` keeps its sublayers and simply stops receiving a
+    /// `contents` image while presenting is on - and the two paths can run alternately against
+    /// each other, which is what makes the CGImage path still usable as the oracle.
+    let presentLayer = CAMetalLayer()
+
     /// One keyboard event for the host's key encoder: (action, key, mods,
     /// consumedMods, utf8, unshiftedCodepoint) in the ruuah_host_key vocabulary.
     /// Returns whether the terminal produced bytes.
@@ -114,16 +125,43 @@ final class TerminalView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
 
+    /// Fired after the present layer's drawable size changed, with PHYSICAL pixels.
+    ///
+    /// Physical, not points: a swapchain configured in points on a Retina display is half
+    /// resolution, and half resolution looks soft rather than broken, so nothing catches it.
+    var onPresentResize: ((UInt32, UInt32) -> Void)?
+
     override func layout() {
         super.layout()
-        contentLayer.frame = bounds.insetBy(
-            dx: TerminalView.padding, dy: TerminalView.padding)
+        let content = bounds.insetBy(dx: TerminalView.padding, dy: TerminalView.padding)
+        contentLayer.frame = content
+        syncPresentLayer(to: content)
         layoutBars()
         pushMouseGeometry()
     }
 
+    /// Keeps the present layer congruent with the content layer, in both units at once.
+    ///
+    /// `frame` is points, `drawableSize` is device pixels, and getting the pair out of step is
+    /// how a terminal ends up sharp on one display and soft on another.
+    private func syncPresentLayer(to content: CGRect) {
+        presentLayer.frame = content
+        let scale = window?.backingScaleFactor ?? presentLayer.contentsScale
+        presentLayer.contentsScale = scale
+        let pixels = CGSize(
+            width: max(1, content.width * scale).rounded(),
+            height: max(1, content.height * scale).rounded())
+        guard pixels != presentLayer.drawableSize else { return }
+        presentLayer.drawableSize = pixels
+        onPresentResize?(UInt32(pixels.width), UInt32(pixels.height))
+    }
+
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
+        // Moving between a Retina and a non-Retina display changes the scale without changing
+        // the bounds, so layout() is never called and the swapchain would keep its old
+        // resolution silently.
+        syncPresentLayer(to: contentLayer.frame)
         pushMouseGeometry()
     }
 

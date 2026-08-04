@@ -33,6 +33,18 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     private let webDir: String?
     private var window: NSWindow!
     private var view: TerminalView!
+
+    /// B1: present frames on the GPU instead of copying them back and drawing a CGImage.
+    ///
+    /// An environment switch rather than a config key, on purpose. This is a temporary A/B
+    /// against the path it replaces, not a preference anyone should carry: once presenting is
+    /// proven it becomes the only path and this disappears, whereas a config key would have to
+    /// be parsed, defaulted, documented and then deprecated. `RUUAH_GPU_PRESENT=1`.
+    private let gpuPresent = ProcessInfo.processInfo.environment["RUUAH_GPU_PRESENT"] == "1"
+    /// The session whose host currently owns the metal layer. Only one can: the layer is a
+    /// single swapchain, and attaching a second host to it would have two renderers presenting
+    /// into the same drawable.
+    private var presentingSession: Session?
     private var tabBar: TabBarView!
     private var timer: Timer?
 
@@ -83,9 +95,48 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         }
     }
 
+    /// Puts one polled frame on screen, whichever path is live.
+    ///
+    /// While presenting there IS no image - the host leaves `pixels` null so the frame never
+    /// crosses the bus - so the argument is nil every time and the work is a present call.
+    private func showFrame(_ image: CGImage?) {
+        if let session = activeSession, session.presenting {
+            session.present()
+            return
+        }
+        if let image {
+            view.contentLayer.contents = image
+        }
+    }
+
+    /// Moves the metal layer to whichever session is active, when presenting is switched on.
+    ///
+    /// One layer means one swapchain, so exactly one host may own it; attaching a second would
+    /// have two renderers writing the same drawable. The previous owner is detached first,
+    /// which also restores its readback path, so a failed attach leaves a working session
+    /// rather than a blank one.
+    private func syncPresentTarget(to session: Session?) {
+        guard gpuPresent, presentingSession !== session else { return }
+        presentingSession?.detachLayer()
+        presentingSession = nil
+        // The outgoing session's last image would otherwise sit on top of the metal layer
+        // forever, which looks exactly like a frozen terminal.
+        view.contentLayer.contents = nil
+        guard let session else { return }
+        let size = view.presentLayer.drawableSize
+        if session.attachLayer(
+            view.presentLayer, width: Int(size.width), height: Int(size.height))
+        {
+            presentingSession = session
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         view = TerminalView(frame: .zero)
         view.wantsLayer = true
+        view.onPresentResize = { [weak self] width, height in
+            self?.presentingSession?.resizeLayer(width: Int(width), height: Int(height))
+        }
 
         tabBar = TabBarView(frame: .zero)
         tabBar.delegate = self
@@ -119,6 +170,14 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         // Native resolution: the renderer rasterizes at backing scale, the layer declares
         // it, and one buffer pixel is one device pixel.
         view.layer?.backgroundColor = NSColor.black.cgColor
+        // Below the content layer: the metal layer carries the frame, the content layer keeps
+        // its sublayers (the ghost suggestion) and its geometry, and overlays stay on top.
+        // Device and pixel format are deliberately NOT set here - the surface owns them, and a
+        // layer configured with one device while the renderer draws on another is a black
+        // window with no error anywhere.
+        view.presentLayer.isOpaque = true
+        view.presentLayer.contentsScale = window.backingScaleFactor
+        view.layer?.addSublayer(view.presentLayer)
         view.layer?.addSublayer(view.contentLayer)
         view.contentLayer.contentsScale = window.backingScaleFactor
         view.contentLayer.magnificationFilter = .nearest
@@ -468,9 +527,8 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         window.title = session.title
         refreshSidebar()
         fitToPane(session)
-        if let image = session.poll() ?? session.lastImage {
-            view.contentLayer.contents = image
-        }
+        syncPresentTarget(to: session)
+        showFrame(session.poll() ?? session.lastImage)
         applyBackground(of: session)
         // Mouse geometry is per-host state; a session activated (or just spawned)
         // after the last layout pass has never seen the view's size.
@@ -508,6 +566,10 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     private func pollTick() {
         tick += 1
         guard let session = activeSession else { return }
+        if session.presenting {
+            session.present()
+            applyBackground(of: session)
+        }
         if let image = session.poll() {
             view.contentLayer.contents = image
             applyBackground(of: session)
@@ -1184,9 +1246,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         for session in sessions {
             fitToPane(session)
         }
-        if let session = activeSession, let image = session.poll() ?? session.lastImage {
-            view.contentLayer.contents = image
-        }
+        showFrame(activeSession?.poll() ?? activeSession?.lastImage)
     }
 
     private func handleSidebar(_ message: PanelMessage) {

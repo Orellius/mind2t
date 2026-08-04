@@ -108,8 +108,50 @@ final class Session {
         }
     }
 
+    /// Whether this session is presenting into a metal layer rather than handing back pixels.
+    private(set) var presenting = false
+
+    /// Takes over a `CAMetalLayer`, so polled frames go to the screen on the GPU.
+    ///
+    /// `width` and `height` are DEVICE pixels (the layer's drawableSize). Returns whether the
+    /// host accepted it; a refusal means the adapter cannot drive that window or the window
+    /// offered no usable format, and the caller should stay on the image path rather than show
+    /// an empty layer.
+    @discardableResult
+    func attachLayer(_ layer: CAMetalLayer, width: Int, height: Int) -> Bool {
+        guard let host, !exited else { return false }
+        let raw = Unmanaged.passUnretained(layer).toOpaque()
+        let ok = ruuah_host_attach_layer(host, raw, UInt32(width), UInt32(height))
+            == RUUAH_HOST_SUCCESS
+        presenting = ok
+        return ok
+    }
+
+    func detachLayer() {
+        guard let host, presenting else { return }
+        _ = ruuah_host_detach_layer(host)
+        presenting = false
+    }
+
+    /// Reconfigures the swapchain. DEVICE pixels.
+    func resizeLayer(width: Int, height: Int) {
+        guard let host, presenting else { return }
+        _ = ruuah_host_resize_layer(host, UInt32(width), UInt32(height))
+    }
+
+    /// Puts the current frame on screen. No-op unless a layer is attached.
+    @discardableResult
+    func present() -> Bool {
+        guard let host, presenting, !exited else { return false }
+        return ruuah_host_present(host) == RUUAH_HOST_SUCCESS
+    }
+
     /// Polls once. Returns a fresh image when the host drew; `exited` flips when the
     /// child is gone. Safe to call at any rate -- unchanged frames cost almost nothing.
+    ///
+    /// While presenting, the host leaves `frame.pixels` NULL on purpose - the frame never
+    /// crosses to the CPU - so this returns nil every time and the caller drives `present()`
+    /// instead of looking for an image.
     @discardableResult
     func poll() -> CGImage? {
         guard let host, !exited else { return nil }

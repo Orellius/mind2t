@@ -170,10 +170,17 @@ final class Session {
         if frame.drew, let pixels = frame.pixels {
             fresh = Session.makeImage(pixels, width: Int(frame.width), height: Int(frame.height))
             if let fresh { lastImage = fresh }
-            if cellWidth == 0 {
-                cellWidth = Int(frame.width) / Int(cols)
-                cellHeight = Int(frame.height) / Int(rows)
-            }
+        }
+        // Derived from the REPORTED grid size, never from the pixel buffer. The C surface
+        // reports width and height off the renderer's canvas whether or not it lends any
+        // pixels, and while presenting it lends none by design. These two numbers gate
+        // `fitToPane`, so keying them off the readback froze the grid at its spawn size for
+        // the whole session: the window grew, the terminal did not, and nothing reported a
+        // failure because nothing had failed. (Operator-reported from a screenshot,
+        // 2026-08-04; the readback removal took the cell metrics with it.)
+        if frame.drew, cellWidth == 0, frame.width > 0, frame.height > 0, cols > 0, rows > 0 {
+            cellWidth = Int(frame.width) / Int(cols)
+            cellHeight = Int(frame.height) / Int(rows)
         }
         if let semantics = frame.row_semantics, frame.row_count > 0 {
             rowClasses = Array(UnsafeBufferPointer(start: semantics, count: Int(frame.row_count)))

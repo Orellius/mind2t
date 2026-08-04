@@ -12,6 +12,7 @@ members = [
     "crates/abi",
     "crates/abi-types",
     "crates/host",
+    "crates/bindary",
 ]
 
 [workspace.package]

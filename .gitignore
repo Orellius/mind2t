@@ -4,3 +4,6 @@
 /web/node_modules
 # The panel document is a build product (scripts/build-web.sh), like the Rust archives.
 /web/dist
+/chrome/dist
+# Tauri's generated capability schemas - derived from capabilities/ at build time.
+/crates/bindary/gen

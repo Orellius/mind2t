@@ -170,6 +170,15 @@ impl Session {
         }
     }
 
+    /// Where the terminal's top-left currently sits in the window, or `None` with no window.
+    ///
+    /// A reader exists because the setter is the kind of call that can silently not happen -
+    /// wrong order, wrong branch, a window attached after it - and the symptom (chrome drawn
+    /// over the terminal's first rows) looks like a layout choice rather than a bug.
+    pub fn origin(&self) -> Option<(u32, u32)> {
+        self.window.as_ref().map(|window| window.origin())
+    }
+
     /// Reads the newest published frame and draws it. Returns whether anything was drawn.
     ///
     /// A frame no newer than the one already drawn is not redrawn - the seqlock hands back
@@ -269,6 +278,16 @@ impl Session {
 
     pub fn scroll(&self, rows: i32) {
         self.host.scroll(rows);
+    }
+
+    /// Ends the child and its pump, cleanly.
+    ///
+    /// Exists because a host that needs a specific EXIT CODE cannot use the runtime's own exit -
+    /// and leaving through `process::exit` would skip every destructor, including the one that
+    /// reaps the child on its pty (SCAR-016: a kill signal skips cleanup). Calling this first
+    /// makes the abrupt exit safe.
+    pub fn shutdown(&mut self) {
+        self.host.shutdown();
     }
 
     /// Whether the child has exited. Checked by the caller's event loop, not by a thread.

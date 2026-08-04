@@ -172,3 +172,48 @@ fn a_non_srgb_target_is_accepted() {
     Blitter::new(&context, wgpu::TextureFormat::Bgra8Unorm)
         .expect("the format a macOS swapchain actually offers must be accepted");
 }
+
+#[test]
+fn presenting_a_frame_never_copies_it_back_to_the_cpu() {
+    // The whole point of B1, asserted rather than asserted-about. "We no longer read back" is
+    // a claim about a branch, and a branch stays true exactly until someone adds a caller -
+    // so the surface counts its own full-frame copies and this requires ZERO across repeated
+    // blits.
+    let context = GpuContext::new().expect("a GPU");
+    let mut surface = GpuSurface::with_context(context.clone(), WIDTH, HEIGHT).expect("a surface");
+
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let blitter = Blitter::new(&context, format).expect("a non-sRGB target is accepted");
+    let texture = context.device().create_texture(&wgpu::TextureDescriptor {
+        label: Some("present target"),
+        size: wgpu::Extent3d {
+            width: WIDTH,
+            height: HEIGHT,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+    for _ in 0..30 {
+        paint(&mut surface);
+        blitter.blit(&mut surface, &view, wgpu::Color::BLACK);
+    }
+
+    assert_eq!(
+        surface.readbacks(),
+        0,
+        "presenting copied the frame back to the CPU; that copy is the cost this slice exists \
+         to remove"
+    );
+
+    // The counter is not stuck at zero: the path that DOES read back must move it, or the
+    // assertion above would hold just as well for a counter nobody increments.
+    let _ = surface.read_pixels();
+    assert_eq!(surface.readbacks(), 1, "the readback path did not register");
+}

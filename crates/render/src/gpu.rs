@@ -157,6 +157,13 @@ pub struct GpuSurface {
     layout: wgpu::BindGroupLayout,
     ops: Vec<Op>,
     coverage: Vec<u8>,
+    /// How many times the whole frame has been copied back to the CPU.
+    ///
+    /// The readback is the cost presenting exists to remove - a full frame is 12.5 MB at
+    /// 2240x1400 - and "we no longer read back" is a claim about a branch, which is exactly
+    /// the shape of claim that is true right up until someone adds a caller. Counted so a
+    /// test can require ZERO across a presented frame instead of trusting the branch.
+    reads: usize,
 }
 
 impl GpuSurface {
@@ -169,6 +176,12 @@ impl GpuSurface {
     #[doc(hidden)]
     pub fn recorded_ops(&self) -> usize {
         self.ops.len()
+    }
+
+    /// How many full-frame copies back to the CPU this surface has served.
+    #[doc(hidden)]
+    pub fn readbacks(&self) -> usize {
+        self.reads
     }
 
     /// The context this surface was built on, so a presenter can share its device.
@@ -282,6 +295,7 @@ impl GpuSurface {
             layout,
             context,
             ops: Vec::new(),
+            reads: 0,
             coverage: Vec::new(),
         })
     }
@@ -411,6 +425,7 @@ impl GpuSurface {
         let pixel_bytes = ((self.width as u64) * (self.height as u64) * 4).max(4);
 
         self.flush();
+        self.reads += 1;
 
         let readback = self.context.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("readback"),

@@ -20,6 +20,12 @@ export type SessionState = {
 
 export const SESSION_EVENT = "bindary://session" as const;
 
+/// Sent once, by the chrome, when its script has actually run.
+///
+/// The host has no other way to distinguish a page that failed to load from a page that loaded
+/// and said nothing: both are an empty strip. This is the difference.
+export const CHROME_READY = "bindary://chrome-ready" as const;
+
 /// Narrows an unknown payload to `SessionState`, or returns null.
 ///
 /// Returning null rather than throwing is deliberate: a malformed payload is a host bug, and the

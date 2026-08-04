@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { SESSION_EVENT, parseSessionState, type SessionState } from "./protocol";
+import { CHROME_READY, SESSION_EVENT, parseSessionState, type SessionState } from "./protocol";
 
 /// The chrome strip. It describes the session; it never touches it.
 ///
@@ -9,6 +9,19 @@ import { SESSION_EVENT, parseSessionState, type SessionState } from "./protocol"
 /// rounding and then quietly disagree with the terminal it is describing.
 export function Chrome(): React.JSX.Element {
   const [session, setSession] = useState<SessionState | null>(null);
+
+  useEffect(() => {
+    // A POSITIVE signal that this document ran. The host cannot otherwise tell a page that
+    // failed to load from a page that loaded and had nothing to say - both are a blank strip,
+    // and one of them is a bug (SCAR-004: a silence proves nothing).
+    // The title is a channel that cannot fail for IPC reasons: WebKit exposes it to the host
+    // directly, so it separates "the script never ran" from "the script ran and the IPC did not
+    // carry its message". Two suspects, one line.
+    document.title = `bindary-chrome-ran ${window.location.href}`;
+    void import("@tauri-apps/api/event")
+      .then((api) => api.emit(CHROME_READY, { href: window.location.href }))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     let cancelled = false;

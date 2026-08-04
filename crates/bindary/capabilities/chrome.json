@@ -1,0 +1,7 @@
+{
+  "identifier": "chrome",
+  "description": "What the chrome strip is allowed to do: listen for the session state the host publishes, and announce once that it has mounted. Nothing else - it has no filesystem, no shell, no window control and no way to reach the terminal. An app with NO capability file grants nothing at all, which is why the handshake was silently never delivered until this file existed.",
+  "windows": ["main"],
+  "webviews": ["chrome"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten", "core:event:allow-emit"]
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Bindary",
+  "version": "0.1.0",
+  "identifier": "com.orellius.bindary",
+  "build": {
+    "frontendDist": "../../chrome/dist",
+    "beforeBuildCommand": "bun run --cwd ../../chrome build"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": "app"
+  }
+}

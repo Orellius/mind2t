@@ -250,14 +250,15 @@ instantly from the list, closed with its row's X. One thing on screen at a
 time is the model. Revisit only if real daily use produces the sentence "I
 need these two side by side" - and then as a deliberate decision, not a drift.
 
-> **STAMPED 2026-08-04: reversal PENDING, not taken.** The Bindary direction
-> (`docs/plans/2026-08-04-bindary.md`, slice **B3**) needs splits, because the
-> premise changed: this refusal was correct for a single-user terminal, where one
-> thing on screen at a time is the right model, and a fleet controller is N-up by
-> definition - you cannot direct four agents you cannot see. Recorded here rather
-> than acted on, exactly as the line above demands. **B3 does not start without
-> Orel's explicit yes.** If he declines, Bindary stays single-pane and
-> tab-switched, and B4 onward are unaffected.
+> **REVERSED 2026-08-04 by Orel ("go, take splits too"), deliberately, as the line
+> above required.** The premise changed: this refusal was correct for a single-user
+> terminal, where one thing on screen at a time is the right model. Bindary is a
+> fleet controller, which is N-up by definition - you cannot direct four agents you
+> cannot see, and parallel sessions are already how the operator works. Splits are
+> now **Bindary slice B3** (`docs/plans/2026-08-04-bindary.md`): a Rust-side layout
+> tree inside ONE wgpu surface, not per-pane surfaces, so EXACT TILING extends from
+> two regions to a tree without changing its nature. S7 itself stays closed - the
+> work lives under B3, not here.
 
 **S8 - Persistent sessions.** Superset's "closing the laptop doesn't kill the
 sessions". V1 exists today (sessions outlive their window inside the app).

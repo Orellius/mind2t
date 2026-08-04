@@ -52,7 +52,10 @@ const HEADLESS_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// How long after the chrome announces itself before its DOM is read. One render plus the
 /// replayed state; generous, because the cost of being early is a false failure.
-const SETTLE: std::time::Duration = std::time::Duration::from_millis(1200);
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// How often the DOM is re-read while it still disagrees with the host.
+const REPROBE: std::time::Duration = std::time::Duration::from_millis(400);
 
 fn headless() -> bool {
     std::env::args().any(|argument| argument == "--smoke")
@@ -67,6 +70,8 @@ struct Smoke {
     layers: Vec<String>,
     origin: Option<(u32, u32)>,
     grid: Option<(u16, u16)>,
+    /// Title bar inset plus strip, in physical pixels: what the origin MUST clear.
+    reserved: Option<u32>,
 }
 
 impl Smoke {
@@ -96,8 +101,11 @@ impl Smoke {
                 "the session has a real grid",
             ),
             (
-                self.origin.is_some_and(|(x, y)| x == 0 && y > 0),
-                "the terminal is offset below the strip, so no row hides under the chrome",
+                self.origin
+                    .zip(self.reserved)
+                    .is_some_and(|((x, y), reserved)| x == 0 && y >= reserved),
+                "the terminal clears the title bar AND the strip - `y > 0` was too weak a check \
+                 and passed while the chrome sat behind the title bar with 8pt showing",
             ),
             (
                 self.chrome_url.as_deref() == Some("tauri://localhost"),
@@ -185,7 +193,7 @@ fn main() {
 
     let scale = window.scale_factor().unwrap_or(1.0);
     let physical = window.inner_size().expect("the window size");
-    let strip = (BAR_HEIGHT * scale) as u32;
+    let strip = ((BAR_HEIGHT + titlebar_inset(&window)) * scale) as u32;
 
     let mut session = match Session::spawn(
         shell(),
@@ -317,7 +325,7 @@ fn main() {
     // flag the farewell printed a hundred times. A flag, not `process::exit`, because leaving
     // through the process would skip the pty host's teardown (SCAR-016).
     let mut finished = false;
-    let mut probed = false;
+    let mut probed_at: Option<std::time::Instant> = None;
     let mut ready_at: Option<std::time::Instant> = None;
     let smoke = std::rc::Rc::new(std::cell::RefCell::new(Smoke::default()));
     let page_finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -377,6 +385,11 @@ fn main() {
                     },
                 ) {
                     eprintln!("bindary: could not reach the chrome: {error}");
+                } else {
+                    println!(
+                        "bindary: told the chrome {}x{} exited={exited}",
+                        geometry.cols, geometry.rows
+                    );
                 }
             }
 
@@ -402,13 +415,30 @@ fn main() {
             if ready.load(std::sync::atomic::Ordering::Relaxed) && ready_at.is_none() {
                 ready_at = Some(std::time::Instant::now());
             }
+            // POLLED, not timed. A single read after a settle window was ~50% flaky: the
+            // replayed state renders whenever React gets to it, and no fixed delay is the right
+            // one. Re-reading until the document agrees (or the budget ends) removes the race
+            // instead of widening it - and a probe that never agrees still fails, so this makes
+            // the gate less flaky WITHOUT making it more forgiving.
             let settled = ready_at.is_some_and(|at| at.elapsed() >= SETTLE);
-            if headless() && !probed && settled {
-                probed = true;
+            let agreed = smoke
+                .borrow()
+                .grid
+                .map(|(cols, rows)| format!("{cols}x{rows}"))
+                .zip(smoke.borrow().document.clone())
+                .is_some_and(|(grid, document)| document.contains(&grid));
+            let probing = headless() || std::env::var("BINDARY_PROBE").is_ok();
+            if probing && settled && !agreed && probed_at.is_none_or(|at| at.elapsed() >= REPROBE)
+            {
+                probed_at = Some(std::time::Instant::now());
                 {
                     let mut record = smoke.borrow_mut();
                     record.origin = session.origin();
                     record.grid = Some((geometry.cols, geometry.rows));
+                    record.reserved = Some(
+                        ((BAR_HEIGHT + titlebar_inset(&window)) * window.scale_factor().unwrap_or(1.0))
+                            as u32,
+                    );
                 }
                 #[cfg(target_os = "macos")]
                 probe_document(&window, std::rc::Rc::clone(&smoke));
@@ -450,7 +480,7 @@ fn main() {
             let mut session = session.borrow_mut();
             let (width, height) = (size.width.max(1), size.height.max(1));
             let scale = window.scale_factor().unwrap_or(1.0);
-            let strip = (BAR_HEIGHT * scale) as u32;
+            let strip = ((BAR_HEIGHT + titlebar_inset(&window)) * scale) as u32;
 
             if let Err(error) = session.resize_window(width, height) {
                 eprintln!("bindary: window resize refused: {error:?}");
@@ -465,7 +495,9 @@ fn main() {
             // The webview is a child view with no autoresizing mask; nothing moves it but this.
             let logical = size.to_logical::<f64>(scale);
             if let Some(chrome) = window.get_webview("chrome") {
+                let inset = titlebar_inset(&window);
                 let _ = chrome.set_size(LogicalSize::new(logical.width, BAR_HEIGHT));
+                let _ = chrome.set_position(LogicalPosition::new(0.0, inset));
             }
         }
 
@@ -689,6 +721,58 @@ fn view_tree(window: &tauri::Window) -> Vec<String> {
     layers
 }
 
+/// The height of the window's title bar, in POINTS.
+///
+/// Tauri's content view spans the WHOLE window, title bar included, so point zero is behind the
+/// traffic lights rather than below them. Placing the chrome at zero puts it under the title bar
+/// where about eight points of it show - which reads exactly like "the terminal overlaps the top
+/// bar", and is what Orel saw on first sight. Asked of AppKit rather than hardcoded to 28,
+/// because the answer changes with the title bar style and with the system.
+#[cfg(target_os = "macos")]
+fn titlebar_inset(window: &tauri::Window) -> f64 {
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use objc2_app_kit::NSView;
+    use objc2_foundation::NSRect;
+
+    let Ok(handle) = window.ns_window() else {
+        return 0.0;
+    };
+    let ns_window: *mut AnyObject = handle.cast();
+    if ns_window.is_null() {
+        return 0.0;
+    }
+
+    // Safety: read-only geometry on the live NSWindow Tauri owns.
+    unsafe {
+        let content: Option<Retained<NSView>> = objc2::msg_send![ns_window, contentView];
+        let Some(content) = content else { return 0.0 };
+        // `contentLayoutRect` is the part of the content view NOT covered by the title bar.
+        // The difference between it and the view is the inset, whatever the style.
+        let layout: NSRect = objc2::msg_send![ns_window, contentLayoutRect];
+        let frame: NSRect = objc2::msg_send![ns_window, frame];
+        let inset = (content.frame().size.height - layout.size.height).max(0.0);
+        // Printed because the derived number was wrong once and the gate could not see it: an
+        // inset of 0 and a correct inset both satisfy "origin clears the strip".
+        // Printed only when something is measuring: the derived number was wrong once and the
+        // gate could not see it, so the raw inputs stay available - but not on every launch.
+        if headless() || std::env::var("BINDARY_PROBE").is_ok() {
+            println!(
+                "bindary: window frame h={} contentView h={} contentLayoutRect h={} inset={inset}",
+                frame.size.height,
+                content.frame().size.height,
+                layout.size.height,
+            );
+        }
+        inset
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn titlebar_inset(_window: &tauri::Window) -> f64 {
+    0.0
+}
+
 /// Docks the chrome webview across the top of the window.
 ///
 /// Called on the first frame rather than before the loop; see `chrome_attached`.
@@ -702,6 +786,7 @@ fn attach_chrome(
     };
     let scale = window.scale_factor().unwrap_or(1.0);
     let logical = physical.to_logical::<f64>(scale);
+    let inset = titlebar_inset(window);
 
     match window.add_child(
         // NOT `transparent(true)`: on macOS that is gated behind Tauri's `macos-private-api`
@@ -720,7 +805,7 @@ fn attach_chrome(
                     finished.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
             }),
-        LogicalPosition::new(0.0, 0.0),
+        LogicalPosition::new(0.0, inset),
         LogicalSize::new(logical.width, BAR_HEIGHT),
     ) {
         Ok(chrome) => {

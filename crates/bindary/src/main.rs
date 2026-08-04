@@ -48,7 +48,24 @@ const SESSION_EVENT: &str = "bindary://session";
 /// and it cannot swallow a keystroke.
 ///
 /// Enabled with `BINDARY_HEADLESS=1`.
-const HEADLESS_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+///
+/// A CEILING, not a duration: the run ends the moment it has collected everything it came for,
+/// so a healthy gate is far quicker than this. The number only has to outlast the slowest thing
+/// being waited on - a shell that must start, echo a command, and print two hundred lines.
+const HEADLESS_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// The directory the smoke makes the child report over OSC 7.
+///
+/// Deliberately carries a HOST (`localhost`) that is discarded by `cwd::normalize`, and
+/// deliberately names a directory that need not exist: what is under test is the report's
+/// journey, not the filesystem.
+const CWD_PROBE: &str = "/tmp/ruuah-cwd-probe";
+
+/// What the smoke pastes. No newline: it must sit on the prompt as text, not execute.
+const PASTE_PROBE: &str = "bindary-paste-probe";
+
+/// What the smoke asks the child to print once its scrollback is filled.
+const FILL_MARKER: &str = "BINDARY-FILLED";
 
 /// How long after the chrome announces itself before its DOM is read. One render plus the
 /// replayed state; generous, because the cost of being early is a false failure.
@@ -72,6 +89,22 @@ struct Smoke {
     grid: Option<(u16, u16)>,
     /// Title bar inset plus strip, in physical pixels: what the origin MUST clear.
     reserved: Option<u32>,
+    /// Every distinct directory the SESSION decoded, in the order it decoded them.
+    ///
+    /// A LIST rather than the final value, and that is a measurement rather than a preference:
+    /// zsh's shell integration re-reports its own directory after every command, so the probe's
+    /// report is overwritten seconds after it arrives and a run that read the value at the end
+    /// found the repository - correctly, and uselessly. The question is whether the report ever
+    /// reached the session at all, and only a record of the sequence can answer it.
+    cwd_seen: Vec<String>,
+    /// Whether the pasted fixture reached the child and came back as grid text.
+    pasted: bool,
+    /// The grid before the wheel, again after a pause with no input, and after scrolling. Three
+    /// reads rather than two because the middle one is the control: it is what tells a viewport
+    /// that MOVED from a grid that was simply still changing on its own.
+    before_scroll: Option<String>,
+    steady: Option<String>,
+    after_scroll: Option<String>,
 }
 
 impl Smoke {
@@ -95,7 +128,15 @@ impl Smoke {
                 .zip(self.layers.iter().rposition(|layer| !layer.contains("Wgpu")))
                 .is_some_and(|(terminal, chrome)| terminal < chrome);
 
-        let checks: [(bool, &str); 8] = [
+        // Three reads, one verdict: the viewport moved AND the grid was otherwise still. Without
+        // the middle term, a child that kept printing would satisfy "it changed" forever and the
+        // check would pass on a host whose wheel is not wired at all.
+        let scrolled = self.steady.is_some()
+            && self.steady == self.before_scroll
+            && self.after_scroll.is_some()
+            && self.after_scroll != self.steady;
+
+        let checks: [(bool, &str); 12] = [
             (
                 self.grid.is_some_and(|(cols, rows)| cols > 1 && rows > 1),
                 "the session has a real grid",
@@ -125,6 +166,27 @@ impl Smoke {
                 "the host reached the chrome: the strip renders the REAL grid, which also proves the replay-on-handshake path",
             ),
             (z_ordered, "the chrome layer sits ABOVE the terminal layer"),
+            (
+                self.cwd_seen.iter().any(|seen| seen == CWD_PROBE),
+                "the child's OSC 7 report becomes the session's directory - the core stores it \
+                 RAW, so a host that never drains the event queue shows a placeholder forever",
+            ),
+            (
+                document.contains(CWD_PROBE),
+                "and that directory reaches the chrome - the strip is the only place the \
+                 operator sees it, and it is a second hop that can fail on its own",
+            ),
+            (
+                self.pasted,
+                "a paste reaches the child - the menu's Paste reaches the FIRST RESPONDER and \
+                 the terminal is a GPU layer with none, so cmd+V does nothing unless the host \
+                 does it itself",
+            ),
+            (
+                scrolled,
+                "the wheel scrolls the viewport, and the grid was otherwise still - a grid that \
+                 kept changing would satisfy 'it moved' with the wheel unwired",
+            ),
         ];
 
         let mut passed = true;
@@ -136,6 +198,159 @@ impl Smoke {
     }
 }
 
+
+/// Drives the input paths a gate can exercise with NOTHING on screen, one stage at a time.
+///
+/// The three of them - a directory report, a paste, a wheel - all end in the same place (the
+/// grid, or the chrome's document), so they cannot run at once: a paste landing mid-scroll
+/// would make both readings ambiguous. Hence a machine rather than three timers.
+///
+/// It drives the SESSION directly, never AppKit. Synthesizing a real cmd+V or a real wheel
+/// event would put input into whatever the operator is doing on this machine, which is exactly
+/// what the headless gate exists to avoid - so the AppKit half (the monitor's mask, the chord
+/// match, the pointer-versus-strip test) remains a live-tap item and is named as one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    /// Waiting for the chrome to settle, so the strip can be read after the report arrives.
+    Waiting,
+    /// The child is printing; the marker says it finished.
+    Filling,
+    /// The fixture has been pasted; waiting for it to come back as grid text.
+    Pasting,
+    /// The directory report is in flight, and the child is deliberately still busy.
+    Reporting,
+    /// A pause with no input at all, which is what makes the scroll reading mean something.
+    Steadying,
+    /// Scrolled; waiting for the pump to publish the moved viewport.
+    Scrolled,
+    Done,
+}
+
+struct InputProbe {
+    stage: Stage,
+    since: std::time::Instant,
+}
+
+impl InputProbe {
+    /// How long a stage waits for the child before giving up and letting its check FAIL.
+    ///
+    /// A stage that gave up silently and skipped ahead would turn a real defect into a green
+    /// run; every path out of a stage either records its evidence or leaves it missing.
+    const PATIENCE: std::time::Duration = std::time::Duration::from_secs(4);
+
+    /// The still window before and after the wheel. Long enough for the pump (25ms ticks) to
+    /// publish, short enough that the whole gate stays a few seconds.
+    const STILLNESS: std::time::Duration = std::time::Duration::from_millis(300);
+
+    fn new() -> InputProbe {
+        InputProbe {
+            stage: Stage::Waiting,
+            since: std::time::Instant::now(),
+        }
+    }
+
+    fn done(&self) -> bool {
+        self.stage == Stage::Done
+    }
+
+    fn enter(&mut self, stage: Stage) {
+        self.stage = stage;
+        self.since = std::time::Instant::now();
+    }
+
+    /// Advances one step if this stage's condition is met. `settled` is the chrome handshake
+    /// plus its render window - the machine starts only after it, because the first thing it
+    /// does is change what the strip must say.
+    fn advance(&mut self, session: &Session, smoke: &mut Smoke, settled: bool) {
+        let waited = self.since.elapsed();
+        match self.stage {
+            Stage::Waiting => {
+                if !settled {
+                    return;
+                }
+                // Enough output to give the wheel somewhere to scroll to, then a marker that
+                // says the shell is finished with it.
+                let command = format!("seq 1 200; printf '{FILL_MARKER}\\n'\r");
+                if let Err(error) = session.send(command.as_bytes()) {
+                    eprintln!("bindary: probe command refused: {error:?}");
+                }
+                self.enter(Stage::Filling);
+            }
+
+            Stage::Filling => {
+                // The marker, never the last number: `200` appears in the middle of the count
+                // and inside `1200` if the window is ever bigger, so it would report finished
+                // while the child is still printing.
+                if session.visible_text().contains(FILL_MARKER) || waited >= Self::PATIENCE {
+                    bindary::clipboard::paste_text(session, PASTE_PROBE);
+                    self.enter(Stage::Pasting);
+                }
+            }
+
+            Stage::Pasting => {
+                if !session.visible_text().contains(PASTE_PROBE) && waited < Self::PATIENCE {
+                    return;
+                }
+                smoke.pasted = session.visible_text().contains(PASTE_PROBE);
+
+                // `\x15` first: the pasted fixture is sitting on the prompt as text, and a
+                // command typed after it would run one long nonsense word. Kill-whole-line is
+                // what a person would press, and it is a KEY byte, not a paste - the paste
+                // encoder strips it precisely so a pasted one cannot do this.
+                //
+                // The report is followed by a SLEEP, and that is the whole point of this
+                // stage. zsh re-reports its own directory from `precmd`, so the moment the
+                // command ends the probe's value is replaced - measured, and it is why the
+                // first version of this gate failed while the code was correct. While the
+                // child sleeps there is no prompt, no `precmd`, and the reported directory
+                // stays put long enough for the strip to be read at leisure.
+                // The sleep outlasts the whole budget deliberately. A shorter one ends mid-run,
+                // zsh prints a fresh prompt, and the grid changes with no input - which breaks
+                // the stillness CONTROL of the scroll check for a reason that has nothing to do
+                // with scrolling. Seen: a mutant run where removing the event drain also turned
+                // the wheel check red. The child is reaped by the session's own shutdown, so
+                // the number here costs nothing.
+                let command =
+                    format!("\x15printf '\\033]7;file://localhost{CWD_PROBE}\\a'; sleep 300\r");
+                if let Err(error) = session.send(command.as_bytes()) {
+                    eprintln!("bindary: cwd probe refused: {error:?}");
+                }
+                self.enter(Stage::Reporting);
+            }
+
+            Stage::Reporting => {
+                if session.cwd() == Some(CWD_PROBE) || waited >= Self::PATIENCE {
+                    self.enter(Stage::Steadying);
+                }
+            }
+
+            Stage::Steadying => {
+                if waited < Self::STILLNESS {
+                    // Read on the way in, so the pair of readings brackets a window in which
+                    // the host sends nothing at all.
+                    if smoke.before_scroll.is_none() {
+                        smoke.before_scroll = Some(session.visible_text());
+                    }
+                    return;
+                }
+                smoke.steady = Some(session.visible_text());
+                // Forty rows, which is more than the window holds: a scroll smaller than the
+                // viewport could land on identical-looking text in a column of numbers.
+                session.scroll(40);
+                self.enter(Stage::Scrolled);
+            }
+
+            Stage::Scrolled => {
+                if waited >= Self::STILLNESS {
+                    smoke.after_scroll = Some(session.visible_text());
+                    self.enter(Stage::Done);
+                }
+            }
+
+            Stage::Done => {}
+        }
+    }
+}
 
 /// What the chrome is told. Mirrors `SessionState` in `chrome/src/protocol.ts`.
 ///
@@ -318,7 +533,7 @@ fn main() {
     });
 
     let handle = app.handle().clone();
-    let mut announced: Option<(u16, u16, bool)> = None;
+    let mut announced: Option<(u16, u16, bool, Option<String>)> = None;
     let mut frames: u32 = 0;
     let started = std::time::Instant::now();
     // `AppHandle::exit` REQUESTS an exit; the loop is still entered afterwards, and without this
@@ -328,6 +543,7 @@ fn main() {
     let mut probed_at: Option<std::time::Instant> = None;
     let mut ready_at: Option<std::time::Instant> = None;
     let smoke = std::rc::Rc::new(std::cell::RefCell::new(Smoke::default()));
+    let mut probe = InputProbe::new();
     let page_finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     // The chrome is attached from INSIDE the run loop, on the first frame.
     //
@@ -360,35 +576,47 @@ fn main() {
                 }
             }
 
+            // Drained every frame, not occasionally: the core's queue is bounded at 128 and
+            // drops its OLDEST entry on overflow, so a host that never drains keeps the last
+            // events of a long session and silently loses the first. `Session` folds the OSC 7
+            // report into its own cwd on the way past; the rest - title, bell, clipboard,
+            // progress - have no consumer in this host yet and are deliberately dropped here
+            // rather than left to rot in the queue.
+            let _ = session.take_events();
+
             // The chrome is told only when something it displays actually changed. Emitting every
             // frame would push 120 events a second through the IPC boundary to redraw the same
             // three strings.
             let geometry = session.geometry();
             let exited = session.exited();
-            let state = (geometry.cols, geometry.rows, exited);
+            let cwd = session.cwd().map(str::to_string);
+            let state = (geometry.cols, geometry.rows, exited, cwd.clone());
             if replay.swap(false, std::sync::atomic::Ordering::Relaxed) {
                 // A fresh listener has nothing; forget what was already said so it is said again.
                 announced = None;
             }
-            if announced != Some(state) {
+            if announced.as_ref() != Some(&state) {
                 announced = Some(state);
                 if let Err(error) = handle.emit(
                     SESSION_EVENT,
                     SessionState {
                         cols: geometry.cols,
                         rows: geometry.rows,
-                        // NAMED GAP: the child's OSC 7 report travels as a host event and is not
-                        // plumbed into the session yet, so the chrome shows a placeholder rather
-                        // than a wrong directory. Wiring it is the next step, not this one.
-                        cwd: String::new(),
+                        // Empty means "the child has not said", which is a different fact from
+                        // any particular directory and is what the strip shows a dash for. The
+                        // decode happened once, in `Session`, through the workspace's one
+                        // decoder - never here.
+                        cwd: cwd.clone().unwrap_or_default(),
                         exited,
                     },
                 ) {
                     eprintln!("bindary: could not reach the chrome: {error}");
                 } else {
                     println!(
-                        "bindary: told the chrome {}x{} exited={exited}",
-                        geometry.cols, geometry.rows
+                        "bindary: told the chrome {}x{} cwd={} exited={exited}",
+                        geometry.cols,
+                        geometry.rows,
+                        cwd.as_deref().unwrap_or("-"),
                     );
                 }
             }
@@ -421,12 +649,35 @@ fn main() {
             // instead of widening it - and a probe that never agrees still fails, so this makes
             // the gate less flaky WITHOUT making it more forgiving.
             let settled = ready_at.is_some_and(|at| at.elapsed() >= SETTLE);
-            let agreed = smoke
-                .borrow()
-                .grid
-                .map(|(cols, rows)| format!("{cols}x{rows}"))
-                .zip(smoke.borrow().document.clone())
-                .is_some_and(|(grid, document)| document.contains(&grid));
+
+            // The input paths, driven only when nothing is on screen. The session's own view of
+            // the child's directory is recorded every tick rather than at the end, because it
+            // is the thing the document check below is waiting to SEE - and a value read after
+            // the strip has already been probed proves nothing about the order.
+            if headless() {
+                let mut record = smoke.borrow_mut();
+                // Appended only when it CHANGES, so the list is the sequence of directories the
+                // child reported rather than one entry per frame.
+                if let Some(cwd) = session.cwd() {
+                    if record.cwd_seen.last().map(String::as_str) != Some(cwd) {
+                        record.cwd_seen.push(cwd.to_string());
+                    }
+                }
+                probe.advance(&session, &mut record, settled);
+            }
+
+            // The document must show BOTH the grid and the directory before the run is over.
+            // Two hops, one condition: the grid proves the replay path, the directory proves the
+            // event path, and either can be dead while the other works.
+            let agreed = {
+                let record = smoke.borrow();
+                let grid = record.grid.map(|(cols, rows)| format!("{cols}x{rows}"));
+                let document = record.document.clone();
+                grid.zip(document).is_some_and(|(grid, document)| {
+                    document.contains(&grid)
+                        && (!headless() || document.contains(CWD_PROBE))
+                })
+            };
             let probing = headless() || std::env::var("BINDARY_PROBE").is_ok();
             if probing && settled && !agreed && probed_at.is_none_or(|at| at.elapsed() >= REPROBE)
             {
@@ -443,9 +694,16 @@ fn main() {
                 #[cfg(target_os = "macos")]
                 probe_document(&window, std::rc::Rc::clone(&smoke));
             }
-            if headless() && !finished && started.elapsed() >= HEADLESS_BUDGET {
+            // Ends EARLY once everything has been collected, and at the budget otherwise. A gate
+            // that always burned its ceiling would make every future invariant cost the operator
+            // wall-clock time, and the ones that fail are exactly the runs worth waiting out.
+            let collected = probe.done() && agreed;
+            if headless() && !finished && (collected || started.elapsed() >= HEADLESS_BUDGET) {
                 finished = true;
-                println!("bindary: headless run complete after {frames} frames");
+                println!(
+                    "bindary: headless run complete after {frames} frames in {:?}",
+                    started.elapsed()
+                );
                 #[cfg(target_os = "macos")]
                 {
                     // Re-dumped at the END: the first dump runs before the chrome is attached,
@@ -453,6 +711,12 @@ fn main() {
                     smoke.borrow_mut().layers = view_tree(&window);
                     webview_state(&window);
                 }
+                // The sequence itself, printed as evidence: a check that reads "did this value
+                // ever appear" is only auditable if the values it saw are on the screen too.
+                println!(
+                    "bindary: directories reported {:?}",
+                    smoke.borrow().cwd_seen
+                );
                 let passed = smoke.borrow().judge(
                     page_finished.load(std::sync::atomic::Ordering::Relaxed),
                     ready.load(std::sync::atomic::Ordering::Relaxed),
@@ -512,14 +776,15 @@ mod input {
     use std::ptr::NonNull;
     use std::rc::Rc;
 
+    use bindary::{clipboard, wheel};
     use block2::RcBlock;
     use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
     use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags};
     use ruuah_vt_host::session::Session;
     use ruuah_vt_pty::key::{
-        KEY_MODS_ALT, KEY_MODS_CTRL, KEY_MODS_SHIFT, KEY_MODS_SUPER, KeyAction, KeyEvent, KeyMods,
-        encode,
+        KEY_MODS_ALT, KEY_MODS_CTRL, KEY_MODS_SHIFT, KEY_MODS_SUPER, Key, KeyAction, KeyEvent,
+        KeyMods, encode,
     };
     use ruuah_vt_pty::keycode::key_from_macos_keycode;
 
@@ -540,6 +805,11 @@ mod input {
         // Captured once: the monitor and its handler both run on the main thread, and proving
         // that here is cheaper than proving it at every AppKit call inside the block.
         let mtm = objc2::MainThreadMarker::new()?;
+
+        // Lives as long as the monitor, because the REMAINDER is the state: a trackpad delivers
+        // most of its deltas under one row, and an accumulator rebuilt per event rounds every
+        // one of them to zero (`wheel::Accumulator`).
+        let scroll = RefCell::new(wheel::Accumulator::default());
 
         let handler = RcBlock::new(move |event: NonNull<NSEvent>| -> *mut NSEvent {
             let event = unsafe { event.as_ref() };
@@ -563,16 +833,66 @@ mod input {
                     pass
                 }
 
+                // The wheel is aimed by the POINTER, not by focus: a scroll over the terminal
+                // scrolls the terminal even when the operator last clicked in the chrome, which
+                // is what every other application does and what the hand expects.
+                objc2_app_kit::NSEventType::ScrollWheel => {
+                    let point = event.locationInWindow();
+                    let window = event.window(mtm);
+                    let height = window
+                        .as_ref()
+                        .map(|window| window.frame().size.height)
+                        .unwrap_or(0.0);
+                    // Bottom-left origin again: the strip is the region with the LARGEST y.
+                    if point.y >= height - bar_height {
+                        return pass;
+                    }
+                    let scale = window
+                        .as_ref()
+                        .map(|window| window.backingScaleFactor())
+                        .unwrap_or(1.0);
+
+                    let session = session.borrow();
+                    let rows = scroll.borrow_mut().rows(
+                        event.scrollingDeltaY(),
+                        event.hasPreciseScrollingDeltas(),
+                        session.cell_metrics().height,
+                        scale,
+                    );
+                    if rows != 0 {
+                        // VIEWPORT scroll only. A program that asked to receive wheel events
+                        // itself (mouse reporting) is a separate path, wired in neither host -
+                        // and routing the wheel to both would be worse than routing it to one.
+                        session.scroll(rows);
+                    }
+                    std::ptr::null_mut()
+                }
+
                 objc2_app_kit::NSEventType::KeyDown => {
                     if focus.get() == Focus::Chrome {
                         return pass;
                     }
                     let flags = event.modifierFlags();
-                    // Command chords are never eaten. They belong to the menu - cmd+Q, cmd+C,
-                    // cmd+V - and a terminal that swallows them is a terminal you cannot quit.
-                    // cmd+V is handled by the menu's paste path reaching the focused responder,
-                    // so it is not special-cased here.
+                    // Command chords belong to the menu - cmd+Q, cmd+C - and a terminal that
+                    // swallows them is a terminal you cannot quit. cmd+V is the ONE exception,
+                    // and it has to be: the menu's Paste reaches the first responder, and the
+                    // terminal is a GPU layer with no responder to reach. Nothing errors when
+                    // this is missing - the chord simply does nothing, forever.
+                    //
+                    // Matched on the KEYCODE, never on the character: under the Hebrew layout
+                    // cmd+V carries `ה`, so a match on the text is dead by construction. Same
+                    // rule as the chrome's `e.code` finding (B2.2), one layer down.
                     if flags.contains(NSEventModifierFlags::Command) {
+                        let chord = key_from_macos_keycode(event.keyCode());
+                        let plain = !flags.intersects(
+                            NSEventModifierFlags::Control
+                                | NSEventModifierFlags::Option
+                                | NSEventModifierFlags::Shift,
+                        );
+                        if chord == Key::V && plain {
+                            clipboard::paste(&session.borrow());
+                            return std::ptr::null_mut();
+                        }
                         return pass;
                     }
 
@@ -636,7 +956,7 @@ mod input {
 
         unsafe {
             NSEvent::addLocalMonitorForEventsMatchingMask_handler(
-                NSEventMask::KeyDown | NSEventMask::LeftMouseDown,
+                NSEventMask::KeyDown | NSEventMask::LeftMouseDown | NSEventMask::ScrollWheel,
                 &handler,
             )
         }

@@ -113,6 +113,83 @@ fn sent_bytes_reach_the_child_and_come_back_as_pixels() {
 }
 
 #[test]
+fn the_visible_grid_reads_back_as_text() {
+    let mut session = spawn("printf 'RUUAH'; sleep 1");
+    pump(&mut session, 1, Duration::from_secs(5));
+    assert!(
+        session.visible_text().contains("RUUAH"),
+        "the child printed RUUAH and the grid reads {:?}",
+        session.visible_text()
+    );
+
+    // The control, in the same test because it is the same claim: a silent child's grid must
+    // NOT contain it. Without this, a reader that returned the child's raw bytes, or a
+    // constant, or anything containing everything, would satisfy the line above.
+    let mut silent = spawn("sleep 1");
+    pump(&mut silent, 1, Duration::from_millis(500));
+    assert!(
+        !silent.visible_text().contains("RUUAH"),
+        "a silent child's grid claims to hold text it never printed"
+    );
+}
+
+/// Drains events until the session holds a cwd, or the deadline passes.
+///
+/// Draining is what advances it - `Session::cwd` is a reader with no side effect - so a test
+/// that polled frames alone would wait forever on a report that had already arrived.
+fn wait_for_cwd(session: &mut Session, budget: Duration) -> Option<String> {
+    let deadline = Instant::now() + budget;
+    while Instant::now() < deadline {
+        session.take_events();
+        if let Some(cwd) = session.cwd() {
+            return Some(cwd.to_string());
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    session.cwd().map(str::to_string)
+}
+
+#[test]
+fn an_osc_7_report_becomes_the_sessions_cwd() {
+    // The host name is deliberately present and deliberately not this machine's: `normalize`
+    // discards it, and a session that kept it would answer `localhost/tmp/...`.
+    let mut session = spawn("printf '\\033]7;file://localhost/tmp/ruuah-cwd\\a'; sleep 2");
+    assert_eq!(
+        wait_for_cwd(&mut session, Duration::from_secs(5)).as_deref(),
+        Some("/tmp/ruuah-cwd"),
+        "the child reported a directory and the session did not learn it"
+    );
+}
+
+/// The control, and the clear rule in one test.
+///
+/// A session that simply assigned every report would end holding the first directory, and a
+/// session that ignored OSC 7 entirely would end holding `None` - which is also the correct
+/// answer here. So the positive test above is what makes this one evidence, and vice versa:
+/// together they distinguish "tracks the report" from "never tracked anything".
+#[test]
+fn an_empty_osc_7_report_clears_the_cwd() {
+    let mut session = spawn(
+        "printf '\\033]7;file://localhost/tmp/ruuah-cwd\\a'; sleep 1; printf '\\033]7;\\a'; sleep 2",
+    );
+    assert_eq!(
+        wait_for_cwd(&mut session, Duration::from_secs(5)).as_deref(),
+        Some("/tmp/ruuah-cwd"),
+        "the first report never arrived, so the clear below would prove nothing"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        session.take_events();
+        if session.cwd().is_none() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    panic!("an empty OSC 7 report did not clear the cwd: still {:?}", session.cwd());
+}
+
+#[test]
 fn the_grid_resizes_and_the_renderer_follows() {
     let mut session = spawn("sleep 1");
     pump(&mut session, 1, Duration::from_millis(500));

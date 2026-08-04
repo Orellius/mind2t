@@ -17,6 +17,7 @@
 
 use std::process::Command;
 
+use ruuah_vt_core::events::Event;
 use ruuah_vt_frame::{Frame, FrameReader};
 use ruuah_vt_pty::key::{KeyOptions, OptionAsAlt};
 use ruuah_vt_pty::{Geometry, Host, Options, SpawnError};
@@ -64,6 +65,9 @@ pub struct Session {
     geometry: SessionGeometry,
     font_size: f32,
     font_family: Option<String>,
+    /// The child's working directory, decoded from its last OSC 7 report. `None` until it
+    /// reports one, and again after it reports an empty one.
+    cwd: Option<String>,
 }
 
 impl Session {
@@ -93,6 +97,7 @@ impl Session {
             geometry,
             font_size,
             font_family,
+            cwd: None,
         })
     }
 
@@ -129,6 +134,32 @@ impl Session {
         &self.frame
     }
 
+    /// What the visible grid says, rows joined by newlines.
+    ///
+    /// The Rust twin of `ruuah_host_row_text`, and the same idea the product is built on: agent
+    /// state comes from a TYPED GRID, not from regexing ANSI out of a byte stream. A wide cell's
+    /// spacer tail contributes nothing (its glyph already came from the head), while a cell with
+    /// no text is a space - so column positions in the result line up with columns on screen.
+    ///
+    /// Reads the last POLLED frame, exactly like every other reader here: a caller that has not
+    /// polled gets what it last saw, not a fresh scrape of the child.
+    pub fn visible_text(&self) -> String {
+        let mut scratch = [0u8; ruuah_vt_frame::CLUSTER_BYTES];
+        let mut out = String::new();
+        for y in 0..self.frame.rows {
+            for x in 0..self.frame.cols {
+                let cell = self.frame.cell(x, y);
+                if cell.has_text() {
+                    out.push_str(cell.cluster(&mut scratch));
+                } else if cell.wide() != ruuah_vt_snapshot::Wide::SpacerTail {
+                    out.push(' ');
+                }
+            }
+            out.push('\n');
+        }
+        out
+    }
+
     /// The key encoder's options, derived from the modes the CHILD has actually entered.
     ///
     /// This is the difference between arrows that work inside `vim` and arrows that do not.
@@ -158,6 +189,39 @@ impl Session {
     /// executes itself line by line instead of arriving as one edit.
     pub fn bracketed_paste(&self) -> bool {
         self.frame.bracketed_paste()
+    }
+
+    /// Drains the events the child asked its embedder to act on, folding the ones this type
+    /// tracks and handing the rest to the caller untouched.
+    ///
+    /// Draining is the caller's job every frame, not an option: the core's queue is bounded at
+    /// 128 and drops its OLDEST entry on overflow, so a host that never drains does not fail -
+    /// it silently loses the first events of the session and keeps the last ones forever.
+    ///
+    /// `Event::Pwd` is decoded HERE, through [`crate::cwd::normalize`], because that is the one
+    /// decoder in this workspace. The core stores the report raw (as the oracle does), the C
+    /// path decodes it in `ruuah_cwd_path`, and a Rust host that percent-decoded a `file://`
+    /// URI for itself would be the second implementation of a rule that has already been wrong
+    /// once (`path` is a special variable in zsh - see the project CLAUDE.md).
+    pub fn take_events(&mut self) -> Vec<Event> {
+        let events = self.host.take_events();
+        for event in &events {
+            if let Event::Pwd(raw) = event {
+                // An empty report CLEARS, and `normalize` answers `None` for it - so this
+                // assignment is the clear as well as the set, with no branch to forget.
+                self.cwd = crate::cwd::normalize(raw);
+            }
+        }
+        events
+    }
+
+    /// The child's working directory, decoded, or `None` if it has never reported one.
+    ///
+    /// Only ever fresh as of the last [`Session::take_events`]: this reads state, it does not
+    /// drain the queue, because a getter with a side effect on a queue is how one caller starves
+    /// another.
+    pub fn cwd(&self) -> Option<&str> {
+        self.cwd.as_deref()
     }
 
     /// Places the terminal's top-left inside the window, in PHYSICAL pixels.

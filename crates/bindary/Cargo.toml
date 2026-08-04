@@ -30,3 +30,9 @@ wry = "0.56"
 # and does nothing with it - measured live on 2026-08-04, not inferred. muda is the menu crate
 # Tauri 2 itself depends on, so this is the path B2.3 lands on anyway rather than a detour.
 muda = "0.19"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Already in the tree under wry and muda, so this is a direct path to NSPasteboard. Feature-scoped
+# rather than default: the default set pulls objc2-core-video, which a clipboard read has no use
+# for. Reading the clipboard is the HOST's job - the terminal core does no I/O.
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard"] }

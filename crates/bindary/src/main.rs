@@ -27,9 +27,9 @@ use muda::{Menu, PredefinedMenuItem, Submenu};
 use ruuah_vt_host::session::{Session, SessionError, SessionGeometry};
 use ruuah_vt_render::WindowTarget;
 use tao::dpi::LogicalSize;
-use tao::event::{ElementState, Event, WindowEvent};
+use tao::event::{ElementState, Event, MouseScrollDelta, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoop};
-use tao::keyboard::ModifiersState;
+use tao::keyboard::{KeyCode, ModifiersState};
 use tao::window::WindowBuilder;
 use wry::dpi::{LogicalPosition, LogicalSize as WebviewSize};
 use wry::{Rect, WebViewBuilder};
@@ -101,6 +101,34 @@ fn grid_for(width: u32, height: u32, strip: u32, cell_width: u32, cell_height: u
 fn shell() -> Command {
     let path = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     Command::new(path)
+}
+
+/// Sends the clipboard to the child, fenced when the child asked for fences.
+///
+/// The fences are not cosmetic: without DEC 2004 bracketing, a shell receiving a multi-line
+/// paste executes each line as it arrives instead of taking the whole thing as one edit, which
+/// is how a pasted script runs half of itself. Whether to fence is the CHILD's decision, read
+/// from the frame rather than configured here.
+fn paste(session: &Session) {
+    let Some(text) = clipboard_text() else {
+        return;
+    };
+    let bytes = ruuah_vt_pty::paste::encode(text.as_bytes(), session.bracketed_paste());
+    if let Err(error) = session.send(&bytes) {
+        eprintln!("bindary: paste failed: {error:?}");
+    }
+}
+
+/// The general pasteboard's string, or `None` when it holds something else (an image, a file).
+///
+/// Reached through `objc2-app-kit`, which is already in the tree under wry and muda, so this
+/// costs a direct dependency and no new package.
+#[cfg(target_os = "macos")]
+fn clipboard_text() -> Option<String> {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+    let pasteboard = unsafe { NSPasteboard::generalPasteboard() };
+    let value = unsafe { pasteboard.stringForType(NSPasteboardTypeString) };
+    value.map(|string| string.to_string())
 }
 
 fn main() {
@@ -211,12 +239,56 @@ fn main() {
                 ..
             } => {
                 if event.state == ElementState::Pressed {
-                    let bytes = keys::encode_press(&event, keys::mods_from(modifiers));
+                    // cmd+V is intercepted BEFORE encoding: the clipboard is the host's to read,
+                    // and the child must receive the text, not the chord.
+                    if modifiers.super_key() && event.physical_key == KeyCode::KeyV {
+                        paste(&session);
+                        return;
+                    }
+                    // The options come from the SESSION every press, because the child changes
+                    // them at runtime - entering vim turns application cursor keys on, and an
+                    // arrow encoded against a stale snapshot moves nothing.
+                    let bytes =
+                        keys::encode_press(&event, keys::mods_from(modifiers), &session.key_options());
                     if !bytes.is_empty() {
                         if let Err(error) = session.send(&bytes) {
                             eprintln!("bindary: send failed: {error:?}");
                         }
                     }
+                }
+            }
+
+            // A click that reached the WINDOW landed on the terminal, not on the chrome strip
+            // (the strip is a webview and would have swallowed it). Taking focus here is what
+            // sends the keyboard back to the child after the operator has typed in the chrome -
+            // without it the terminal is visibly focused and silently deaf.
+            Event::WindowEvent {
+                event: WindowEvent::MouseInput { state, .. },
+                ..
+            } => {
+                if state == ElementState::Pressed {
+                    window.set_focus();
+                }
+            }
+
+            Event::WindowEvent {
+                event: WindowEvent::MouseWheel { delta, .. },
+                ..
+            } => {
+                // Viewport scroll only: the child sees nothing. Mouse REPORTING (a program that
+                // asked to receive wheel events itself) is not wired yet and is named in the
+                // module card - routing the wheel to both would be worse than routing it to one.
+                let lines = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y,
+                    // A trackpad reports pixels; the cell height is what turns those into rows,
+                    // and it is a physical measure exactly like the delta.
+                    MouseScrollDelta::PixelDelta(position) => {
+                        position.y as f32 / session.cell_metrics().height.max(1) as f32
+                    }
+                    _ => 0.0,
+                };
+                if lines != 0.0 {
+                    session.scroll(lines.round() as i32);
                 }
             }
 

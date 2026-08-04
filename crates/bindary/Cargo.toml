@@ -1,0 +1,18 @@
+[package]
+name = "bindary"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+# B2: the cross-platform host that will become Bindary. It starts as a bare tao window so the
+# one genuinely unproven thing - a native GPU surface living in a window this project does not
+# own - is isolated from everything else. The webview, and then Tauri itself, come after.
+#
+# Links ruuah-vt-host as a RUST crate, not through the C ABI. The C surface exists for the
+# Swift host and for outside embedders; our own app has no reason to cross a foreign-function
+# boundary to reach its own workspace.
+[dependencies]
+ruuah-vt-host = { path = "../host" }
+ruuah-vt-render.workspace = true
+tao = "0.35"

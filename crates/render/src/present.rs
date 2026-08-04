@@ -289,6 +289,28 @@ impl WindowTarget {
         WindowTarget::from_surface(context, surface, width, height)
     }
 
+    /// Builds a swapchain over anything wgpu can make a surface from - a `tao` or `winit`
+    /// window, a Tauri window, a raw handle pair.
+    ///
+    /// Preferred over `from_metal_layer` where the caller has a real window type: wgpu creates
+    /// and owns the `CAMetalLayer` itself on macOS, and the same call is the Windows and Linux
+    /// path, so nothing platform-specific has to be written twice. The metal-layer entry point
+    /// stays for the AppKit host, which owns its layer already.
+    ///
+    /// Sizes are PHYSICAL pixels.
+    pub fn from_window(
+        context: &GpuContext,
+        target: impl Into<wgpu::SurfaceTarget<'static>>,
+        width: u32,
+        height: u32,
+    ) -> Result<WindowTarget, PresentError> {
+        let surface = context
+            .instance()
+            .create_surface(target)
+            .map_err(|error| PresentError::Surface(error.to_string()))?;
+        WindowTarget::from_surface(context, surface, width, height)
+    }
+
     fn from_surface(
         context: &GpuContext,
         surface: wgpu::Surface<'static>,

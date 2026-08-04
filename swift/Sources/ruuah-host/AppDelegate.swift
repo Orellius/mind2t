@@ -143,13 +143,15 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         let size = view.presentLayer.drawableSize
         let ok = session.attachLayer(
             view.presentLayer, width: Int(size.width), height: Int(size.height))
-        // Reported, always. A failed attach falls back to the readback path and the window
-        // looks EXACTLY the same, so without this line "it drew something" would be taken as
-        // proof the GPU path ran when it is equally what a silent fallback looks like.
-        let report =
-            "RUUAH_PRESENT_ATTACH=\(ok ? "ok" : "failed") "
-            + "drawable=\(Int(size.width))x\(Int(size.height))\n"
-        FileHandle.standardError.write(Data(report.utf8))
+        // Reported on FAILURE only. A failed attach falls back to the readback path and the
+        // window looks EXACTLY the same, so silence there would let "it drew something" pass
+        // as proof the GPU path ran. Success needs no announcement; the zero-readback test
+        // covers that side.
+        if !ok {
+            let report = "RUUAH_PRESENT_ATTACH=failed "
+                + "drawable=\(Int(size.width))x\(Int(size.height))\n"
+            FileHandle.standardError.write(Data(report.utf8))
+        }
         if ok {
             presentingSession = session
             // Push the size again now that an owner exists. `onPresentResize` fires from

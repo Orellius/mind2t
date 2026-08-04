@@ -601,17 +601,6 @@ pub unsafe extern "C" fn ruuah_host_attach_layer(
         ruuah_vt_render::WindowTarget::from_metal_layer(&context, layer, width, height)
     } {
         Ok(window) => {
-            // The two sizes that must agree, printed side by side. A surface smaller than the
-            // drawable draws correctly into the top-left corner and leaves cleared black
-            // beyond it, which looks like a layout bug rather than a size mismatch.
-            let surface = host.renderer.surface_mut();
-            eprintln!(
-                "RUUAH_PRESENT_SIZES surface={}x{} drawable={}x{}",
-                ruuah_vt_render::Surface::width(surface),
-                ruuah_vt_render::Surface::height(surface),
-                width,
-                height
-            );
             host.window = Some(window);
             // The next poll must repaint: the window has nothing in it yet, and the frame the
             // embedder already drew lives in a CGImage we are about to stop producing.
@@ -1565,19 +1554,6 @@ pub unsafe extern "C" fn ruuah_host_resize(
     // The rebuild starts from the built-in scheme; the theme must survive it.
     renderer.set_palette(host.palette.clone());
     host.renderer = renderer;
-    // Temporary (B1): says whether a grid resize reached the host at all, and what the new
-    // surface measures. Without it "the window grew and the terminal did not" has two
-    // indistinguishable causes - the resize never fired, or it fired and the presented frame
-    // did not follow.
-    {
-        let surface = host.renderer.surface_mut();
-        eprintln!(
-            "RUUAH_PRESENT_REGRID cols={cols} rows={rows} surface={}x{} presenting={}",
-            ruuah_vt_render::Surface::width(surface),
-            ruuah_vt_render::Surface::height(surface),
-            host.window.is_some()
-        );
-    }
     // Everything is owed again on the new canvas, and the old pixels describe a dead
     // geometry -- the borrowed pointer contract says they die here.
     host.drawn_generation = 0;

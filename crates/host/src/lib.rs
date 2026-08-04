@@ -1550,6 +1550,19 @@ pub unsafe extern "C" fn ruuah_host_resize(
     // The rebuild starts from the built-in scheme; the theme must survive it.
     renderer.set_palette(host.palette.clone());
     host.renderer = renderer;
+    // Temporary (B1): says whether a grid resize reached the host at all, and what the new
+    // surface measures. Without it "the window grew and the terminal did not" has two
+    // indistinguishable causes - the resize never fired, or it fired and the presented frame
+    // did not follow.
+    {
+        let surface = host.renderer.surface_mut();
+        eprintln!(
+            "RUUAH_PRESENT_REGRID cols={cols} rows={rows} surface={}x{} presenting={}",
+            ruuah_vt_render::Surface::width(surface),
+            ruuah_vt_render::Surface::height(surface),
+            host.window.is_some()
+        );
+    }
     // Everything is owed again on the new canvas, and the old pixels describe a dead
     // geometry -- the borrowed pointer contract says they die here.
     host.drawn_generation = 0;

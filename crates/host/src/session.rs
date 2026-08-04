@@ -108,6 +108,37 @@ impl Session {
         })
     }
 
+    /// Starts a session sized to fit `width` x `height` PHYSICAL pixels, and tells the child that
+    /// size from its very first breath.
+    ///
+    /// The difference from [`Session::spawn`] plus a resize is a race, and it is not theoretical:
+    /// measured 2026-08-05, a pane spawned at the provisional 80x24 and resized a moment later
+    /// had already answered `stty size` with **80x24** - the child ran before `TIOCSWINSZ`
+    /// arrived. A shell shrugs at that. An agent CLI that prints a banner, a table or a progress
+    /// bar sized on startup does not, and the wrongness is baked into scrollback where no later
+    /// resize can fix it.
+    ///
+    /// The font is measured first (cell metrics come from the font, not from the grid), so the
+    /// geometry is known before there is a child to tell.
+    pub fn spawn_fitted(
+        command: Command,
+        width: u32,
+        height: u32,
+        font_size: f32,
+        font_family: Option<String>,
+    ) -> Result<Session, SessionError> {
+        let fonts = FontStack::with_primary(font_family.as_deref(), font_size)
+            .map_err(|error| SessionError::Render(error.to_string()))?;
+        let cell = fonts.metrics();
+        let geometry = SessionGeometry {
+            // Floors, then a floor of one: a zero-column pty is refused by the kernel, and a
+            // caller who wanted to know the area was too small asked before spawning anything.
+            cols: (width / cell.width.max(1)).max(1) as u16,
+            rows: (height / cell.height.max(1)).max(1) as u16,
+        };
+        Session::spawn(command, geometry, font_size, font_family)
+    }
+
     /// The GPU context a window target must be built on.
     ///
     /// Exposed rather than hidden because the caller owns the window: it builds the
@@ -303,6 +334,18 @@ impl Session {
         window
             .present(renderer.surface_mut(), clear)
             .map_err(SessionError::Present)
+    }
+
+    /// The drawn surface, for a host that composites SEVERAL sessions into one frame.
+    ///
+    /// The single-pane path ([`Session::attach`] plus [`Session::present`]) has the session own
+    /// its window and present itself, which is right when it is the only thing on screen. A
+    /// canvas cannot work that way: one swapchain frame must hold every pane, so the window
+    /// belongs to the host and the sessions hand it their surfaces
+    /// (`WindowTarget::present_all`). Both paths exist on purpose - the first is what the Swift
+    /// host and the oracle still use.
+    pub fn surface_mut(&mut self) -> &mut GpuSurface {
+        self.renderer.surface_mut()
     }
 
     /// Reconfigures the swapchain for a new WINDOW size, in physical pixels.

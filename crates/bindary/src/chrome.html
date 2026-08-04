@@ -1,0 +1,115 @@
+<!doctype html>
+<!--
+  B2.2 chrome probe. Not a design - a fixture.
+
+  Three things on this page are load-bearing and none of them are decoration:
+
+  - `background: transparent` on html and body. A webview that composites correctly but paints
+    an opaque white page looks exactly like a webview drawn on top of nothing, and the terminal
+    underneath is equally invisible either way.
+  - The MARKER overlaps the GPU pattern's green bar on purpose, at 75% alpha. Above the surface
+    it tints the bar; below it, it is gone. A marker drawn over empty background could not tell
+    those apart.
+  - Every input event is reported over IPC. Where a click or a keystroke LANDS is the question
+    this slice exists to answer, so nothing here may swallow an event quietly.
+-->
+<meta charset="utf-8" />
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: transparent;
+    font: 13px ui-monospace, Menlo, monospace;
+    color: #e8e8ef;
+    /* The page must never scroll: a scrollbar would be an opaque strip nobody asked for, and it
+       would move the marker away from the bar it has to overlap. */
+    overflow: hidden;
+  }
+
+  #bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 44px;
+    padding: 0 12px;
+    box-sizing: border-box;
+    background: rgba(16, 16, 22, 0.92);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+  }
+
+  #bar strong { letter-spacing: 0.08em; font-weight: 600; }
+
+  button, input {
+    font: inherit;
+    color: inherit;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    border-radius: 5px;
+    padding: 4px 10px;
+  }
+
+  input { width: 260px; }
+  input:focus, button:focus { outline: 2px solid #d63384; outline-offset: 1px; }
+
+  #marker {
+    position: absolute;
+    left: 320px;
+    top: 220px;
+    width: 60px;
+    height: 60px;
+    box-sizing: border-box;
+    background: rgba(230, 60, 200, 0.75);
+    border: 2px solid #ffffff;
+  }
+
+  #caption {
+    position: absolute;
+    left: 320px;
+    top: 288px;
+    text-shadow: 0 1px 2px #000;
+  }
+</style>
+
+<div id="bar">
+  <strong>BINDARY</strong>
+  <button id="tap">tap me</button>
+  <input id="probe" placeholder="type here - then switch to Hebrew" />
+  <span id="echo"></span>
+</div>
+
+<div id="marker"></div>
+<div id="caption">webview marker - must tint the green bar</div>
+
+<script>
+  const send = (message) => window.ipc.postMessage(JSON.stringify(message));
+
+  const where = (event) => ({
+    x: Math.round(event.clientX),
+    y: Math.round(event.clientY),
+    on: event.target.id || event.target.tagName.toLowerCase(),
+  });
+
+  // Capture phase, on the window: a listener on an element would miss clicks that land on the
+  // transparent region, which is the interesting half of the measurement.
+  addEventListener('mousedown', (e) => send({ ch: 'webview', kind: 'mousedown', ...where(e) }), true);
+  addEventListener('keydown', (e) => send({ ch: 'webview', kind: 'keydown', key: e.key, code: e.code }), true);
+
+  const probe = document.getElementById('probe');
+  const echo = document.getElementById('echo');
+
+  // IME is its own channel. A Hebrew layout produces plain keydowns, but a real composition
+  // (and anything CJK) produces none, so a probe that watched only keys would report silence
+  // and call it a failure.
+  for (const kind of ['compositionstart', 'compositionupdate', 'compositionend']) {
+    probe.addEventListener(kind, (e) => send({ ch: 'webview', kind, data: e.data ?? '' }));
+  }
+
+  probe.addEventListener('input', (e) => {
+    echo.textContent = e.target.value;
+    send({ ch: 'webview', kind: 'input', value: e.target.value });
+  });
+
+  document.getElementById('tap').addEventListener('click', () => send({ ch: 'webview', kind: 'button' }));
+
+  send({ ch: 'webview', kind: 'ready' });
+</script>

@@ -48,7 +48,10 @@ fn blit_to_texture(context: &GpuContext, surface: &mut GpuSurface) -> Vec<u8> {
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-    blitter.blit(surface, &view);
+    // Black here on purpose: the equality assertion covers only the region the surface
+    // occupies, and a distinctive clear would not change those bytes. The margin colour is
+    // the window's concern and is judged on screen.
+    blitter.blit(surface, &view, wgpu::Color::BLACK);
 
     let bytes_per_row = WIDTH * 4;
     assert_eq!(bytes_per_row % 256, 0, "the test width must keep rows aligned");

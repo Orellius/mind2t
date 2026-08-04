@@ -171,7 +171,7 @@ impl Blitter {
     /// The target may be larger than the surface; fragments outside it are discarded, so a
     /// window mid-resize shows cleared black in the uncovered region instead of sampling past
     /// the end of the buffer.
-    pub fn blit(&self, surface: &mut GpuSurface, target: &wgpu::TextureView) {
+    pub fn blit(&self, surface: &mut GpuSurface, target: &wgpu::TextureView, clear: wgpu::Color) {
         surface.flush();
 
         let device = self.context.device();
@@ -219,7 +219,14 @@ impl Blitter {
                         // Cleared rather than loaded: a discarded fragment outside the surface
                         // must be a defined colour, and LOAD on a freshly acquired swapchain
                         // texture reads undefined content.
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        //
+                        // The colour is the caller's, not black. A grid rounds to whole cells,
+                        // so a window is almost never an exact multiple of the surface and the
+                        // remainder is visible margin. Clearing it to black while the terminal
+                        // renders on 0x0d0d0d draws a hard band down the edge - operator-spotted
+                        // 2026-08-04, and the readback path never had it because AppKit painted
+                        // that margin with the terminal's own reported background.
+                        load: wgpu::LoadOp::Clear(clear),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -385,7 +392,20 @@ impl WindowTarget {
     /// A lost or outdated swapchain is reconfigured and skipped for one frame rather than
     /// treated as fatal: it happens routinely on resize and display changes, and the next call
     /// succeeds.
-    pub fn present(&mut self, surface: &mut GpuSurface) -> Result<(), PresentError> {
+    /// `clear` is straight RGBA bytes, the same encoding the pixel buffer uses - not a
+    /// `wgpu::Color`. The embedder handing it in is the host, which knows the terminal's own
+    /// background and should not have to depend on wgpu to say so.
+    pub fn present(
+        &mut self,
+        surface: &mut GpuSurface,
+        clear: [u8; 4],
+    ) -> Result<(), PresentError> {
+        let clear = wgpu::Color {
+            r: f64::from(clear[0]) / 255.0,
+            g: f64::from(clear[1]) / 255.0,
+            b: f64::from(clear[2]) / 255.0,
+            a: f64::from(clear[3]) / 255.0,
+        };
         let frame = match self.surface.get_current_texture() {
             Ok(frame) => frame,
             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
@@ -404,7 +424,7 @@ impl WindowTarget {
             format: Some(self.view_format),
             ..Default::default()
         });
-        self.blitter.blit(surface, &view);
+        self.blitter.blit(surface, &view, clear);
         frame.present();
         Ok(())
     }

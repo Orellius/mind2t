@@ -868,6 +868,18 @@ mod input {
 
     use super::Focus;
 
+    /// Whether to print what each input path saw. `BINDARY_TRACE=1`.
+    ///
+    /// Off by default and not a debug leftover: the whole layer is invisible by construction -
+    /// a key that does nothing, a click that does nothing and a path that was never reached
+    /// look identical from outside, and the only alternative to this is guessing. Read once,
+    /// because a `getenv` per mouse-moved event is a syscall per pixel of travel.
+    fn tracing() -> bool {
+        use std::sync::OnceLock;
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| std::env::var("BINDARY_TRACE").is_ok_and(|value| value == "1"))
+    }
+
     /// Where an event landed, in the space the mouse encoder measures in.
     ///
     /// Returns surface-space PHYSICAL pixels from the window's top-left, whether the point is
@@ -900,7 +912,7 @@ mod input {
     /// mean the WHEEL - reporting a fourth physical button as code 4 would tell the child the
     /// view scrolled.
     fn button_code(event: &NSEvent) -> u32 {
-        match unsafe { event.buttonNumber() } {
+        match event.buttonNumber() {
             0 => 1,
             1 => 3,
             2 => 2,
@@ -931,11 +943,18 @@ mod input {
             MouseAction::Motion if event.r#type() == objc2_app_kit::NSEventType::MouseMoved => 0,
             _ => button_code(event),
         };
-        if let Err(error) = session
-            .borrow_mut()
-            .mouse(action, code, mods_of(event), x, y)
-        {
-            eprintln!("bindary: mouse report refused: {error:?}");
+        let mut session = session.borrow_mut();
+        let mode = session.frame().mouse_event();
+        match session.mouse(action, code, mods_of(event), x, y) {
+            Ok(reported) => {
+                if tracing() && (reported || action != MouseAction::Motion) {
+                    println!(
+                        "bindary: TRACE mouse {action:?} code={code} at ({x:.0},{y:.0})px \
+                         mode={mode:?} reported={reported}"
+                    );
+                }
+            }
+            Err(error) => eprintln!("bindary: mouse report refused: {error:?}"),
         }
     }
 
@@ -973,8 +992,16 @@ mod input {
                     // would put focus exactly where it does not belong and look like the click
                     // being ignored.
                     let Some((x, y, over_strip, _)) = surface_point(event, mtm, bar_height) else {
+                        if tracing() {
+                            println!("bindary: TRACE mouse down with NO window on the event");
+                        }
                         return pass;
                     };
+                    if tracing() {
+                        println!(
+                            "bindary: TRACE mouse down at ({x:.0},{y:.0})px over_strip={over_strip}"
+                        );
+                    }
                     if event.r#type() == objc2_app_kit::NSEventType::LeftMouseDown {
                         focus.set(if over_strip { Focus::Chrome } else { Focus::Terminal });
                     }
@@ -1069,8 +1096,26 @@ mod input {
                                 | NSEventModifierFlags::Option
                                 | NSEventModifierFlags::Shift,
                         );
+                        if tracing() {
+                            println!(
+                                "bindary: TRACE cmd chord keycode={} key={chord:?} plain={plain} focus={}",
+                                event.keyCode(),
+                                if focus.get() == Focus::Chrome { "chrome" } else { "terminal" },
+                            );
+                        }
                         if chord == Key::V && plain {
-                            clipboard::paste(&session.borrow());
+                            let text = clipboard::text();
+                            if tracing() {
+                                println!(
+                                    "bindary: TRACE clipboard holds {:?} chars, bracketed={}",
+                                    text.as_ref().map(|value| value.chars().count()),
+                                    session.borrow().bracketed_paste(),
+                                );
+                            }
+                            match text {
+                                Some(text) => clipboard::paste_text(&session.borrow(), &text),
+                                None => eprintln!("bindary: the clipboard holds no text"),
+                            }
                             return std::ptr::null_mut();
                         }
                         return pass;

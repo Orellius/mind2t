@@ -132,6 +132,9 @@ pub struct RuuahHost {
     /// filling this would reinstate the very 12.5 MB per frame readback the window exists to
     /// avoid. `RuuahHostFrame::pixels` is then null and the embedder draws nothing itself.
     pixels: Vec<u8>,
+    /// The GPU context every renderer for this host is built on. Held so a rebuild lands on
+    /// the same device an attached window's swapchain was created from.
+    gpu: ruuah_vt_render::GpuContext,
     /// The window this host presents into, when one has been attached. `None` keeps the
     /// original CGImage path exactly as it was, which is what makes the swap reversible and
     /// keeps the old path available as the oracle.
@@ -202,6 +205,7 @@ enum DrawMode {
 }
 
 fn build_renderer(
+    context: &ruuah_vt_render::GpuContext,
     font_size: f32,
     cols: u16,
     rows: u16,
@@ -209,14 +213,30 @@ fn build_renderer(
     ligatures: bool,
 ) -> Option<Renderer<GpuSurface>> {
     let fonts = FontStack::with_primary(family, font_size).ok()?;
-    // `Surface::with_size` panics when no GPU adapter exists; across the C boundary that
-    // must be a reported failure, not an unwind into foreign frames.
+    let cell = fonts.metrics();
+    let context = context.clone();
+    // Every rebuild lands on the SAME device. Building through `Renderer::with_surface`
+    // would construct a fresh `GpuSurface`, and a fresh `GpuSurface` brings a whole new
+    // instance, adapter, device and queue with it -- so a resize moved the renderer onto a
+    // different device while the window's swapchain stayed on the old one. Nothing errored;
+    // the frame simply stopped following the window (seen live 2026-08-04).
+    //
+    // The catch_unwind stays: surface construction can still fail on a machine with no
+    // usable adapter, and across the C boundary that must be a reported failure rather than
+    // an unwind into foreign frames.
     catch_unwind(AssertUnwindSafe(move || {
-        let mut renderer = Renderer::<GpuSurface>::with_surface(fonts, cols, rows);
+        let surface = GpuSurface::with_context(
+            context,
+            cell.width * u32::from(cols),
+            cell.height * u32::from(rows),
+        )
+        .ok()?;
+        let mut renderer = Renderer::<GpuSurface>::from_surface(fonts, surface, cols, rows);
         renderer.set_ligatures(ligatures);
-        renderer
+        Some(renderer)
     }))
     .ok()
+    .flatten()
 }
 
 fn poll_impl(host: &mut RuuahHost, mode: DrawMode) -> RuuahHostFrame {
@@ -449,11 +469,23 @@ pub unsafe extern "C" fn ruuah_host_spawn(
         )
     };
 
+    // One GPU context for this host's whole life. Every later rebuild - resize, zoom, font
+    // change - is constructed on it, which is what keeps a window's swapchain valid across
+    // rebuilds instead of orphaning it on a dead device.
+    let Ok(gpu) = ruuah_vt_render::GpuContext::new() else {
+        return RuuahHostResult::RenderFailed;
+    };
+
     // The renderer is built before the child so a machine that cannot render never spawns
     // a process it would immediately have to reap.
-    let Some(mut renderer) =
-        build_renderer(font_size, options.cols, options.rows, font_family.as_deref(), ligatures)
-    else {
+    let Some(mut renderer) = build_renderer(
+        &gpu,
+        font_size,
+        options.cols,
+        options.rows,
+        font_family.as_deref(),
+        ligatures,
+    ) else {
         return RuuahHostResult::RenderFailed;
     };
     renderer.set_palette(palette.clone());
@@ -501,6 +533,7 @@ pub unsafe extern "C" fn ruuah_host_spawn(
         renderer,
         frame,
         pixels: Vec::new(),
+        gpu,
         window: None,
         drawn_generation: 0,
         font_size,
@@ -1505,6 +1538,7 @@ pub unsafe extern "C" fn ruuah_host_resize(
         return RuuahHostResult::ResizeRefused;
     }
     let Some(mut renderer) = build_renderer(
+        &host.gpu,
         host.font_size,
         cols,
         rows,
@@ -1584,6 +1618,7 @@ pub unsafe extern "C" fn ruuah_host_set_font_size(
         return RuuahHostResult::ResizeRefused;
     }
     let Some(mut renderer) = build_renderer(
+        &host.gpu,
         font_size,
         cols,
         rows,

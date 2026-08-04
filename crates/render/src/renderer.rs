@@ -58,9 +58,25 @@ impl Renderer<Canvas> {
 
 impl<S: Surface> Renderer<S> {
     /// The same renderer on any backend.
+    ///
+    /// Builds its own backing surface, which on a GPU backend means its own device. An
+    /// embedder presenting into a window must NOT use this to rebuild - see
+    /// `from_surface`.
     pub fn with_surface(fonts: FontStack, cols: u16, rows: u16) -> Renderer<S> {
         let cell = fonts.metrics();
         let canvas = S::with_size(cell.width * u32::from(cols), cell.height * u32::from(rows));
+        Renderer::from_surface(fonts, canvas, cols, rows)
+    }
+
+    /// The same renderer over a surface the caller already owns.
+    ///
+    /// Why this exists: `with_surface` constructs the backend through `Surface::with_size`,
+    /// and a GPU backend built that way brings a whole new device with it. A rebuild - resize,
+    /// zoom, font change - therefore moved the renderer onto a different device while the
+    /// window's swapchain stayed on the old one, silently: no error, no crash, just a frame
+    /// that never followed the window again. Handing the surface in is what keeps one device
+    /// across every rebuild.
+    pub fn from_surface(fonts: FontStack, canvas: S, cols: u16, rows: u16) -> Renderer<S> {
         Renderer {
             fonts,
             atlas: Atlas::new(),

@@ -65,6 +65,29 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
+**B3.6 one window, panes on demand, `[tested]` headlessly 2026-08-06 (`b3-5-divider`).** Orel's
+call: the window opens with ONE pane like any other terminal, and **cmd+D splits it to the right**,
+as Ghostty does. The pre-split 1x2 canvas was B3.4 scaffolding and read as a window already in use.
+Gate is now **19 invariants** - it opens with one pane, splits, and every geometry check runs
+against the result.
+
+- **`Canvas::split` validates before it mutates.** The new session is spawned and every new rect
+  measured against the same `fit` the panes will use from then on; only after that do the existing
+  panes move. The order is the point - the alternative resizes everyone, discovers the last cell is
+  one column wide, and leaves the operator with a smaller canvas and no new pane. A refused split
+  leaves the canvas exactly as it was.
+- **Re-tiling goes through `resize`, not by hand**, so a split and a window resize cannot disagree
+  about how a pane moves. One path updates rects, ptys and mouse geometry.
+- **Single-row canvases only** (`CanvasError::NotSplittable`). Adding a column to a two-row grid
+  adds TWO panes and renumbers every existing one, which is not what a key press asked for. Refused
+  rather than approximated until a split tree exists; pinned by a test.
+- **The gate drives `Canvas::split`, never a synthesized cmd+D** - a real chord would type into
+  whatever the operator is doing. The chord itself (event mask, keycode match) is **live-tap debt**,
+  the same boundary as every other AppKit path here (SCAR-014). It is matched on the KEYCODE, so
+  the Hebrew layout cannot kill it.
+- Mutant seen red: a split that adds a pane without resizing the existing one - "pane 0 still
+  claims 180 columns after a split - it is drawing under its neighbour".
+
 **B3.5 the pane divider, `[tested]` headlessly 2026-08-06 (`b3-5-divider`).** Two terminals no
 longer read as one surface: the layout reserves a gutter between panes and a solid rule is painted
 into exactly that gap, in the same render pass. Gates: workspace suite green, difftest 207/207,

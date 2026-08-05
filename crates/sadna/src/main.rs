@@ -38,15 +38,17 @@ const BAR_HEIGHT: f64 = 36.0;
 /// DEVICE pixel - see the project CLAUDE.md; this repo has learned it twice already.
 const FONT_SIZE: f32 = 16.0;
 
-/// The canvas the host opens with, until the wizard declares one (B5).
+/// The canvas the host opens with: ONE pane, like any other terminal (Orel, 2026-08-06).
 ///
-/// Hardcoded on purpose rather than configurable: B3.4 is the wiring, and a setting nobody can
-/// change yet is a second place for the shape to live when the spec arrives.
+/// It opened pre-split into two while B3.4 was proving that a canvas could be composited at all.
+/// That was scaffolding, and it read as a window that had already been used - panes are the
+/// operator's to make now, with cmd+D, and the wizard (B5) is what declares a bigger canvas up
+/// front.
 ///
 /// The gutter is ZERO here and filled in by [`grid`] from the display's scale, because this is a
-/// const and scale is a runtime fact. A canvas built from this value directly draws no rules,
-/// which is a visible symptom rather than a silent one.
-const GRID: Grid = Grid { rows: 1, cols: 2, gutter: 0 };
+/// const and scale is a runtime fact. A single pane has no neighbour and therefore no rule either
+/// way; the gutter starts mattering at the first split.
+const GRID: Grid = Grid { rows: 1, cols: 1, gutter: 0 };
 
 /// Logical thickness of the rule between panes. One point - a hairline, not a border.
 const DIVIDER: f64 = 1.0;
@@ -177,6 +179,8 @@ struct Smoke {
     /// that had never applied the scale at all.
     dividers: Vec<Rect>,
     gutter: Option<u32>,
+    /// How many panes the window OPENED with, before the gate split it.
+    panes_at_open: Option<usize>,
     /// The window's own scale factor, so the gutter can be checked against the display rather
     /// than against the constant it was derived from.
     scale: Option<f64>,
@@ -248,7 +252,10 @@ impl Smoke {
         // the strip, the scale factor and the title-bar inset are only in this path, and each of
         // them has been wrong once already.
         let gutter = self.gutter.unwrap_or(0);
-        let tiled = self.panes.len() == usize::from(GRID.rows * GRID.cols)
+        // Two panes, because the gate split the one it opened with. Not `GRID`, which now
+        // describes the OPENING canvas and would make this check agree with a split that never
+        // happened.
+        let tiled = self.panes.len() == 2
             && self
                 .panes
                 .iter()
@@ -301,7 +308,17 @@ impl Smoke {
                 .zip(&self.after_resize)
                 .all(|(before, after)| after.1.0 < before.1.0 && after.1.1 < before.1.1);
 
-        let checks: [(bool, &str); 17] = [
+        let checks: [(bool, &str); 19] = [
+            (
+                self.panes_at_open == Some(1),
+                "the window OPENS with one pane, like any other terminal - panes are made with \
+                 cmd+D, and a window that arrives pre-split reads as one already in use",
+            ),
+            (
+                self.panes.len() == 2 && self.panes_at_open == Some(1),
+                "and a split ADDED one - the same call cmd+D makes, so a split that silently \
+                 replaced the pane rather than adding beside it fails here",
+            ),
             (
                 self.grid.is_some_and(|(cols, rows)| cols > 1 && rows > 1),
                 "the session has a real grid",
@@ -779,7 +796,19 @@ fn main() {
     accept_mouse_moved(&window);
 
     #[cfg(target_os = "macos")]
-    let _monitor = (!headless()).then(|| input::monitor(Rc::clone(&canvas), Rc::clone(&focus), BAR_HEIGHT));
+    // The split's ingredients are captured, not rebuilt: the SAME context every existing pane was
+    // spawned on, and the font already multiplied by this display's scale. Two clones because the
+    // gate splits too, and a context is reference-counted - both hand out the same device.
+    let split_gpu = gpu.clone();
+    let smoke_gpu = gpu.clone();
+    let _monitor = (!headless()).then(|| {
+        input::monitor(
+            Rc::clone(&canvas),
+            Rc::clone(&focus),
+            BAR_HEIGHT,
+            move || (split_gpu.clone(), shell(), FONT_SIZE * scale as f32),
+        )
+    });
 
     // Registered before the run loop: the chrome can announce itself the moment its script
     // runs, and a listener attached later would miss exactly the fast case.
@@ -1018,6 +1047,25 @@ fn main() {
             if probing && settled && !agreed && probed_at.is_none_or(|at| at.elapsed() >= REPROBE)
             {
                 probed_at = Some(std::time::Instant::now());
+                // The window OPENED with this many panes, read before anything splits it. One is
+                // the claim (Orel, 2026-08-06: like any other terminal), and it is recorded rather
+                // than assumed from the constant, because a host that ignored `GRID` entirely
+                // would still satisfy a check written against `GRID`.
+                if smoke.borrow().panes_at_open.is_none() {
+                    smoke.borrow_mut().panes_at_open = Some(canvas.panes().len());
+
+                    // Then SPLIT, the way cmd+D does, and let every geometry invariant below run
+                    // against the result. The split is driven through the canvas and never through
+                    // a synthesized key press: putting a real cmd+D into the machine would type
+                    // into whatever the operator is doing. What that leaves untested is the chord
+                    // itself - the event mask and the keycode match - and that is a live tap, not
+                    // a covered path (SCAR-014).
+                    let (command, font) = (shell(), FONT_SIZE * scale as f32);
+                    if let Err(error) = canvas.split(&smoke_gpu, command, font) {
+                        eprintln!("sadna: smoke could not split: {error:?}");
+                    }
+                }
+
                 {
                     let mut record = smoke.borrow_mut();
                     // Pane 0's rect, which is the number the blit actually uses. The window
@@ -1127,6 +1175,7 @@ mod input {
 
     use sadna::canvas::Canvas;
     use sadna::{clipboard, wheel};
+    use ruuah_vt_render::GpuContext;
     use block2::RcBlock;
     use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
@@ -1268,10 +1317,15 @@ mod input {
     /// watch every application on the machine, which is an enormous ask for a terminal. The
     /// returned token must stay alive; dropping it removes the monitor and the keyboard goes
     /// quiet with nothing logged.
+    /// `spawn` is what cmd+D puts in a new pane: the GPU context every pane must share, the
+    /// command to run, and the already-scaled font size. Passed in rather than rebuilt here
+    /// because a monitor that made its own context would produce panes that cannot be composited
+    /// with the ones beside them - the B3.4 defect, one layer up.
     pub fn monitor(
         canvas: Rc<RefCell<Canvas>>,
         focus: Rc<Cell<Focus>>,
         bar_height: f64,
+        spawn: impl Fn() -> (GpuContext, std::process::Command, f32) + 'static,
     ) -> Option<Retained<AnyObject>> {
         // Captured once: the monitor and its handler both run on the main thread, and proving
         // that here is cheaper than proving it at every AppKit call inside the block.
@@ -1454,6 +1508,32 @@ mod input {
                                 event.keyCode(),
                             );
                         }
+                        // cmd+D splits the focused pane to the right, as Ghostty does. It is the
+                        // second chord this host has to claim for itself, and for the same reason
+                        // as cmd+V: there is no first responder to route a menu item to.
+                        //
+                        // A refused split is REPORTED and the canvas is left alone - pressing it
+                        // in a window too narrow for another terminal does nothing visible, and a
+                        // silent nothing is indistinguishable from a dead key binding.
+                        if chord == Key::D && plain {
+                            let mut canvas = canvas.borrow_mut();
+                            let (gpu, command, font) = spawn();
+                            match canvas.split(&gpu, command, font) {
+                                Ok(index) => {
+                                    // Focus follows the new pane, which is what every terminal
+                                    // does and what makes the chord usable twice in a row.
+                                    focus.set(Focus::Pane(index));
+                                    if tracing() {
+                                        println!("sadna: TRACE split into pane {index}");
+                                    }
+                                }
+                                Err(error) => {
+                                    eprintln!("sadna: cannot split: {error:?}");
+                                }
+                            }
+                            return std::ptr::null_mut();
+                        }
+
                         if chord == Key::V && plain {
                             let text = clipboard::text();
                             let canvas = canvas.borrow();

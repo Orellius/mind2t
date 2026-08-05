@@ -42,6 +42,13 @@ pub enum CanvasError {
     /// The area cannot hold the requested grid at the current font size.
     TooSmall { rows: u16, cols: u16 },
     Session(SessionError),
+    /// A split was asked of a canvas with more than one row.
+    ///
+    /// Adding a column to a two-row grid adds TWO panes, not one, and moves every existing pane's
+    /// row-major index. That is a different operation from what the operator pressed a key for, so
+    /// it is refused rather than approximated. The shape that lifts this is a split TREE, where
+    /// `tile` becomes the leaf case - see the note on `layout::Canvas`.
+    NotSplittable { rows: u16 },
 }
 
 /// One pane: a session and the rectangle it occupies, in physical pixels.
@@ -135,6 +142,59 @@ impl Canvas {
         Ok(())
     }
 
+    /// Adds a pane to the right of the existing ones and re-tiles - what cmd+D does.
+    ///
+    /// Returns the new pane's index.
+    ///
+    /// **Nothing mutates until the new grid is known to fit.** The new pane is spawned first and
+    /// measured against the same `fit` every pane uses, and only then are the existing panes moved
+    /// and resized. The order matters because the alternative fails halfway: resize everyone,
+    /// discover the last cell is a single column wide, and the operator is left with a canvas
+    /// smaller than the one they had and no new pane to show for it. A refused split leaves the
+    /// canvas exactly as it was.
+    ///
+    /// Single-row canvases only. Adding a column to a two-row grid adds TWO panes and renumbers
+    /// every existing one, which is not what a key press asked for - see `CanvasError`.
+    pub fn split(
+        &mut self,
+        gpu: &GpuContext,
+        command: Command,
+        font_size: f32,
+    ) -> Result<usize, CanvasError> {
+        if self.grid.rows > 1 {
+            return Err(CanvasError::NotSplittable { rows: self.grid.rows });
+        }
+
+        let grown = Grid { cols: self.grid.cols + 1, ..self.grid };
+        let rects = grown.tile(self.area);
+        let Some(last) = rects.last().copied() else {
+            return Err(CanvasError::TooSmall { rows: grown.rows, cols: grown.cols });
+        };
+
+        let mut session =
+            Session::spawn_fitted_on(gpu, command, last.width, last.height, font_size, None)
+                .map_err(CanvasError::Session)?;
+        let metrics = session.cell_metrics();
+
+        // EVERY new rect is checked, not just the new one: the split takes width from the panes
+        // that already exist, so the cell that becomes unusable is as likely to be an old one.
+        if rects
+            .iter()
+            .any(|rect| fit(*rect, metrics).cols == 0 || fit(*rect, metrics).rows == 0)
+        {
+            session.shutdown();
+            return Err(CanvasError::TooSmall { rows: grown.rows, cols: grown.cols });
+        }
+        session.set_mouse_geometry(last.width, last.height, 0, 0, 0, 0);
+
+        self.grid = grown;
+        self.panes.push(Pane { session, rect: last });
+        // Re-tiling through `resize` rather than by hand, so a split and a window resize cannot
+        // disagree about how a pane is moved: one path updates rects, ptys and mouse geometry.
+        self.resize(self.area)?;
+        Ok(self.panes.len() - 1)
+    }
+
     pub fn panes(&self) -> &[Pane] {
         &self.panes
     }
@@ -149,6 +209,16 @@ impl Canvas {
 
     pub fn grid(&self) -> Grid {
         self.grid
+    }
+
+    /// The rules between the panes, in the SAME area the panes were tiled into.
+    ///
+    /// Derived on demand from the grid rather than stored, because a stored copy is a second
+    /// truth that survives a resize: the rects would move and the dividers would stay, leaving
+    /// rules floating across the middle of a pane. `resize` updates `area`, and this follows for
+    /// free - the same reason `pane_at` recomputes instead of caching.
+    pub fn dividers(&self) -> Vec<Rect> {
+        self.grid.dividers(self.area)
     }
 
     /// The pane under a point in window space, or `None` outside every pane.

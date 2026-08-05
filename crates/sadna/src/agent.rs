@@ -475,6 +475,10 @@ mod tests {
     /// candidate ORDER. Rust comparing its own arithmetic would pass on all three.
     #[test]
     fn the_probe_agrees_with_the_shell_about_what_is_installed() {
+        // Held for the whole comparison: this test asks the SHELL what is on PATH, so it cannot
+        // run while a sibling has PATH emptied. See the note on the cache test.
+        let _guard = env_lock();
+
         let mut probe = super::Probe::default();
         let mut seen = 0;
         for agent in REGISTRY {
@@ -529,8 +533,27 @@ mod tests {
     /// Proven by making the answer STALE and observing it survive: the cached value is kept and
     /// returned even though the world has changed. Without this, the cache could be absent
     /// entirely and every test above would still pass - it only ever affects how often we look.
+    /// Serialises the tests that read or write the process environment.
+    ///
+    /// Poison is ignored deliberately: a panicking test has already failed and reported itself, and
+    /// turning that into a second, unrelated failure in every test that follows only buries the
+    /// first one.
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     #[test]
     fn a_resolved_agent_is_cached_rather_than_re_walked() {
+        // The environment is PROCESS-global and Rust runs tests in parallel threads, so the window
+        // where PATH is empty below is a window in which every other test in this binary sees an
+        // empty PATH too. Measured 2026-08-06: that raced
+        // `the_probe_agrees_with_the_shell_about_what_is_installed`, whose shell then reported
+        // claude missing while our own cached probe still had it - a red suite, green on re-run,
+        // with nothing wrong in the product. Both tests take this lock; it is the reason
+        // `set_var` is unsafe in edition 2024 and the reason a re-run must never be the fix.
+        let _guard = env_lock();
+
         let mut probe = super::Probe::default();
         let claude = find("claude").expect("claude is in the registry");
         let first = probe.resolve(claude);

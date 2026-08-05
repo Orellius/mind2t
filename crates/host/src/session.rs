@@ -19,14 +19,14 @@ use std::process::Command;
 
 use crate::pointer::{Input, Pointer, Wheel};
 use ruuah_vt_core::events::Event;
-use ruuah_vt_frame::{Frame, FrameReader};
+use ruuah_vt_frame::{BaseDirection, Frame, FrameReader};
 use ruuah_vt_pty::key::{KeyOptions, OptionAsAlt};
 // Re-exported under host-facing names: a caller wiring a window should not have to learn that
 // the mouse encoder lives in the pty crate to name a click.
 pub use ruuah_vt_pty::mouse::{Action as MouseAction, Mods as MouseMods};
 use ruuah_vt_pty::{Geometry, Host, Options, SpawnError};
 use ruuah_vt_render::{
-    CellMetrics, FontStack, GpuContext, GpuSurface, PresentError, Renderer, WindowTarget,
+    CellMetrics, FontStack, GpuContext, GpuSurface, Palette, PresentError, Renderer, WindowTarget,
 };
 
 /// The grid, in cells. Pixels are derived from it and the font, never the other way round.
@@ -69,6 +69,13 @@ pub struct Session {
     geometry: SessionGeometry,
     font_size: f32,
     font_family: Option<String>,
+    /// The theme, HELD rather than only applied.
+    ///
+    /// `resize` rebuilds the renderer, and a fresh renderer starts on `Palette::xterm()`. A
+    /// palette that was only pushed into the renderer would therefore survive until the first
+    /// time the operator dragged the window, then silently revert - the terminal would simply be
+    /// wearing different colours than it was a moment ago, with nothing in any log.
+    palette: Palette,
     /// The child's working directory, decoded from its last OSC 7 report. `None` until it
     /// reports one, and again after it reports an empty one.
     cwd: Option<String>,
@@ -125,6 +132,7 @@ impl Session {
             geometry,
             font_size,
             font_family,
+            palette: Palette::xterm(),
             cwd: None,
             pointer: Pointer::default(),
         })
@@ -411,10 +419,28 @@ impl Session {
             self.font_size,
             self.font_family.as_deref(),
         )?;
+        // The rebuild starts on the default scheme, so the theme is put back. Without this a
+        // configured palette lasts exactly until the first window drag.
+        self.renderer.set_palette(self.palette.clone());
         self.geometry = geometry;
         // Everything on screen belongs to the old grid; the next frame repaints in full.
         self.drawn_generation = 0;
         Ok(())
+    }
+
+    /// Applies a theme, and keeps it across every later renderer rebuild.
+    pub fn set_palette(&mut self, palette: Palette) {
+        self.palette = palette.clone();
+        self.renderer.set_palette(palette);
+    }
+
+    /// How rows are laid out - `Auto` is the Hebrew-first setting the `.app` ships.
+    ///
+    /// Set once and it holds: the publish channel does not carry a direction, and neither
+    /// `read_into` nor `resize` writes this field, so a per-frame reapplication would be
+    /// redundant rather than defensive (the C surface relies on the same property).
+    pub fn set_base_direction(&mut self, direction: BaseDirection) {
+        self.frame.base_direction = direction;
     }
 
     pub fn send(&self, bytes: &[u8]) -> Result<(), SessionError> {

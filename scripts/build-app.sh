@@ -20,8 +20,11 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="RUUAH VT"
 BUILD="swift/.build/$APP_NAME.app"
-# The RUUAH checkout was archived 2026-08-06; the icon rides along with the oracle source.
-ICON_SRC="${RUUAH_VT_ORACLE_SRC:-$HOME/Archive/studio-parked-20260806/tools-ruuah}/images/Ghostty.icon/Assets/Ghostty.png"
+# Sadna's own mark, in this repo (2026-08-06). It used to be Ghostty's icon out of the oracle
+# checkout, which was borrowed goods AND a build that broke the moment that checkout moved - it
+# was archived the same day. `assets/icon/sadna.svg` is the source; the PNG beside it is committed
+# so a build needs no SVG rasteriser.
+ICON_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/assets/icon/sadna-1024.png"
 
 rm -rf "$BUILD"
 mkdir -p "$BUILD/Contents/MacOS" "$BUILD/Contents/Resources"
@@ -59,20 +62,18 @@ mkdir -p "$BUILD/Contents/Resources/shell/zdotdir"
 cp shell/ruuah-integration.zsh "$BUILD/Contents/Resources/shell/ruuah-integration.zsh"
 cp shell/zdotdir/.zshenv "$BUILD/Contents/Resources/shell/zdotdir/.zshenv"
 
-# Icon: the RUUAH ghost from the fork's own icon artwork, when the fork is
-# present. Skipped silently otherwise -- the app runs fine without it.
+# Icon: Sadna's own mark. Skipped silently if the artwork is missing -- the app runs without it.
 if [ -f "$ICON_SRC" ]; then
   ICONSET="swift/.build/RuuahVT.iconset"
   rm -rf "$ICONSET"; mkdir -p "$ICONSET"
-  # The artwork is 475x541; pad onto a square dark canvas before resizing so
-  # the ghost is not stretched.
-  sips -p 541 541 --padColor 16151B "$ICON_SRC" --out "$ICONSET/base.png" >/dev/null
+  # Already square at 1024, so it is resized directly -- no padding pass. Padding a square source
+  # onto a square canvas insets the whole mark, which is how an icon ends up looking smaller than
+  # every other icon in the Dock.
   for size in 16 32 128 256 512; do
-    sips -z "$size" "$size" "$ICONSET/base.png" --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
-    sips -z "$((size * 2))" "$((size * 2))" "$ICONSET/base.png" \
+    sips -z "$size" "$size" "$ICON_SRC" --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
+    sips -z "$((size * 2))" "$((size * 2))" "$ICON_SRC" \
       --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
   done
-  rm "$ICONSET/base.png"
   iconutil -c icns "$ICONSET" -o "$BUILD/Contents/Resources/RuuahVT.icns"
 fi
 

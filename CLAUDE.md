@@ -1,8 +1,8 @@
-# CLAUDE.md - ruuah-vt (project child config)
+# CLAUDE.md - sadna (project child config)
 
 > **Parent stack layer:** `../CLAUDE.md` (tools/ 2026 stack, auto-inherited; don't restate it).
-> Chain: `~/.claude/CLAUDE.md` (contract) → `Studio/CLAUDE.md` (index) → `tools/CLAUDE.md` (stack) → **this file (ruuah-vt specifics)**.
-> This file = project specifics only. Last update stamp: 2026-08-04 (IDT).
+> Chain: `~/.claude/CLAUDE.md` (contract) → `Studio/CLAUDE.md` (index) → `tools/CLAUDE.md` (stack) → **this file (sadna specifics)**.
+> This file = project specifics only. Last update stamp: 2026-08-06 (IDT).
 > Posture: the global proactive co-pilot rule (initiative, three-steps-ahead, extreme ownership) is in force here via `~/.claude/CLAUDE.md`.
 
 ## What this is NOW - Sadna (decided 2026-08-04, Orel; renamed 2026-08-06)
@@ -1041,7 +1041,14 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
 
 ## Repo and git workflow
 
-`Orellius/ruuah-vt`, **private**. `origin` only.
+**`Orellius/sadna`, private, at `~/Desktop/Studio/tools/sadna`.** `origin` only.
+
+**Renamed from `ruuah-vt` on 2026-08-06 (Orel's call), and the split is deliberate: the
+CONTAINER is named after the product, the CRATES stay named after the engine.** `crates/*` are
+still `ruuah-vt-core`, `ruuah-vt-frame`, `ruuah-vt-host` and so on, because the engine is the
+part somebody else might embed and its name is its identity. GitHub serves a permanent redirect
+from the old URL, so an old clone's `origin` keeps working - do not rely on that, run
+`git remote set-url origin https://github.com/Orellius/sadna.git`.
 
 **There is no `upstream` remote, deliberately.** ruuah-vt is original code with no shared
 history to track, so a second remote would be theatre. The upstream that actually matters is

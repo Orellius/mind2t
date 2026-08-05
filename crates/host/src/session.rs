@@ -88,6 +88,28 @@ impl Session {
         font_family: Option<String>,
     ) -> Result<Session, SessionError> {
         let gpu = GpuContext::new().map_err(|error| SessionError::Render(error.to_string()))?;
+        Session::spawn_on(&gpu, command, geometry, font_size, font_family)
+    }
+
+    /// The same, on a context the CALLER owns - which is what a canvas requires.
+    ///
+    /// A composited frame is one render pass, and a bind group can only carry buffers belonging
+    /// to the device that pass runs on. So N panes on N devices is not a slow path, it is a wgpu
+    /// validation failure at the first frame that draws more than one of them
+    /// ([`ruuah_vt_render::WindowTarget::present_all`]).
+    ///
+    /// It cannot be caught by any test that never presents, which is exactly what happened: the
+    /// canvas landed with real children, correct geometry and a green suite, and could not have
+    /// drawn itself. The window's swapchain has the same requirement from the other side - it is
+    /// built on a context too, and `is_surface_supported` only answers for the one it was given.
+    pub fn spawn_on(
+        gpu: &GpuContext,
+        command: Command,
+        geometry: SessionGeometry,
+        font_size: f32,
+        font_family: Option<String>,
+    ) -> Result<Session, SessionError> {
+        let gpu = gpu.clone();
         let renderer = build(&gpu, geometry, font_size, font_family.as_deref())?;
         let (host, reader) = Host::spawn(command, Options::new(geometry.cols, geometry.rows))
             .map_err(SessionError::Spawn)?;
@@ -108,8 +130,8 @@ impl Session {
         })
     }
 
-    /// Starts a session sized to fit `width` x `height` PHYSICAL pixels, and tells the child that
-    /// size from its very first breath.
+    /// Starts a session on `gpu`, sized to fit `width` x `height` PHYSICAL pixels, and tells the
+    /// child that size from its very first breath.
     ///
     /// The difference from [`Session::spawn`] plus a resize is a race, and it is not theoretical:
     /// measured 2026-08-05, a pane spawned at the provisional 80x24 and resized a moment later
@@ -120,7 +142,11 @@ impl Session {
     ///
     /// The font is measured first (cell metrics come from the font, not from the grid), so the
     /// geometry is known before there is a child to tell.
-    pub fn spawn_fitted(
+    ///
+    /// There is deliberately no context-less twin: every caller of this is a pane, and a pane
+    /// that owns its own device cannot be composited (see [`Session::spawn_on`]).
+    pub fn spawn_fitted_on(
+        gpu: &GpuContext,
         command: Command,
         width: u32,
         height: u32,
@@ -136,7 +162,7 @@ impl Session {
             cols: (width / cell.width.max(1)).max(1) as u16,
             rows: (height / cell.height.max(1)).max(1) as u16,
         };
-        Session::spawn(command, geometry, font_size, font_family)
+        Session::spawn_on(gpu, command, geometry, font_size, font_family)
     }
 
     /// The GPU context a window target must be built on.

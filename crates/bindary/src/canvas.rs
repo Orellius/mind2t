@@ -15,7 +15,7 @@
 use std::process::Command;
 
 use ruuah_vt_host::session::{Session, SessionError, SessionGeometry};
-use ruuah_vt_render::CellMetrics;
+use ruuah_vt_render::{CellMetrics, GpuContext};
 
 use crate::layout::{Canvas as Grid, Rect};
 
@@ -58,12 +58,19 @@ pub struct Canvas {
 }
 
 impl Canvas {
-    /// Spawns one session per cell, each sized from its own rect.
+    /// Spawns one session per cell on ONE GPU context, each sized from its own rect.
+    ///
+    /// The context is the caller's and is shared by every pane, because a canvas is composited:
+    /// `present_all` puts all of them in one render pass, and a pass can only bind buffers from
+    /// its own device. A pane that made its own context would be a wgpu validation failure the
+    /// first time two panes were drawn together - and invisible to any test that never presents,
+    /// which is how this arrived with real children and a green suite (`Session::spawn_on`).
     ///
     /// Refuses rather than degrades when the area cannot hold the grid: a canvas of one-column
     /// terminals is not a smaller canvas, it is an unusable one, and the operator asked for
     /// something the window cannot give. The caller has a wizard to say that in.
     pub fn spawn(
+        gpu: &GpuContext,
         grid: Grid,
         area: Rect,
         specs: &[PaneSpec],
@@ -79,7 +86,8 @@ impl Canvas {
             // and is resized a moment later has already answered `stty size` with the wrong
             // number - measured, and the reason `spawn_fitted` exists. A banner printed at the
             // wrong width is in the scrollback for good.
-            let mut session = Session::spawn_fitted(
+            let mut session = Session::spawn_fitted_on(
+                gpu,
                 shell(&spec),
                 rect.width,
                 rect.height,

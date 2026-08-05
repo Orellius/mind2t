@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The Bindary host gate: builds the chrome, then runs the REAL Tauri host with its window ordered
-# out and asserts eight invariants about what AppKit, WebKit and the IPC actually did.
+# out and asserts sixteen invariants about what AppKit, WebKit, the IPC and the children did.
 #
 # Nothing appears on screen and no keystroke is captured, which is what makes it runnable while
 # the operator is working. Exit status is the verdict; the run prints one PASS or FAIL line per

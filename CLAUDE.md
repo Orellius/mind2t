@@ -60,6 +60,25 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
+**B3.4 the host is a CANVAS, `[tested]` headlessly 2026-08-05 (`b3-4-host-canvas`).** Bindary's
+window no longer holds one terminal. It holds a `Canvas` - a wizard-shaped grid (hardcoded 1x2
+until B5 declares one), one live session per cell, all of them presented in a single swapchain
+frame by `present_all`. Gates: workspace suite green, `scripts/smoke-bindary.sh` **16 of 16**.
+
+- **One GPU context for the whole canvas.** See the gotcha below; a pane that owned its device
+  could not be composited at all, and no test that never presents can see it.
+- **Coordinates are PANE-LOCAL past `Canvas::pane_at`.** Each pane's mouse geometry is its own
+  rect with zero padding, so a window-space point handed to a pane reports a cell displaced by
+  that pane's origin - down by the strip for all of them, right by half a window for the second.
+- **The press CAPTURES the pane.** Drag and release go to the pane that took the press, wherever
+  the pointer travels, because the held-button bookkeeping lives inside that pane and a release
+  delivered elsewhere leaves it held forever.
+- **The strip is subtracted exactly once**, in `canvas_area`. Every pane's position is its rect,
+  so `WindowTarget`'s own origin stays zero and `present_all` ignores it.
+- What is NOT proven: the window's LOOK. Two shells side by side is `[untested - needs your
+  eyes]` - no window has been put on screen (standing order), and the byte-level proof is the
+  offscreen composite in `crates/bindary/tests/canvas.rs`.
+
 **S5.5 workspace sidebar, `[tested]` 2026-08-02 (`s55-workspace-sidebar`).** The tab
 strip's right-hand button was decoration copied 1:1 from the Warp reference; it now
 docks a sidebar listing every worktree, the sessions open in each, and which one is
@@ -643,10 +662,17 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
 
 - **BINDARY'S GATE IS `scripts/smoke-bindary.sh`, AND IT NEEDS NO SCREEN.** Orel's standing order
   (2026-08-04) while he works in parallel sessions: no windows on his display, no synthetic
-  input. The script runs the real Tauri host with its window ordered out and asserts **fourteen**
-  invariants about what AppKit, WebKit, the IPC and the CHILD actually did, exit code and all.
+  input. The script runs the real Tauri host with its window ordered out and asserts **sixteen**
+  invariants about what AppKit, WebKit, the IPC and the CHILDREN actually did, exit code and all.
   Run it before committing anything under `crates/bindary`. It ends as soon as it has collected
-  everything (about 3.5s of run time), and burns its 20s ceiling only when something is wrong.
+  everything (about 4s of run time), and burns its 20s ceiling only when something is wrong.
+  The last two arrived with the canvas (B3.4) and both were seen red by their own mutant: the
+  panes TILE the live window edge to edge (mutant: every rect keeps the full width - both panes
+  then report 90 columns of a 900px window and draw on top of each other), and a **resize
+  re-tiles every pane and shrinks every pane's own grid** (mutant: the handler ignores
+  `Canvas::resize`). The resize is driven by `window.set_size` on the already-hidden window, which
+  costs no screen and still comes back as a real `Resized` event - so the operator's first
+  instinct is a gated path rather than a live-tap item.
   Four Tauri traps it pins, each of which presents as a blank chrome strip and none of which
   errors:
   1. a `devUrl` in `tauri.conf.json` sends every webview to a dev server in debug builds,
@@ -658,6 +684,18 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   The chrome is embedded at COMPILE time from `chrome/dist`, so a stale bundle ships silently;
   the script rebuilds it first. `chrome/dist` and `crates/bindary/gen` are gitignored, like
   `web/dist`.
+- **ONE GPU CONTEXT PER CANVAS, NOT PER SESSION** (B3.4, 2026-08-05). `Session::spawn` builds its
+  own `GpuContext`, which is right for the one-terminal hosts and wrong for every pane: a
+  composited frame is ONE render pass, and a pass can only bind buffers from its own device. So a
+  canvas spawns through `Session::spawn_on` / `spawn_fitted_on` with the host's context, and the
+  window's swapchain is built on that same one. Two things make this worth writing down rather
+  than fixing quietly. It is **invisible to any test that does not present** - the canvas landed
+  with real children, exact tiling and a green suite while being unable to draw itself. And it
+  does not fail as "wrong device": wgpu reports it at `create_bind_group` as a usage-flags
+  complaint about the wrong buffer entirely, so the message points away from the cause.
+  `every_pane_reaches_one_frame_at_its_own_rect` (`crates/bindary/tests/canvas.rs`) is the gate,
+  and the mutant - one context per pane - was seen red while the other two canvas tests stayed
+  green.
 - **THE GATE DRIVES THE SESSION, NEVER APPKIT - AND THAT BOUNDARY IS THE HONEST PART** (B2.5).
   Four of the twelve invariants exercise a real child: a directory report, a paste, and a wheel
   scroll with its stillness control. All three are driven through `Session`, because

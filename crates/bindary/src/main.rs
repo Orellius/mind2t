@@ -23,8 +23,10 @@ use std::cell::{Cell, RefCell};
 use std::process::Command;
 use std::rc::Rc;
 
-use ruuah_vt_host::session::{MouseAction, MouseMods, Session, SessionGeometry};
-use ruuah_vt_render::WindowTarget;
+use bindary::canvas::{Canvas, PaneSpec};
+use bindary::layout::{Canvas as Grid, Rect};
+use ruuah_vt_host::session::{MouseAction, MouseMods, Session};
+use ruuah_vt_render::{GpuContext, GpuSurface, WindowTarget};
 use tauri::webview::WebviewBuilder;
 use tauri::window::WindowBuilder;
 use tauri::{Emitter, Listener, LogicalPosition, LogicalSize, Manager, RunEvent, WebviewUrl};
@@ -35,6 +37,12 @@ const BAR_HEIGHT: f64 = 36.0;
 /// Logical point size. The session is built at `FONT_SIZE * scale` so one buffer pixel is one
 /// DEVICE pixel - see the project CLAUDE.md; this repo has learned it twice already.
 const FONT_SIZE: f32 = 16.0;
+
+/// The canvas the host opens with, until the wizard declares one (B5).
+///
+/// Hardcoded on purpose rather than configurable: B3.4 is the wiring, and a setting nobody can
+/// change yet is a second place for the shape to live when the spec arrives.
+const GRID: Grid = Grid { rows: 1, cols: 2 };
 
 const SESSION_EVENT: &str = "bindary://session";
 
@@ -74,17 +82,20 @@ const MOUSE_MARKER: &str = "BINDARY-MOUSE";
 /// `^[` by ECHOCTL, so this is the printable form, not the wire form.
 const MOUSE_REPORT: &str = "^[[<0;1;1M";
 
-/// Where the smoke clicks: the first cell under the chrome strip. One pixel in from each edge,
-/// so it is unambiguously inside cell (0,0) at any font size.
-fn click(session: &mut Session, strip: u32) -> bool {
-    let y = strip as f32 + 1.0;
+/// Where the smoke clicks: cell (0,0) of the pane, one pixel in from each edge so it is
+/// unambiguously inside that cell at any font size.
+///
+/// PANE-LOCAL, not window-space. Each pane's mouse geometry is its own rect with no padding
+/// (`Canvas::spawn`), so the strip is no longer subtracted here - it is already excluded by the
+/// rect. Passing window coordinates would silently report a cell some rows down.
+fn click(session: &mut Session) -> bool {
     let pressed = session
-        .mouse(MouseAction::Press, 1, MouseMods::default(), 1.0, y)
+        .mouse(MouseAction::Press, 1, MouseMods::default(), 1.0, 1.0)
         .unwrap_or(false);
     // The release is sent whatever the press did, because the held-button bookkeeping is not
     // conditional: a press recorded and a release dropped leaves a button held forever.
     let released = session
-        .mouse(MouseAction::Release, 1, MouseMods::default(), 1.0, y)
+        .mouse(MouseAction::Release, 1, MouseMods::default(), 1.0, 1.0)
         .unwrap_or(false);
     pressed && released
 }
@@ -107,8 +118,23 @@ struct Smoke {
     chrome_url: Option<String>,
     document: Option<String>,
     layers: Vec<String>,
+    /// The FOCUSED pane's top-left in the window, in physical pixels.
+    ///
+    /// It used to be the window target's own origin, which is the number a single terminal is
+    /// placed by. A canvas has no such number: every pane's position lives in its rect, and the
+    /// rect is what the blit uses - so reading anything else would be checking a value the frame
+    /// does not consult.
     origin: Option<(u32, u32)>,
     grid: Option<(u16, u16)>,
+    /// Every pane's rect and grid, in order. The canvas as the LIVE WINDOW built it, which is a
+    /// different claim from `layout.rs`'s arithmetic over a synthetic area.
+    panes: Vec<(Rect, (u16, u16))>,
+    /// The same, taken immediately before and after the window is resized, with the size asked
+    /// for. Three records rather than one because "it re-tiled" is only meaningful against what
+    /// it was: a canvas that ignored the resize entirely still tiles perfectly, at the old size.
+    before_resize: Vec<(Rect, (u16, u16))>,
+    after_resize: Vec<(Rect, (u16, u16))>,
+    resized_to: Option<u32>,
     /// Title bar inset plus strip, in physical pixels: what the origin MUST clear.
     reserved: Option<u32>,
     /// Every distinct directory the SESSION decoded, in the order it decoded them.
@@ -165,10 +191,51 @@ impl Smoke {
             && self.after_scroll.is_some()
             && self.after_scroll != self.steady;
 
-        let checks: [(bool, &str); 14] = [
+        // Every pane is a real terminal, and the panes TILE the area in the live window: pane
+        // n+1 starts exactly where pane n ends, on the same row of the grid. Checked here as
+        // well as in `layout.rs` because that test tiles a number, and this one tiles a window -
+        // the strip, the scale factor and the title-bar inset are only in this path, and each of
+        // them has been wrong once already.
+        let tiled = self.panes.len() == usize::from(GRID.rows * GRID.cols)
+            && self
+                .panes
+                .iter()
+                .all(|(_, (cols, rows))| *cols > 1 && *rows > 1)
+            && self
+                .panes
+                .windows(2)
+                .all(|pair| pair[1].0.x == pair[0].0.x + pair[0].0.width && pair[1].0.y == pair[0].0.y);
+
+        // A resize must reach BOTH halves: the rects re-tile the new window, and every pane's own
+        // grid follows. A canvas that ignored the event tiles the OLD area perfectly, and a
+        // canvas that re-tiled without resizing its ptys leaves every child drawing at its old
+        // width, underneath its neighbour - neither errors, and both look healthy.
+        let re_tiled = !self.after_resize.is_empty()
+            && self.after_resize.len() == self.before_resize.len()
+            && self
+                .after_resize
+                .windows(2)
+                .all(|pair| pair[1].0.x == pair[0].0.x + pair[0].0.width)
+            && self.after_resize[0].0.x == 0
+            && self.resized_to.is_some_and(|width| {
+                let last = self.after_resize[self.after_resize.len() - 1].0;
+                last.x + last.width == width
+            })
+            && self
+                .before_resize
+                .iter()
+                .zip(&self.after_resize)
+                .all(|(before, after)| after.1.0 < before.1.0 && after.1.1 < before.1.1);
+
+        let checks: [(bool, &str); 16] = [
             (
                 self.grid.is_some_and(|(cols, rows)| cols > 1 && rows > 1),
                 "the session has a real grid",
+            ),
+            (
+                tiled,
+                "the canvas has one live pane per cell and they tile the window edge to edge - a \
+                 pane that kept the full width draws UNDER its neighbour and looks entirely normal",
             ),
             (
                 self.origin
@@ -227,6 +294,12 @@ impl Smoke {
                 "and the report really reached the child: it came back off the pty as text, \
                  which encoding it into a buffer nobody wrote would not",
             ),
+            (
+                re_tiled,
+                "a window resize re-tiles every pane to the NEW area and shrinks every pane's \
+                 own grid with it - the first thing an operator does, and the one path where \
+                 tiling and the pty can disagree",
+            ),
         ];
 
         let mut passed = true;
@@ -271,9 +344,6 @@ enum Stage {
 struct InputProbe {
     stage: Stage,
     since: std::time::Instant,
-    /// The reserved strip, in physical pixels. The probe clicks just below it, so it needs the
-    /// same number the session's mouse geometry was given.
-    strip: u32,
 }
 
 impl InputProbe {
@@ -287,11 +357,10 @@ impl InputProbe {
     /// publish, short enough that the whole gate stays a few seconds.
     const STILLNESS: std::time::Duration = std::time::Duration::from_millis(300);
 
-    fn new(strip: u32) -> InputProbe {
+    fn new() -> InputProbe {
         InputProbe {
             stage: Stage::Waiting,
             since: std::time::Instant::now(),
-            strip,
         }
     }
 
@@ -324,7 +393,7 @@ impl InputProbe {
                 // the child provably has NOT asked for reporting. Recorded, never asserted on
                 // its own: silence is what a dead mouse path and a correct one both look like,
                 // and the second half is what tells them apart.
-                smoke.click_before_enable = Some(click(session, self.strip));
+                smoke.click_before_enable = Some(click(session));
                 self.enter(Stage::Filling);
             }
 
@@ -401,7 +470,7 @@ impl InputProbe {
                 // about would be encoded, written, received and simply off-screen, which reads
                 // exactly like a mouse path that does not work.
                 session.scroll(-40);
-                smoke.click_after_enable = Some(click(session, self.strip));
+                smoke.click_after_enable = Some(click(session));
                 self.enter(Stage::Clicking);
             }
 
@@ -438,8 +507,36 @@ struct SessionState {
 /// and the webview covers a known strip, so a click's position answers it exactly.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Focus {
-    Terminal,
+    /// The pane a click last landed in. An index rather than a reference, because the canvas is
+    /// behind a `RefCell` and holding anything borrowed from it across an event would deadlock
+    /// the first time a handler wanted to present.
+    Pane(usize),
     Chrome,
+}
+
+/// Which pane the chrome describes and whose background clears the window.
+///
+/// Falls back to pane 0 while the chrome holds focus rather than tracking the last terminal the
+/// operator aimed at. That is a simplification and it is stated: with one canvas it means the
+/// strip can name pane 0 while pane 1 was the last one typed into. B5 gives the strip a real
+/// per-pane vocabulary and this goes away with it.
+fn active_pane(focus: &Cell<Focus>, panes: usize) -> usize {
+    match focus.get() {
+        Focus::Pane(index) if index < panes => index,
+        _ => 0,
+    }
+}
+
+/// Every pane's rect and its own grid, in order - the canvas as it currently stands.
+fn snapshot(canvas: &Canvas) -> Vec<(Rect, (u16, u16))> {
+    canvas
+        .panes()
+        .iter()
+        .map(|pane| {
+            let geometry = pane.session.geometry();
+            (pane.rect, (geometry.cols, geometry.rows))
+        })
+        .collect()
 }
 
 fn shell() -> Command {
@@ -447,12 +544,18 @@ fn shell() -> Command {
     Command::new(path)
 }
 
-/// The grid that fits below the chrome strip. Floors: a partial row is not a row.
-fn grid_for(width: u32, height: u32, strip: u32, cell_width: u32, cell_height: u32) -> SessionGeometry {
-    let usable = height.saturating_sub(strip);
-    SessionGeometry {
-        cols: (width / cell_width.max(1)).max(1) as u16,
-        rows: (usable / cell_height.max(1)).max(1) as u16,
+/// The area the canvas tiles: the window minus the chrome strip, in PHYSICAL pixels.
+///
+/// The strip is subtracted exactly here, once. Everything downstream reads a rect, so nothing
+/// else in the host has to know that a chrome exists - which is the same rule the Swift host's
+/// `ChromeLayout` follows and for the same reason: a second place that reasons about the strip
+/// is a second place that can disagree with the first.
+fn canvas_area(width: u32, height: u32, strip: u32) -> Rect {
+    Rect {
+        x: 0,
+        y: strip,
+        width,
+        height: height.saturating_sub(strip),
     }
 }
 
@@ -477,29 +580,41 @@ fn main() {
     let physical = window.inner_size().expect("the window size");
     let strip = ((BAR_HEIGHT + titlebar_inset(&window)) * scale) as u32;
 
-    let mut session = match Session::spawn(
-        shell(),
-        SessionGeometry { cols: 80, rows: 24 },
-        FONT_SIZE * scale as f32,
-        None,
-    ) {
-        Ok(session) => session,
+    // ONE context for every pane AND for the window's swapchain. A render pass binds buffers
+    // from a single device, so a pane that built its own could not be composited at all - see
+    // `Session::spawn_on`, and the gate `every_pane_reaches_one_frame_at_its_own_rect`.
+    let gpu = match GpuContext::new() {
+        Ok(gpu) => gpu,
         Err(error) => {
-            eprintln!("bindary: no session: {error:?}");
+            eprintln!("bindary: no GPU: {error}");
             std::process::exit(1);
         }
     };
 
-    let cell = session.cell_metrics();
-    let geometry = grid_for(physical.width, physical.height, strip, cell.width, cell.height);
-    if let Err(error) = session.resize(geometry) {
-        eprintln!("bindary: initial resize refused: {error:?}");
-    }
+    let specs = vec![PaneSpec::shell(); usize::from(GRID.rows * GRID.cols)];
+    let canvas = match Canvas::spawn(
+        &gpu,
+        GRID,
+        canvas_area(physical.width, physical.height, strip),
+        &specs,
+        FONT_SIZE * scale as f32,
+        |_spec| shell(),
+    ) {
+        Ok(canvas) => canvas,
+        Err(error) => {
+            eprintln!("bindary: no canvas: {error:?}");
+            std::process::exit(1);
+        }
+    };
 
     // SURFACE FIRST. The webview is added after this call and therefore lands above it; reversed,
     // the terminal covers the chrome and nothing errors. See the module card.
-    let target = match WindowTarget::from_window(
-        session.context(),
+    //
+    // The target's own origin stays ZERO and is never set: with a canvas each pane is placed by
+    // its rect, and the strip is already inside those rects. Two sources for one number is how a
+    // pane ends up offset by exactly the strip height.
+    let mut target = match WindowTarget::from_window(
+        &gpu,
         window.clone(),
         physical.width.max(1),
         physical.height.max(1),
@@ -510,12 +625,6 @@ fn main() {
             std::process::exit(1);
         }
     };
-    session.attach(target);
-    session.set_origin(0, strip);
-    // The pointer's frame of reference: the whole window, with the chrome strip as a TOP INSET
-    // rather than as part of the grid. Reported cells are counted from below the strip, so a
-    // click one row under the chrome is row 0 - which is also what the operator sees.
-    session.set_mouse_geometry(physical.width, physical.height, 0, strip, 0, 0);
 
     // What the app WOULD serve, asked of the resolver rather than inferred from a blank page.
     // This is the control for the title probe: if the bytes are here and the page is still
@@ -548,18 +657,22 @@ fn main() {
         }
     }
 
-    println!(
-        "bindary: {}x{} cells at {}x{}px, strip {strip}px, scale {scale}",
-        geometry.cols, geometry.rows, cell.width, cell.height
-    );
+    for (index, pane) in canvas.panes().iter().enumerate() {
+        let geometry = pane.session.geometry();
+        let cell = pane.session.cell_metrics();
+        println!(
+            "bindary: pane {index} {}x{} cells at {}x{}px, rect {:?}, strip {strip}px, scale {scale}",
+            geometry.cols, geometry.rows, cell.width, cell.height, pane.rect
+        );
+    }
     // Measured, not assumed. Every number here has already been wrong once in this project, and
     // each was found by a print contradicting a screenshot rather than by reading the code.
     println!(
-        "bindary: inner {}x{} outer {:?} origin {:?}",
+        "bindary: inner {}x{} outer {:?} area {:?}",
         physical.width,
         physical.height,
         window.outer_size().ok(),
-        session.origin(),
+        canvas.area(),
     );
     if let Some(chrome) = window.get_webview("chrome") {
         println!(
@@ -576,8 +689,8 @@ fn main() {
     // Shared between the AppKit key monitor and the run loop. Both are the main thread, so this
     // is an `Rc`, not an `Arc` behind a lock: introducing a mutex here would buy nothing and
     // would invite a deadlock the moment a key handler wanted to present.
-    let session = Rc::new(RefCell::new(session));
-    let focus = Rc::new(Cell::new(Focus::Terminal));
+    let canvas = Rc::new(RefCell::new(canvas));
+    let focus = Rc::new(Cell::new(Focus::Pane(0)));
 
     // Never in headless mode: a local monitor makes the app eat keystrokes the moment it is
     // active, and an invisible window that steals the keyboard is the worst of both worlds.
@@ -585,7 +698,7 @@ fn main() {
     accept_mouse_moved(&window);
 
     #[cfg(target_os = "macos")]
-    let _monitor = (!headless()).then(|| input::monitor(Rc::clone(&session), Rc::clone(&focus), BAR_HEIGHT));
+    let _monitor = (!headless()).then(|| input::monitor(Rc::clone(&canvas), Rc::clone(&focus), BAR_HEIGHT));
 
     // Registered before the run loop: the chrome can announce itself the moment its script
     // runs, and a listener attached later would miss exactly the fast case.
@@ -615,9 +728,11 @@ fn main() {
     // through the process would skip the pty host's teardown (SCAR-016).
     let mut finished = false;
     let mut probed_at: Option<std::time::Instant> = None;
+    // When the headless resize was asked for; `None` until it has been.
+    let mut resized_at: Option<std::time::Instant> = None;
     let mut ready_at: Option<std::time::Instant> = None;
     let smoke = std::rc::Rc::new(std::cell::RefCell::new(Smoke::default()));
-    let mut probe = InputProbe::new(strip);
+    let mut probe = InputProbe::new();
     let page_finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     // The chrome is attached from INSIDE the run loop, on the first frame.
     //
@@ -639,10 +754,39 @@ fn main() {
                 }
             }
 
-            let mut session = session.borrow_mut();
-            let drew = session.poll();
+            let mut canvas = canvas.borrow_mut();
+            let mut drew = false;
+            for pane in canvas.panes_mut() {
+                // `|=`, never `||`: short-circuiting would stop polling the moment one pane had
+                // something, and the panes after it would advance only when their neighbour was
+                // quiet - which looks like a terminal that lags rather than one that is starved.
+                drew |= pane.session.poll();
+
+                // Drained every frame, not occasionally: the core's queue is bounded at 128 and
+                // drops its OLDEST entry on overflow, so a host that never drains keeps the last
+                // events of a long session and silently loses the first. `Session` folds the OSC 7
+                // report into its own cwd on the way past; the rest - title, bell, clipboard,
+                // progress - have no consumer in this host yet and are deliberately dropped here
+                // rather than left to rot in the queue.
+                let _ = pane.session.take_events();
+            }
+
             if drew {
-                if let Err(error) = session.present() {
+                // ONE acquire, N blits, ONE present. Presenting per pane would be N frames racing
+                // to the display for a single tick, which reads as tearing rather than as a bug.
+                // The clear is the active pane's own background: a window is almost never an exact
+                // multiple of a cell, so the remainder is visible margin.
+                let active = active_pane(&focus, canvas.panes().len());
+                let clear = canvas.panes()[active].session.clear_color();
+                let mut panes: Vec<(&mut GpuSurface, (u32, u32))> = canvas
+                    .panes_mut()
+                    .iter_mut()
+                    .map(|pane| {
+                        let rect = pane.rect;
+                        (pane.session.surface_mut(), (rect.x, rect.y))
+                    })
+                    .collect();
+                if let Err(error) = target.present_all(&mut panes, clear) {
                     // Loud and fatal. A present that fails and falls back is how B1's four
                     // defects stayed invisible for a day.
                     eprintln!("bindary: present failed: {error:?}");
@@ -650,20 +794,18 @@ fn main() {
                 }
             }
 
-            // Drained every frame, not occasionally: the core's queue is bounded at 128 and
-            // drops its OLDEST entry on overflow, so a host that never drains keeps the last
-            // events of a long session and silently loses the first. `Session` folds the OSC 7
-            // report into its own cwd on the way past; the rest - title, bell, clipboard,
-            // progress - have no consumer in this host yet and are deliberately dropped here
-            // rather than left to rot in the queue.
-            let _ = session.take_events();
-
             // The chrome is told only when something it displays actually changed. Emitting every
             // frame would push 120 events a second through the IPC boundary to redraw the same
             // three strings.
-            let geometry = session.geometry();
-            let exited = session.exited();
-            let cwd = session.cwd().map(str::to_string);
+            let active = active_pane(&focus, canvas.panes().len());
+            let geometry = canvas.panes()[active].session.geometry();
+            // ALL of them, not any: one shell exiting must not take the window with it and kill
+            // the agents beside it. A dead pane keeps its last frame until B4 owns pane lifecycle.
+            let exited = canvas
+                .panes_mut()
+                .iter_mut()
+                .all(|pane| pane.session.exited());
+            let cwd = canvas.panes()[active].session.cwd().map(str::to_string);
             let state = (geometry.cols, geometry.rows, exited, cwd.clone());
             if replay.swap(false, std::sync::atomic::Ordering::Relaxed) {
                 // A fresh listener has nothing; forget what was already said so it is said again.
@@ -730,14 +872,38 @@ fn main() {
             // the strip has already been probed proves nothing about the order.
             if headless() {
                 let mut record = smoke.borrow_mut();
-                // Appended only when it CHANGES, so the list is the sequence of directories the
-                // child reported rather than one entry per frame.
-                if let Some(cwd) = session.cwd() {
+                // Pane 0 throughout: the probe drives ONE session on purpose, so every reading it
+                // takes belongs to the same child. Appended only when it CHANGES, so the list is
+                // the sequence of directories the child reported rather than one entry per frame.
+                if let Some(cwd) = canvas.panes()[0].session.cwd() {
                     if record.cwd_seen.last().map(String::as_str) != Some(cwd) {
                         record.cwd_seen.push(cwd.to_string());
                     }
                 }
-                probe.advance(&mut session, &mut record, settled);
+                probe.advance(&mut canvas.panes_mut()[0].session, &mut record, settled);
+            }
+
+            // The resize path, driven LAST so it cannot disturb any reading above - it changes
+            // every grid in the window, which would invalidate the scroll control and the strip
+            // comparison at once. `set_size` on a window that is already ordered out costs no
+            // screen and still travels through AppKit, so what comes back is a real `Resized`
+            // event and the whole path under test (`target.resize`, `canvas_area`,
+            // `Canvas::resize`) runs exactly as it does for a human dragging a corner.
+            if headless() && probe.done() {
+                let mut record = smoke.borrow_mut();
+                if resized_at.is_none() {
+                    record.before_resize = snapshot(&canvas);
+                    let _ = window.set_size(LogicalSize::new(600.0, 380.0));
+                    resized_at = Some(std::time::Instant::now());
+                } else if record.after_resize.is_empty()
+                    && resized_at.is_some_and(|at| at.elapsed() >= SETTLE)
+                {
+                    record.after_resize = snapshot(&canvas);
+                    // ASKED of the window, never the number we requested: a window manager may
+                    // give something else, and asserting against our own request would pass on a
+                    // canvas that tiled a size the window never took.
+                    record.resized_to = window.inner_size().ok().map(|size| size.width.max(1));
+                }
             }
 
             // The document must show BOTH the grid and the directory before the run is over.
@@ -758,8 +924,13 @@ fn main() {
                 probed_at = Some(std::time::Instant::now());
                 {
                     let mut record = smoke.borrow_mut();
-                    record.origin = session.origin();
+                    // Pane 0's rect, which is the number the blit actually uses. The window
+                    // target's origin stays zero with a canvas, so reading it would check a value
+                    // nothing consults and pass while every pane sat under the chrome.
+                    let first = canvas.panes()[0].rect;
+                    record.origin = Some((first.x, first.y));
                     record.grid = Some((geometry.cols, geometry.rows));
+                    record.panes = snapshot(&canvas);
                     record.reserved = Some(
                         ((BAR_HEIGHT + titlebar_inset(&window)) * window.scale_factor().unwrap_or(1.0))
                             as u32,
@@ -771,7 +942,9 @@ fn main() {
             // Ends EARLY once everything has been collected, and at the budget otherwise. A gate
             // that always burned its ceiling would make every future invariant cost the operator
             // wall-clock time, and the ones that fail are exactly the runs worth waiting out.
-            let collected = probe.done() && agreed;
+            let collected = probe.done()
+                && agreed
+                && (!headless() || !smoke.borrow().after_resize.is_empty());
             if headless() && !finished && (collected || started.elapsed() >= HEADLESS_BUDGET) {
                 finished = true;
                 println!(
@@ -801,8 +974,8 @@ fn main() {
                 // made this gate decoration the moment anything trusted it. The child is shut
                 // down explicitly first, because leaving through the process skips the
                 // destructor that reaps it (SCAR-016).
-                session.shutdown();
-                drop(session);
+                canvas.shutdown();
+                drop(canvas);
                 std::process::exit(if passed { 0 } else { 1 });
                 // `AppHandle::exit` requests an exit; it does not stop THIS iteration, and the
                 // first version of this line printed its farewell a hundred times because the
@@ -815,24 +988,23 @@ fn main() {
             event: tauri::WindowEvent::Resized(size),
             ..
         } => {
-            let mut session = session.borrow_mut();
+            let mut canvas = canvas.borrow_mut();
             let (width, height) = (size.width.max(1), size.height.max(1));
             let scale = window.scale_factor().unwrap_or(1.0);
             let strip = ((BAR_HEIGHT + titlebar_inset(&window)) * scale) as u32;
 
-            if let Err(error) = session.resize_window(width, height) {
-                eprintln!("bindary: window resize refused: {error:?}");
+            target.resize(width, height);
+            // One call re-tiles the canvas, resizes EVERY pty from its own new rect, and restates
+            // every pane's mouse geometry - which has to happen or the encoder converts pixels to
+            // cells against a stale view and the child acts on the column the pointer used to be
+            // over. A canvas that resized only the rects would leave every child at its old size,
+            // drawing under its neighbour and looking entirely healthy.
+            if let Err(error) = canvas.resize(canvas_area(width, height, strip)) {
+                // Reported, not fatal: a window dragged smaller than the grid can hold is the
+                // operator asking for something impossible, and the last good tiling stays on
+                // screen until they let go.
+                eprintln!("bindary: canvas resize refused: {error:?}");
             }
-            let cell = session.cell_metrics();
-            let geometry = grid_for(width, height, strip, cell.width, cell.height);
-            if let Err(error) = session.resize(geometry) {
-                eprintln!("bindary: grid resize refused: {error:?}");
-            }
-            session.set_origin(0, strip);
-            // Re-stated on every resize, and it has to be: the encoder converts pixels to cells
-            // against these numbers, so a stale view size reports the cell the pointer USED to
-            // be over. Nothing errors, and the child simply acts on the wrong column.
-            session.set_mouse_geometry(width, height, 0, strip, 0, 0);
 
             // The webview is a child view with no autoresizing mask; nothing moves it but this.
             let logical = size.to_logical::<f64>(scale);
@@ -854,12 +1026,13 @@ mod input {
     use std::ptr::NonNull;
     use std::rc::Rc;
 
+    use bindary::canvas::Canvas;
     use bindary::{clipboard, wheel};
     use block2::RcBlock;
     use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
     use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags};
-    use ruuah_vt_host::session::{MouseAction, MouseMods, Session};
+    use ruuah_vt_host::session::{MouseAction, MouseMods};
     use ruuah_vt_pty::key::{
         KEY_MODS_ALT, KEY_MODS_CTRL, KEY_MODS_SHIFT, KEY_MODS_SUPER, Key, KeyAction, KeyEvent,
         KeyMods, encode,
@@ -929,9 +1102,37 @@ mod input {
         }
     }
 
-    /// Hands one pointer event to the session. Silence is the common, correct outcome.
+    /// The pane under a window-space point, with the point translated into that pane's own space.
+    ///
+    /// Both halves or neither, and that is the whole trap of this layer: every pane's mouse
+    /// geometry is its OWN RECT with no padding (`Canvas::spawn`), so a window-space coordinate
+    /// handed to a pane reports a cell displaced by the pane's origin - down by the chrome strip
+    /// for every pane, and right by half a window for the second one. Nothing errors. The child
+    /// simply acts on a cell the operator never pointed at.
+    fn pane_under(canvas: &Rc<RefCell<Canvas>>, x: f32, y: f32) -> Option<(usize, f32, f32)> {
+        // Negatives are rejected rather than clamped: a point left of or above the window is
+        // outside every pane, and clamping to zero would put it inside the first one.
+        if x < 0.0 || y < 0.0 {
+            return None;
+        }
+        let canvas = canvas.borrow();
+        let index = canvas.pane_at(x as u32, y as u32)?;
+        let (local_x, local_y) = local(&canvas, index, x, y)?;
+        Some((index, local_x, local_y))
+    }
+
+    /// The same translation for a pane chosen by something other than the pointer - the captured
+    /// pane, mid-drag, whose rect the pointer may already have left.
+    fn local(canvas: &Canvas, index: usize, x: f32, y: f32) -> Option<(f32, f32)> {
+        let rect = canvas.panes().get(index)?.rect;
+        Some((x - rect.x as f32, y - rect.y as f32))
+    }
+
+    /// Hands one pointer event to a pane, in that pane's own coordinates. Silence is the common,
+    /// correct outcome.
     fn report(
-        session: &Rc<RefCell<Session>>,
+        canvas: &Rc<RefCell<Canvas>>,
+        index: usize,
         event: &NSEvent,
         action: MouseAction,
         x: f32,
@@ -943,14 +1144,17 @@ mod input {
             MouseAction::Motion if event.r#type() == objc2_app_kit::NSEventType::MouseMoved => 0,
             _ => button_code(event),
         };
-        let mut session = session.borrow_mut();
-        let mode = session.frame().mouse_event();
-        match session.mouse(action, code, mods_of(event), x, y) {
+        let mut canvas = canvas.borrow_mut();
+        let Some(pane) = canvas.panes_mut().get_mut(index) else {
+            return;
+        };
+        let mode = pane.session.frame().mouse_event();
+        match pane.session.mouse(action, code, mods_of(event), x, y) {
             Ok(reported) => {
                 if tracing() && (reported || action != MouseAction::Motion) {
                     println!(
-                        "bindary: TRACE mouse {action:?} code={code} at ({x:.0},{y:.0})px \
-                         mode={mode:?} reported={reported}"
+                        "bindary: TRACE mouse {action:?} code={code} pane={index} at \
+                         ({x:.0},{y:.0})px mode={mode:?} reported={reported}"
                     );
                 }
             }
@@ -966,7 +1170,7 @@ mod input {
     /// returned token must stay alive; dropping it removes the monitor and the keyboard goes
     /// quiet with nothing logged.
     pub fn monitor(
-        session: Rc<RefCell<Session>>,
+        canvas: Rc<RefCell<Canvas>>,
         focus: Rc<Cell<Focus>>,
         bar_height: f64,
     ) -> Option<Retained<AnyObject>> {
@@ -978,6 +1182,12 @@ mod input {
         // most of its deltas under one row, and an accumulator rebuilt per event rounds every
         // one of them to zero (`wheel::Accumulator`).
         let scroll = RefCell::new(wheel::Accumulator::default());
+
+        // The pane that received the press owns the drag and the release, wherever the pointer
+        // travels. Without capture, a drag out of pane 0 and a release over pane 1 leaves pane 0
+        // holding a button forever - and the held-button bookkeeping lives inside each pane, so
+        // the next bare motion over it reports a drag nobody is performing.
+        let captured: Cell<Option<usize>> = Cell::new(None);
 
         let handler = RcBlock::new(move |event: NonNull<NSEvent>| -> *mut NSEvent {
             let event = unsafe { event.as_ref() };
@@ -1002,11 +1212,18 @@ mod input {
                             "bindary: TRACE mouse down at ({x:.0},{y:.0})px over_strip={over_strip}"
                         );
                     }
+                    let under = (!over_strip)
+                        .then(|| pane_under(&canvas, x, y))
+                        .flatten();
                     if event.r#type() == objc2_app_kit::NSEventType::LeftMouseDown {
-                        focus.set(if over_strip { Focus::Chrome } else { Focus::Terminal });
+                        focus.set(match under {
+                            Some((index, _, _)) => Focus::Pane(index),
+                            None => Focus::Chrome,
+                        });
                     }
-                    if !over_strip {
-                        report(&session, event, MouseAction::Press, x, y);
+                    if let Some((index, local_x, local_y)) = under {
+                        captured.set(Some(index));
+                        report(&canvas, index, event, MouseAction::Press, local_x, local_y);
                     }
                     // Passed on regardless. The window still needs the event for its own
                     // business - dragging by the title bar, the traffic lights, the webview's
@@ -1018,12 +1235,22 @@ mod input {
                 objc2_app_kit::NSEventType::LeftMouseUp
                 | objc2_app_kit::NSEventType::RightMouseUp
                 | objc2_app_kit::NSEventType::OtherMouseUp => {
-                    // A RELEASE is forwarded even over the strip, and that asymmetry is the
-                    // point: the held-button bookkeeping lives on the other side of this call,
-                    // so a release the host swallows leaves a button held forever and the next
-                    // motion reports a drag nobody is performing.
-                    if let Some((x, y, _, _)) = surface_point(event, mtm, bar_height) {
-                        report(&session, event, MouseAction::Release, x, y);
+                    // A RELEASE goes to the pane that took the press, wherever the pointer ended
+                    // up - over the strip, over a neighbour, outside the window. That asymmetry
+                    // is the point: the held-button bookkeeping lives inside that pane, so a
+                    // release delivered anywhere else leaves it held forever and the next motion
+                    // reports a drag nobody is performing.
+                    if let Some((x, y, _, _)) = surface_point(event, mtm, bar_height)
+                        && let Some(index) = captured.take()
+                    {
+                        // The translation is taken in its OWN statement so the shared borrow is
+                        // released before `report` takes a mutable one. Inside the `if let` chain
+                        // the guard would live to the end of the block and every release would
+                        // panic on an already-borrowed RefCell.
+                        let point = local(&canvas.borrow(), index, x, y);
+                        if let Some((local_x, local_y)) = point {
+                            report(&canvas, index, event, MouseAction::Release, local_x, local_y);
+                        }
                     }
                     pass
                 }
@@ -1035,7 +1262,19 @@ mod input {
                     if let Some((x, y, over_strip, _)) = surface_point(event, mtm, bar_height)
                         && !over_strip
                     {
-                        report(&session, event, MouseAction::Motion, x, y);
+                        // A drag belongs to the pane that captured it; a bare move belongs to the
+                        // pane under the pointer. Sending a drag to whatever is underneath would
+                        // report a selection sweep to a program that never saw the button go down.
+                        let routed = match captured.get() {
+                            Some(index) => {
+                                let point = local(&canvas.borrow(), index, x, y);
+                                point.map(|(local_x, local_y)| (index, local_x, local_y))
+                            }
+                            None => pane_under(&canvas, x, y),
+                        };
+                        if let Some((index, local_x, local_y)) = routed {
+                            report(&canvas, index, event, MouseAction::Motion, local_x, local_y);
+                        }
                     }
                     pass
                 }
@@ -1051,12 +1290,23 @@ mod input {
                     if over_strip {
                         return pass;
                     }
+                    // The pointer picks the pane, and a scroll over no pane at all is nobody's.
+                    let Some((index, local_x, local_y)) = pane_under(&canvas, x, y) else {
+                        return pass;
+                    };
 
-                    let mut session = session.borrow_mut();
+                    let mut canvas = canvas.borrow_mut();
+                    let Some(pane) = canvas.panes_mut().get_mut(index) else {
+                        return pass;
+                    };
+                    // One accumulator for every pane, which is correct only while they share a
+                    // font size - they do, the host builds them all at `FONT_SIZE * scale`. A
+                    // per-pane font would need a per-pane remainder, or a slow trackpad scroll
+                    // would round to zero in one pane and not in its neighbour.
                     let rows = scroll.borrow_mut().rows(
                         event.scrollingDeltaY(),
                         event.hasPreciseScrollingDeltas(),
-                        session.cell_metrics().height,
+                        pane.session.cell_metrics().height,
                         scale,
                     );
                     if rows == 0 {
@@ -1067,18 +1317,21 @@ mod input {
                     // from under it, and a pager relying on alternate scroll must not have its
                     // arrows duplicated by a viewport move. `Ok(false)` is the session saying
                     // the wheel is ours.
-                    match session.wheel(x, y, rows, mods_of(event)) {
+                    match pane.session.wheel(local_x, local_y, rows, mods_of(event)) {
                         Ok(true) => {}
-                        Ok(false) => session.scroll(rows),
+                        Ok(false) => pane.session.scroll(rows),
                         Err(error) => eprintln!("bindary: wheel refused: {error:?}"),
                     }
                     std::ptr::null_mut()
                 }
 
                 objc2_app_kit::NSEventType::KeyDown => {
-                    if focus.get() == Focus::Chrome {
+                    // The keyboard goes to the pane the operator last clicked in, and to nothing
+                    // at all while the chrome holds it - the webview handles its own keys, and a
+                    // terminal that also took them would type into both.
+                    let Focus::Pane(index) = focus.get() else {
                         return pass;
-                    }
+                    };
                     let flags = event.modifierFlags();
                     // Command chords belong to the menu - cmd+Q, cmd+C - and a terminal that
                     // swallows them is a terminal you cannot quit. cmd+V is the ONE exception,
@@ -1098,22 +1351,25 @@ mod input {
                         );
                         if tracing() {
                             println!(
-                                "bindary: TRACE cmd chord keycode={} key={chord:?} plain={plain} focus={}",
+                                "bindary: TRACE cmd chord keycode={} key={chord:?} plain={plain} pane={index}",
                                 event.keyCode(),
-                                if focus.get() == Focus::Chrome { "chrome" } else { "terminal" },
                             );
                         }
                         if chord == Key::V && plain {
                             let text = clipboard::text();
+                            let canvas = canvas.borrow();
+                            let Some(pane) = canvas.panes().get(index) else {
+                                return pass;
+                            };
                             if tracing() {
                                 println!(
                                     "bindary: TRACE clipboard holds {:?} chars, bracketed={}",
                                     text.as_ref().map(|value| value.chars().count()),
-                                    session.borrow().bracketed_paste(),
+                                    pane.session.bracketed_paste(),
                                 );
                             }
                             match text {
-                                Some(text) => clipboard::paste_text(&session.borrow(), &text),
+                                Some(text) => clipboard::paste_text(&pane.session, &text),
                                 None => eprintln!("bindary: the clipboard holds no text"),
                             }
                             return std::ptr::null_mut();
@@ -1151,7 +1407,10 @@ mod input {
                         consumed |= KEY_MODS_SHIFT;
                     }
 
-                    let session = session.borrow();
+                    let canvas = canvas.borrow();
+                    let Some(pane) = canvas.panes().get(index) else {
+                        return pass;
+                    };
                     let bytes = encode(
                         &KeyEvent {
                             action: KeyAction::Press,
@@ -1162,14 +1421,14 @@ mod input {
                             utf8: &text,
                             unshifted_codepoint: unshifted,
                         },
-                        &session.key_options(),
+                        &pane.session.key_options(),
                     );
                     if bytes.is_empty() {
                         // Nothing to send is not the same as nothing to do: passing the event on
                         // keeps chords the terminal has no encoding for working elsewhere.
                         return pass;
                     }
-                    if let Err(error) = session.send(&bytes) {
+                    if let Err(error) = pane.session.send(&bytes) {
                         eprintln!("bindary: send failed: {error:?}");
                     }
                     std::ptr::null_mut()

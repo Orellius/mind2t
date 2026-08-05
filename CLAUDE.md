@@ -60,6 +60,38 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
+**B4.2 an agent launches into a pane and is SEEN from the grid, `[tested]` 2026-08-05
+(`b4-agent-registry`).** `crates/bindary/src/launch.rs`: spawn fitted, observe, retry with a
+doubling backoff. **A real Claude Code CLI ran in a pane and its own interface was read back with
+`Session::visible_text()`** - banner, `Sonnet 5 · Claude Max`, and the status line carrying model,
+cwd and git branch, with no regex and no ANSI parsing anywhere. That is the wedge demonstrated
+rather than argued: model, directory, branch and mode are already text on the grid. Verdict
+`Running` on the first attempt in 1.22s. Live tap: `scripts/agent-live-tap.sh`.
+
+- **`Running` requires wrote AND still alive**, and the exit check comes FIRST. A CLI that prints
+  its usage and quits is `Exited { wrote: true }`, not a success. "Did anything appear on the
+  grid" gets that case wrong and it is the common one for a bad argv. A 250ms settle after first
+  output closes the microsecond race between a write and the exit behind it.
+- **The retry loop is counted, not claimed.** Every attempt records its verdict and the wait
+  before it; the test asserts the backoffs doubled AND that the wall clock really elapsed, since a
+  loop that ran once ends identically to one that ran three times (SCAR-004).
+- **A refusal never retries.** An approval bypass fails once, immediately. Three attempts would
+  read as flakiness rather than as policy.
+- **The real-agent test is `#[ignore]`d on purpose**, so the suite never starts authenticated
+  agent processes on this machine. `scripts/agent-live-tap.sh` is how it is run deliberately, and
+  the script exists partly because writing that command in prose trips the firewall's M5 arm.
+- Fixture trap, cost one red run: `exec cat < /dev/null; sleep 30` does NOT express "alive but
+  mute". The exec replaces the shell, cat hits EOF at once, the sleep never runs. `exec sleep` is
+  the honest fixture.
+
+**B4.1 the agent registry and the auto-approve guard, `[tested]` 2026-08-05
+(`b4-agent-registry`).** `crates/bindary/src/agent.rs`: ten agent CLIs with the fields that
+actually differ (binary candidates, prompt strategy, spawn grace, resume template), a PATH probe
+with the asymmetric cache (5 min hit / 10 s miss), and the guard that refuses to auto-type an
+approval bypass. Nothing spawns yet - B4.2 puts an agent in a pane and verifies it from the typed
+grid. Five of the ten are installed here: claude, codex, gemini, opencode, grok. Two gotchas
+below carry the findings.
+
 **B3.4 the host is a CANVAS, `[tested]` headlessly 2026-08-05 (`b3-4-host-canvas`).** Bindary's
 window no longer holds one terminal. It holds a `Canvas` - a wizard-shaped grid (hardcoded 1x2
 until B5 declares one), one live session per cell, all of them presented in a single swapchain
@@ -660,6 +692,22 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
 
 ## Project rules & gotchas
 
+- **A GENERIC BINARY NAME IS NOT A CANDIDATE** (B4.1, 2026-08-05). `crates/bindary/src/agent.rs`
+  carries the agent-CLI matrix recovered from BridgeSpace. It probes bare **`agent`** first for
+  Cursor - and on this machine `agent` is `~/.grok/bin/agent`, so "launch Cursor" starts **Grok**,
+  silently, with a working agent in the pane. Found by the probe's very first run against the
+  shell's own `command -v`, which is why availability is MEASURED rather than trusted (SCAR-003 -
+  the registry is a claim about the world, and the world disagrees). `no_two_agents_can_resolve_to
+  _the_same_binary` now refuses a name claimed twice and a name generic enough to belong to
+  somebody else. A false negative (agent reported missing) is always preferable to a false
+  positive (the wrong vendor's agent running your prompt).
+- **THE AUTO-APPROVE GUARD IS NEVER A SANITISER.** `agent::screen` REFUSES a launch carrying
+  `--yolo`, `--dangerously-skip-permissions`, `-a never` and the rest; it never strips them and
+  proceeds. Stripping would leave the operator believing approvals were off when they were not.
+  Matched as WHOLE argv tokens, because `--auto` is Factory's bypass and `--autosave` is not, and
+  a guard that refuses near-misses is one people learn to route around. Both directions are
+  tested and both mutants were seen red: substring matching fails the near-miss test, a guard that
+  never fires fails the other three.
 - **BINDARY'S GATE IS `scripts/smoke-bindary.sh`, AND IT NEEDS NO SCREEN.** Orel's standing order
   (2026-08-04) while he works in parallel sessions: no windows on his display, no synthetic
   input. The script runs the real Tauri host with its window ordered out and asserts **sixteen**
@@ -750,8 +798,13 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   The window resize path has the matching gap: the font is built once at launch, so dragging to
   a display with a different scale does not re-rasterize. Named, not fixed (B2.4).
 
-- **`../ruuah` is read-only, including build artifacts.** Never run `zig build` in it with
-  default paths - that writes `zig-out/` and `.zig-cache/`. `scripts/build-oracle.sh`
+- **The oracle checkout moved (2026-08-06, Orel's call): `../ruuah` no longer exists.** RUUAH
+  was archived to `~/Archive/studio-parked-20260806/tools-ruuah` and `Orellius/ruuah` on GitHub
+  is archived read-only. The built oracle in `vendor/` keeps every gate working; a REBUILD
+  (`scripts/build-oracle.sh`, `scripts/build-app.sh` icon) needs
+  `RUUAH_VT_ORACLE_SRC=~/Archive/studio-parked-20260806/tools-ruuah`.
+- **The oracle checkout is read-only, including build artifacts.** Never run `zig build` in it
+  with default paths - that writes `zig-out/` and `.zig-cache/`. `scripts/build-oracle.sh`
   redirects both `--prefix` and `--cache-dir` here and then *verifies* the checkout is still
   clean, failing if it is not. Its whole economics are a near-zero rebase tax upstream.
 - **Zig must be exactly `0.16.0` at `/opt/homebrew/opt/zig/bin/zig`**, called by absolute

@@ -20,7 +20,8 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="RUUAH VT"
 BUILD="swift/.build/$APP_NAME.app"
-ICON_SRC="../ruuah/images/Ghostty.icon/Assets/Ghostty.png"
+# The RUUAH checkout was archived 2026-08-06; the icon rides along with the oracle source.
+ICON_SRC="${RUUAH_VT_ORACLE_SRC:-$HOME/Archive/studio-parked-20260806/tools-ruuah}/images/Ghostty.icon/Assets/Ghostty.png"
 
 rm -rf "$BUILD"
 mkdir -p "$BUILD/Contents/MacOS" "$BUILD/Contents/Resources"

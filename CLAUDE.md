@@ -798,8 +798,13 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   The window resize path has the matching gap: the font is built once at launch, so dragging to
   a display with a different scale does not re-rasterize. Named, not fixed (B2.4).
 
-- **`../ruuah` is read-only, including build artifacts.** Never run `zig build` in it with
-  default paths - that writes `zig-out/` and `.zig-cache/`. `scripts/build-oracle.sh`
+- **The oracle checkout moved (2026-08-06, Orel's call): `../ruuah` no longer exists.** RUUAH
+  was archived to `~/Archive/studio-parked-20260806/tools-ruuah` and `Orellius/ruuah` on GitHub
+  is archived read-only. The built oracle in `vendor/` keeps every gate working; a REBUILD
+  (`scripts/build-oracle.sh`, `scripts/build-app.sh` icon) needs
+  `RUUAH_VT_ORACLE_SRC=~/Archive/studio-parked-20260806/tools-ruuah`.
+- **The oracle checkout is read-only, including build artifacts.** Never run `zig build` in it
+  with default paths - that writes `zig-out/` and `.zig-cache/`. `scripts/build-oracle.sh`
   redirects both `--prefix` and `--cache-dir` here and then *verifies* the checkout is still
   clean, failing if it is not. Its whole economics are a near-zero rebase tax upstream.
 - **Zig must be exactly `0.16.0` at `/opt/homebrew/opt/zig/bin/zig`**, called by absolute

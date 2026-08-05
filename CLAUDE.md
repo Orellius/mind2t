@@ -60,6 +60,30 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
+**B4.2 an agent launches into a pane and is SEEN from the grid, `[tested]` 2026-08-05
+(`b4-agent-registry`).** `crates/bindary/src/launch.rs`: spawn fitted, observe, retry with a
+doubling backoff. **A real Claude Code CLI ran in a pane and its own interface was read back with
+`Session::visible_text()`** - banner, `Sonnet 5 · Claude Max`, and the status line carrying model,
+cwd and git branch, with no regex and no ANSI parsing anywhere. That is the wedge demonstrated
+rather than argued: model, directory, branch and mode are already text on the grid. Verdict
+`Running` on the first attempt in 1.22s. Live tap: `scripts/agent-live-tap.sh`.
+
+- **`Running` requires wrote AND still alive**, and the exit check comes FIRST. A CLI that prints
+  its usage and quits is `Exited { wrote: true }`, not a success. "Did anything appear on the
+  grid" gets that case wrong and it is the common one for a bad argv. A 250ms settle after first
+  output closes the microsecond race between a write and the exit behind it.
+- **The retry loop is counted, not claimed.** Every attempt records its verdict and the wait
+  before it; the test asserts the backoffs doubled AND that the wall clock really elapsed, since a
+  loop that ran once ends identically to one that ran three times (SCAR-004).
+- **A refusal never retries.** An approval bypass fails once, immediately. Three attempts would
+  read as flakiness rather than as policy.
+- **The real-agent test is `#[ignore]`d on purpose**, so the suite never starts authenticated
+  agent processes on this machine. `scripts/agent-live-tap.sh` is how it is run deliberately, and
+  the script exists partly because writing that command in prose trips the firewall's M5 arm.
+- Fixture trap, cost one red run: `exec cat < /dev/null; sleep 30` does NOT express "alive but
+  mute". The exec replaces the shell, cat hits EOF at once, the sleep never runs. `exec sleep` is
+  the honest fixture.
+
 **B4.1 the agent registry and the auto-approve guard, `[tested]` 2026-08-05
 (`b4-agent-registry`).** `crates/bindary/src/agent.rs`: ten agent CLIs with the fields that
 actually differ (binary candidates, prompt strategy, spawn grace, resume template), a PATH probe

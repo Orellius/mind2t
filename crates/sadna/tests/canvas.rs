@@ -342,6 +342,116 @@ fn read_back(context: &GpuContext, texture: &wgpu::Texture, width: u32, height: 
     out
 }
 
+/// A split adds a pane BESIDE the existing one, and the existing child is told it shrank.
+///
+/// This is what cmd+D does. The silent failure is the same shape as the whole canvas slice: a
+/// split that pushes a new pane onto the list and re-tiles the rects, but never resizes the pty
+/// that was already there, leaves pane 0's child confidently drawing at the full window width
+/// underneath its new neighbour. Nothing errors and the window looks right until output reaches
+/// the seam.
+///
+/// So the assertion is the CHILD's own report, before and after, through the pseudoterminal - and
+/// it must have gone DOWN. A test comparing the session's geometry to Rust's own arithmetic would
+/// pass on exactly that bug.
+#[test]
+fn a_split_adds_a_pane_and_the_existing_child_is_told_it_shrank() {
+    let context = gpu();
+    let area = Rect { x: 0, y: 0, width: 1800, height: 900 };
+    let mut canvas = Canvas::spawn(
+        &context,
+        Grid { rows: 1, cols: 1, gutter: GUTTER },
+        area,
+        &[PaneSpec::shell()],
+        FONT,
+        |_| {
+            let mut command = Command::new("/bin/sh");
+            // Marked reports, for the same reason as the resize test: a narrowing pane reflows
+            // the old line, and an unmarked "24 90" can split across rows and parse as different
+            // numbers entirely.
+            command
+                .arg("-c")
+                .arg("trap 'echo WINCH $(stty size)' WINCH; echo WINCH $(stty size); while :; do sleep 0.1; done");
+            command
+        },
+    )
+    .expect("a canvas");
+
+    pump(&mut canvas, Duration::from_secs(10));
+    assert_eq!(canvas.panes().len(), 1, "the canvas opened with more than one pane");
+    let before = canvas.panes()[0].session.geometry().cols;
+
+    let index = canvas
+        .split(&context, {
+            let mut command = Command::new("/bin/sh");
+            command.arg("-c").arg("stty size; exec cat");
+            command
+        }, FONT)
+        .expect("a split");
+
+    assert_eq!(index, 1, "the split did not report the new pane's index");
+    assert_eq!(canvas.panes().len(), 2, "the split replaced the pane instead of adding one");
+    let after = canvas.panes()[0].session.geometry().cols;
+    assert!(
+        after < before,
+        "pane 0 still claims {before} columns after a split - it is drawing under its neighbour"
+    );
+
+    // And the CHILD agrees, which is the half Rust cannot fake. Polled rather than waited on: the
+    // resize travels as SIGWINCH and a fixed sleep would be a race.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut last = None;
+    while Instant::now() < deadline {
+        for pane in canvas.panes_mut() {
+            pane.session.poll();
+        }
+        let text = canvas.panes()[0].session.visible_text();
+        last = text
+            .lines()
+            .filter(|line| line.contains("WINCH"))
+            .filter_map(|line| reported(line.trim_start_matches(|c: char| !c.is_ascii_digit())))
+            .next_back();
+        if last.is_some_and(|(_, cols)| cols == after) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        last.map(|(_, cols)| cols),
+        Some(after),
+        "the child's last reported width disagrees with the session's {after} after the split"
+    );
+
+    canvas.shutdown();
+}
+
+/// A canvas with more than one row refuses to split rather than approximating one.
+///
+/// Adding a column to a two-row grid adds TWO panes and renumbers every existing one, which is a
+/// different operation from the one a key press asked for. Refusing is the honest answer until a
+/// split tree exists, and this pins it so the behaviour is a decision rather than an accident.
+#[test]
+fn a_multi_row_canvas_refuses_to_split() {
+    let context = gpu();
+    let mut canvas = Canvas::spawn(
+        &context,
+        Grid { rows: 2, cols: 1, gutter: GUTTER },
+        Rect { x: 0, y: 0, width: 1200, height: 900 },
+        &[PaneSpec::shell(), PaneSpec::shell()],
+        FONT,
+        shell,
+    )
+    .expect("a canvas");
+
+    let refused = canvas.split(&context, Command::new("/bin/sh"), FONT);
+    assert!(
+        matches!(refused, Err(sadna::canvas::CanvasError::NotSplittable { rows: 2 })),
+        "a two-row canvas split anyway: {refused:?}"
+    );
+    assert_eq!(canvas.panes().len(), 2, "the refused split changed the canvas");
+
+    canvas.shutdown();
+}
+
 /// A resize must reach the children, not only the rects.
 ///
 /// The control for the test above: same canvas, same panes, and the numbers must CHANGE. Without

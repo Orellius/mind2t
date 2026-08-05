@@ -75,7 +75,7 @@ ${lines.join("\n")}
 `;
 writeFileSync(`${repo}/swift/Sources/ruuah-host/KeyMap.swift`, swift);
 
-// The same table for Rust hosts. TWO consumers, ONE generator: Bindary needs this mapping
+// The same table for Rust hosts. TWO consumers, ONE generator: Sadna needs this mapping
 // because Tauri exposes no keyboard events at the window level, so the app reads NSEvent
 // itself - and hand-porting 110 entries from the Swift file is exactly how the two drift.
 const rustRows = pairs.map(([mac, value, dom]) => `    (${mac}, ${value}), // ${dom}`);

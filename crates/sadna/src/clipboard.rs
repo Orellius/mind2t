@@ -8,7 +8,7 @@
 //! NOT responsible for: the paste TRANSFORM. `ruuah_vt_pty::paste::encode` owns it and is
 //!   measured byte-for-byte against `ghostty_paste_encode`; a second cleaning pass here would
 //!   be a second implementation of a rule that already has an oracle.
-//! Test strategy: `paste_text` is proven end to end by the Bindary smoke (a fixture is sent and
+//! Test strategy: `paste_text` is proven end to end by the Sadna smoke (a fixture is sent and
 //!   must appear on the grid); `text` is a live-tap item by construction.
 
 use ruuah_vt_host::session::Session;
@@ -30,7 +30,7 @@ pub fn paste(session: &Session) {
 pub fn paste_text(session: &Session, text: &str) {
     let bytes = ruuah_vt_pty::paste::encode(text.as_bytes(), session.bracketed_paste());
     if let Err(error) = session.send(&bytes) {
-        eprintln!("bindary: paste failed: {error:?}");
+        eprintln!("sadna: paste failed: {error:?}");
     }
 }
 
@@ -47,7 +47,7 @@ pub fn text() -> Option<String> {
 }
 
 /// No clipboard reached for on other platforms yet, and saying so out loud beats a paste that
-/// silently does nothing on the day Bindary is built for one (B6).
+/// silently does nothing on the day Sadna is built for one (B6).
 #[cfg(not(target_os = "macos"))]
 pub fn text() -> Option<String> {
     None

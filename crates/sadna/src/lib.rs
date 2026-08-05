@@ -1,4 +1,4 @@
-//! Purpose: the pieces both Bindary binaries share.
+//! Purpose: the pieces both Sadna binaries share.
 //! Public surface: `canvas`, `clipboard`, `keys`, `layout`, `wheel`.
 //! Why this file: there are two hosts - the Tauri app (`main.rs`) and the tao + wry oracle
 //!   (`bin/probe.rs`) - and Cargo gives binaries no way to share a module without a library

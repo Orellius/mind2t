@@ -69,16 +69,48 @@ struct Bounds {
     origin_y: u32,
 }
 
+/// A solid rectangle painted over the composited panes - the rule between them.
+///
+/// Straight sRGB bytes, like every other colour that crosses this boundary, and the target is
+/// non-sRGB by construction (see the module card), so what is asked for is byte-for-byte what
+/// lands. That is what lets a test assert the divider's colour rather than approximately match it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Fill {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    pub color: [u8; 4],
+}
+
+/// The uniform the solid shader reads. The rect leads, so the colour lands on the 16-byte
+/// boundary a `vec4<f32>` requires - reordering these fields silently misaligns the block.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct Solid {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    color: [f32; 4],
+}
+
 /// Copies a `GpuSurface`'s pixels into a render target, on the GPU.
 ///
 /// One pipeline per target format, because a render pipeline is compiled against its format.
 /// A window that changes format (moving between displays) rebuilds its blitter; a resize does
 /// not, since size is a uniform rather than a pipeline constant.
+///
+/// Two pipelines, not one: panes come from a pixel buffer and dividers are a flat colour, and a
+/// flat colour drawn through the pane pipeline would need a pixel buffer the size of the rule
+/// just to say one colour N times.
 #[derive(Debug)]
 pub struct Blitter {
     context: GpuContext,
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
+    solid_pipeline: wgpu::RenderPipeline,
+    solid_layout: wgpu::BindGroupLayout,
     format: wgpu::TextureFormat,
 }
 
@@ -156,10 +188,61 @@ impl Blitter {
             cache: None,
         });
 
+        let solid_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ruuah-vt solid"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<Solid>() as u64),
+                },
+                count: None,
+            }],
+        });
+
+        let solid_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("ruuah-vt solid"),
+                bind_group_layouts: &[&solid_layout],
+                push_constant_ranges: &[],
+            });
+
+        let solid_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("ruuah-vt solid"),
+            layout: Some(&solid_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vertex"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("solid_fragment"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    // REPLACE, exactly as the pane path does: the divider is opaque chrome, not a
+                    // tint over whatever the pane underneath happened to draw.
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
         Ok(Blitter {
             context: context.clone(),
             pipeline,
             layout,
+            solid_pipeline,
+            solid_layout,
             format,
         })
     }
@@ -184,7 +267,7 @@ impl Blitter {
         clear: wgpu::Color,
         origin: (u32, u32),
     ) {
-        self.blit_all(&mut [(surface, origin)], target, clear);
+        self.blit_all(&mut [(surface, origin)], &[], target, clear);
     }
 
     /// Draws SEVERAL surfaces into one target: one clear, one pass, one submit.
@@ -198,9 +281,11 @@ impl Blitter {
     /// Panes are drawn in order and are expected to be disjoint; the layout tree above is what
     /// guarantees that, and where they do overlap the later one wins, which is ordinary painter's
     /// order rather than a special case.
+    /// `fills` are painted over the panes, in order, after every pane has landed - the dividers.
     pub fn blit_all(
         &self,
         panes: &mut [(&mut GpuSurface, (u32, u32))],
+        fills: &[Fill],
         target: &wgpu::TextureView,
         clear: wgpu::Color,
     ) {
@@ -244,6 +329,40 @@ impl Blitter {
             }));
         }
 
+        let fill_groups: Vec<wgpu::BindGroup> = fills
+            .iter()
+            .map(|fill| {
+                let solid = Solid {
+                    x: fill.x,
+                    y: fill.y,
+                    width: fill.width,
+                    height: fill.height,
+                    color: [
+                        f32::from(fill.color[0]) / 255.0,
+                        f32::from(fill.color[1]) / 255.0,
+                        f32::from(fill.color[2]) / 255.0,
+                        f32::from(fill.color[3]) / 255.0,
+                    ],
+                };
+                let uniform = wgpu::util::DeviceExt::create_buffer_init(
+                    device,
+                    &wgpu::util::BufferInitDescriptor {
+                        label: Some("solid rect"),
+                        contents: bytemuck::bytes_of(&solid),
+                        usage: wgpu::BufferUsages::UNIFORM,
+                    },
+                );
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("ruuah-vt solid"),
+                    layout: &self.solid_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: uniform.as_entire_binding(),
+                    }],
+                })
+            })
+            .collect();
+
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("blit") });
         {
@@ -278,6 +397,18 @@ impl Blitter {
                 // One oversized triangle rather than two: no vertex buffer, and no seam down the
                 // diagonal where two triangles would meet.
                 pass.draw(0..3, 0..1);
+            }
+
+            // The rules go LAST and in the SAME pass. Last because a divider is chrome and owns
+            // its pixels outright; the same pass because a second pass means a second command
+            // buffer, and this backend has already deadlocked once on Metal's 64-buffer pool
+            // (slice 8) - the frame stays one submit no matter how many panes or rules it holds.
+            if !fill_groups.is_empty() {
+                pass.set_pipeline(&self.solid_pipeline);
+                for bind_group in &fill_groups {
+                    pass.set_bind_group(0, bind_group, &[]);
+                    pass.draw(0..3, 0..1);
+                }
             }
         }
         self.context.queue().submit(Some(encoder.finish()));
@@ -524,6 +655,7 @@ impl WindowTarget {
     pub fn present_all(
         &mut self,
         panes: &mut [(&mut GpuSurface, (u32, u32))],
+        fills: &[Fill],
         clear: [u8; 4],
     ) -> Result<(), PresentError> {
         let clear = wgpu::Color {
@@ -550,7 +682,7 @@ impl WindowTarget {
             format: Some(self.view_format),
             ..Default::default()
         });
-        self.blitter.blit_all(panes, &view, clear);
+        self.blitter.blit_all(panes, fills, &view, clear);
         frame.present();
         Ok(())
     }
@@ -602,5 +734,37 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let b = f32((value >> 16u) & 0xffu) / 255.0;
     let a = f32((value >> 24u) & 0xffu) / 255.0;
     return vec4<f32>(r, g, b, a);
+}
+
+struct Solid {
+    rect: vec4<u32>,
+    color: vec4<f32>,
+}
+
+// Binding 2, not 0: one shader module holds both entry points, and two variables cannot share
+// @group(0) @binding(0) with different types. Reflection is per entry point, so the pane path's
+// bindings are simply unused here.
+@group(0) @binding(2) var<uniform> solid: Solid;
+
+// Shares the vertex entry point above - the same oversized triangle, clipped per fragment. The
+// rect could have been expressed as vertex positions instead, which would rasterize fewer
+// fragments; it is not, because that means clip-space arithmetic in a second place and this
+// shader's whole job is to agree, pixel for pixel, with the layout that emitted the rect.
+@fragment
+fn solid_fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    let x = u32(position.x);
+    let y = u32(position.y);
+    // Kept for symmetry with the blit path, and measured to be belt-and-braces rather than
+    // load-bearing (2026-08-06): an underflowed coordinate is enormous, so the extent check below
+    // discards it on its own. Removing this guard was run as a mutant and the frame was unchanged.
+    // The comparison that IS load-bearing is the `>=` below - as `>` it paints one pixel past the
+    // rect, over a column the pane beneath is writing into, and the test sees it.
+    if (x < solid.rect.x || y < solid.rect.y) {
+        discard;
+    }
+    if (x - solid.rect.x >= solid.rect.z || y - solid.rect.y >= solid.rect.w) {
+        discard;
+    }
+    return solid.color;
 }
 "#;

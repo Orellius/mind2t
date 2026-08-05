@@ -20,6 +20,15 @@ use ruuah_vt_render::{GpuContext, Surface, wgpu};
 
 const FONT: f32 = 16.0;
 
+/// The rule between panes, in pixels. Deliberately not 1: a one-pixel gutter is satisfied by an
+/// off-by-one in either direction, and a test that cannot tell "the rule is here" from "the rule
+/// is one pixel that way" is not measuring placement.
+const GUTTER: u32 = 4;
+
+/// What the divider is painted with in these tests. Nothing else in the frame is this colour, so
+/// a pixel wearing it was put there by the fill and not by a terminal that happens to agree.
+const RULE: [u8; 4] = [255, 0, 255, 255];
+
 fn gpu() -> GpuContext {
     GpuContext::new().expect("a GPU")
 }
@@ -68,7 +77,7 @@ fn each_pane_tells_its_child_its_own_size() {
     // Wide and deliberately ODD, so the two columns cannot both be the tidy half of it and a
     // dropped remainder shows up as a child reporting the wrong width.
     let area = Rect { x: 0, y: 0, width: 1801, height: 900 };
-    let grid = Grid { rows: 1, cols: 2 };
+    let grid = Grid { rows: 1, cols: 2, gutter: GUTTER };
     let mut canvas = Canvas::spawn(
         &gpu(),
         grid,
@@ -110,10 +119,16 @@ fn each_pane_tells_its_child_its_own_size() {
              is drawing underneath its neighbour"
         );
     }
-    assert_eq!(
-        u32::from(seen[0].1) + u32::from(seen[1].1) + 1 >= full,
-        true,
-        "the two panes together ({} + {}) do not account for the window's {full} columns",
+    // The panes account for the window MINUS the rule between them, and that subtraction is the
+    // honest half of taking the gutter out of the panes rather than painting over them: the
+    // columns really are gone, the ptys really were told so, and a test that still demanded the
+    // full width would be asserting a lie the children would have to live with.
+    let cell = panes[0].session.cell_metrics().width.max(1);
+    let lost_to_the_rule = GUTTER.div_ceil(cell);
+    assert!(
+        u32::from(seen[0].1) + u32::from(seen[1].1) + lost_to_the_rule + 1 >= full,
+        "the two panes together ({} + {}) do not account for the window's {full} columns, even \
+         allowing the {lost_to_the_rule} the rule costs",
         seen[0].1,
         seen[1].1
     );
@@ -149,7 +164,7 @@ fn every_pane_reaches_one_frame_at_its_own_rect() {
     let index = std::cell::Cell::new(0u32);
     let mut canvas = Canvas::spawn(
         &context,
-        Grid { rows: 1, cols: 2 },
+        Grid { rows: 1, cols: 2, gutter: GUTTER },
         area,
         &[PaneSpec::shell(), PaneSpec::shell()],
         FONT,
@@ -187,6 +202,20 @@ fn every_pane_reaches_one_frame_at_its_own_rect() {
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
+    // The rules, in the same shape the host builds them - from the canvas, before the panes are
+    // borrowed mutably.
+    let dividers = canvas.dividers();
+    let fills: Vec<ruuah_vt_render::Fill> = dividers
+        .iter()
+        .map(|rect| ruuah_vt_render::Fill {
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height,
+            color: RULE,
+        })
+        .collect();
+
     // Where each pane's pixels must land, collected while the surfaces are borrowed: a surface is
     // whole CELLS, so it is at most its rect and the remainder is margin the target clears.
     let mut regions = Vec::new();
@@ -199,7 +228,12 @@ fn every_pane_reaches_one_frame_at_its_own_rect() {
     }
     // Bright green: neither pane draws it, so a region that "matches" by holding clear colour
     // cannot pass unnoticed.
-    blitter.blit_all(&mut placements, &view, wgpu::Color { r: 0.0, g: 1.0, b: 0.0, a: 1.0 });
+    blitter.blit_all(
+        &mut placements,
+        &fills,
+        &view,
+        wgpu::Color { r: 0.0, g: 1.0, b: 0.0, a: 1.0 },
+    );
     drop(placements);
 
     let target = read_back(&context, &texture, WIDTH, HEIGHT);
@@ -233,6 +267,26 @@ fn every_pane_reaches_one_frame_at_its_own_rect() {
                     &want[column * 4..column * 4 + 4],
                 );
             }
+        }
+    }
+
+    // The rule is IN the frame, and the panes did not lose a column to it.
+    //
+    // The order matters and is the whole reason this is asserted here rather than only in the
+    // renderer: the fills are painted after the panes, so a divider whose rect overlapped a pane
+    // would silently cover a column the child is writing into and still look like a tidy seam.
+    // The pane comparison above already ran against every pane pixel, so the two assertions
+    // together say the rule is exactly in the space the panes gave up.
+    assert_eq!(dividers.len(), 1, "one column boundary, one rule");
+    for row in 0..HEIGHT {
+        for x in dividers[0].x..dividers[0].x + dividers[0].width {
+            let at = ((row * WIDTH + x) * 4) as usize;
+            assert_eq!(
+                &target[at..at + 4],
+                &RULE,
+                "the frame has no rule at ({x},{row}) - the gutter was reserved and nothing drew \
+                 into it, which is a hairline of clear colour rather than a divider"
+            );
         }
     }
 
@@ -297,7 +351,7 @@ fn read_back(context: &GpuContext, texture: &wgpu::Texture, width: u32, height: 
 fn a_resize_reaches_the_children() {
     let mut canvas = Canvas::spawn(
         &gpu(),
-        Grid { rows: 1, cols: 2 },
+        Grid { rows: 1, cols: 2, gutter: GUTTER },
         Rect { x: 0, y: 0, width: 1800, height: 900 },
         &[PaneSpec::shell(), PaneSpec::shell()],
         FONT,

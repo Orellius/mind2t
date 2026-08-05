@@ -26,7 +26,7 @@ use std::rc::Rc;
 use sadna::canvas::{Canvas, PaneSpec};
 use sadna::layout::{Canvas as Grid, Rect};
 use ruuah_vt_host::session::{MouseAction, MouseMods, Session};
-use ruuah_vt_render::{GpuContext, GpuSurface, WindowTarget};
+use ruuah_vt_render::{Fill, GpuContext, GpuSurface, WindowTarget};
 use tauri::webview::WebviewBuilder;
 use tauri::window::WindowBuilder;
 use tauri::{Emitter, Listener, LogicalPosition, LogicalSize, Manager, RunEvent, WebviewUrl};
@@ -42,7 +42,48 @@ const FONT_SIZE: f32 = 16.0;
 ///
 /// Hardcoded on purpose rather than configurable: B3.4 is the wiring, and a setting nobody can
 /// change yet is a second place for the shape to live when the spec arrives.
-const GRID: Grid = Grid { rows: 1, cols: 2 };
+///
+/// The gutter is ZERO here and filled in by [`grid`] from the display's scale, because this is a
+/// const and scale is a runtime fact. A canvas built from this value directly draws no rules,
+/// which is a visible symptom rather than a silent one.
+const GRID: Grid = Grid { rows: 1, cols: 2, gutter: 0 };
+
+/// Logical thickness of the rule between panes. One point - a hairline, not a border.
+const DIVIDER: f64 = 1.0;
+
+/// The opening canvas at a given display scale.
+///
+/// A rule declared in POINTS and used as pixels is invisible on the display this project is
+/// developed on: at scale 2 it renders half as thick as asked, and one physical pixel of grey
+/// between two dark terminals is a seam you have to hunt for. Same class as the font size, which
+/// this repo has now paid for twice (slice 8, then B2.3 - the operator caught the second one from
+/// the screen). At least one pixel, so the rule never rounds away entirely.
+fn grid(scale: f64) -> Grid {
+    Grid {
+        gutter: ((DIVIDER * scale).round() as u32).max(1),
+        ..GRID
+    }
+}
+
+/// The rule's colour, derived from the terminal's own background rather than configured.
+///
+/// A fixed grey is wrong against half the themes it will meet - invisible on a light one, a bright
+/// scar on a dark one. This lifts a dark background and drops a light one by a fixed amount, so
+/// the rule reads as a seam in whatever the terminal is already wearing, and a theme change moves
+/// it for free. It is a MECHANISM with a defensible default; the exact weight is the operator's
+/// eye to judge, and until he has judged it the look is not claimed as verified.
+fn divider_color(background: [u8; 4]) -> [u8; 4] {
+    let luma = (u16::from(background[0]) * 2 + u16::from(background[1]) * 5 + u16::from(background[2]))
+        / 8;
+    let shift = |channel: u8| -> u8 {
+        if luma < 128 {
+            channel.saturating_add(38)
+        } else {
+            channel.saturating_sub(38)
+        }
+    };
+    [shift(background[0]), shift(background[1]), shift(background[2]), 255]
+}
 
 const SESSION_EVENT: &str = "sadna://session";
 
@@ -129,6 +170,16 @@ struct Smoke {
     /// Every pane's rect and grid, in order. The canvas as the LIVE WINDOW built it, which is a
     /// different claim from `layout.rs`'s arithmetic over a synthetic area.
     panes: Vec<(Rect, (u16, u16))>,
+    /// The rules between the panes, as the LIVE canvas emits them, and the gutter it reserved.
+    ///
+    /// Recorded rather than recomputed here: the gutter is derived from the display's scale, and
+    /// a check that computed its own expected value from `DIVIDER * scale` would agree with a host
+    /// that had never applied the scale at all.
+    dividers: Vec<Rect>,
+    gutter: Option<u32>,
+    /// The window's own scale factor, so the gutter can be checked against the display rather
+    /// than against the constant it was derived from.
+    scale: Option<f64>,
     /// The same, taken immediately before and after the window is resized, with the size asked
     /// for. Three records rather than one because "it re-tiled" is only meaningful against what
     /// it was: a canvas that ignored the resize entirely still tiles perfectly, at the old size.
@@ -196,15 +247,38 @@ impl Smoke {
         // well as in `layout.rs` because that test tiles a number, and this one tiles a window -
         // the strip, the scale factor and the title-bar inset are only in this path, and each of
         // them has been wrong once already.
+        let gutter = self.gutter.unwrap_or(0);
         let tiled = self.panes.len() == usize::from(GRID.rows * GRID.cols)
             && self
                 .panes
                 .iter()
                 .all(|(_, (cols, rows))| *cols > 1 && *rows > 1)
+            && self.panes.windows(2).all(|pair| {
+                pair[1].0.x == pair[0].0.x + pair[0].0.width + gutter && pair[1].0.y == pair[0].0.y
+            });
+
+        // The rule between the panes is REAL in the live window: one per boundary, exactly filling
+        // the gap the panes left, and at least as thick as the display's scale demands.
+        //
+        // Two failures this catches that the arithmetic in `layout.rs` cannot, because both live
+        // in the wiring above it. A host that reserves the gutter and never draws into it leaves a
+        // hairline of clear colour that reads as a rendering artifact rather than as a missing
+        // feature. And a gutter computed in POINTS instead of physical pixels is half as thick as
+        // asked on this display and looks like a design choice - the same scale trap the font size
+        // has now sprung twice, which is why the thickness is asserted against the window's own
+        // scale rather than against the constant.
+        let ruled = !self.dividers.is_empty()
+            && self.dividers.len() == self.panes.len().saturating_sub(1)
+            && gutter >= (DIVIDER * self.scale.unwrap_or(1.0)).round() as u32
             && self
                 .panes
                 .windows(2)
-                .all(|pair| pair[1].0.x == pair[0].0.x + pair[0].0.width && pair[1].0.y == pair[0].0.y);
+                .zip(&self.dividers)
+                .all(|(pair, rule)| {
+                    rule.x == pair[0].0.x + pair[0].0.width
+                        && rule.width == gutter
+                        && rule.height == pair[0].0.height
+                });
 
         // A resize must reach BOTH halves: the rects re-tile the new window, and every pane's own
         // grid follows. A canvas that ignored the event tiles the OLD area perfectly, and a
@@ -215,7 +289,7 @@ impl Smoke {
             && self
                 .after_resize
                 .windows(2)
-                .all(|pair| pair[1].0.x == pair[0].0.x + pair[0].0.width)
+                .all(|pair| pair[1].0.x == pair[0].0.x + pair[0].0.width + gutter)
             && self.after_resize[0].0.x == 0
             && self.resized_to.is_some_and(|width| {
                 let last = self.after_resize[self.after_resize.len() - 1].0;
@@ -227,15 +301,22 @@ impl Smoke {
                 .zip(&self.after_resize)
                 .all(|(before, after)| after.1.0 < before.1.0 && after.1.1 < before.1.1);
 
-        let checks: [(bool, &str); 16] = [
+        let checks: [(bool, &str); 17] = [
             (
                 self.grid.is_some_and(|(cols, rows)| cols > 1 && rows > 1),
                 "the session has a real grid",
             ),
             (
                 tiled,
-                "the canvas has one live pane per cell and they tile the window edge to edge - a \
-                 pane that kept the full width draws UNDER its neighbour and looks entirely normal",
+                "the canvas has one live pane per cell and they tile the window with exactly the \
+                 gutter between them - a pane that kept the full width draws UNDER its neighbour \
+                 and looks entirely normal",
+            ),
+            (
+                ruled,
+                "a rule fills the gap between panes, thick enough for this display's scale - a \
+                 reserved gutter nobody draws into is a hairline of clear colour, and a gutter \
+                 measured in points is half as thick as asked at scale 2",
             ),
             (
                 self.origin
@@ -594,7 +675,7 @@ fn main() {
     let specs = vec![PaneSpec::shell(); usize::from(GRID.rows * GRID.cols)];
     let canvas = match Canvas::spawn(
         &gpu,
-        GRID,
+        grid(scale),
         canvas_area(physical.width, physical.height, strip),
         &specs,
         FONT_SIZE * scale as f32,
@@ -778,6 +859,21 @@ fn main() {
                 // multiple of a cell, so the remainder is visible margin.
                 let active = active_pane(&focus, canvas.panes().len());
                 let clear = canvas.panes()[active].session.clear_color();
+                // The rules are collected BEFORE the panes are borrowed mutably: `dividers`
+                // reads the canvas, `panes_mut` takes it exclusively, and the borrow checker is
+                // right to refuse the other order.
+                let rule = divider_color(clear);
+                let fills: Vec<Fill> = canvas
+                    .dividers()
+                    .into_iter()
+                    .map(|rect| Fill {
+                        x: rect.x,
+                        y: rect.y,
+                        width: rect.width,
+                        height: rect.height,
+                        color: rule,
+                    })
+                    .collect();
                 let mut panes: Vec<(&mut GpuSurface, (u32, u32))> = canvas
                     .panes_mut()
                     .iter_mut()
@@ -786,7 +882,7 @@ fn main() {
                         (pane.session.surface_mut(), (rect.x, rect.y))
                     })
                     .collect();
-                if let Err(error) = target.present_all(&mut panes, clear) {
+                if let Err(error) = target.present_all(&mut panes, &fills, clear) {
                     // Loud and fatal. A present that fails and falls back is how B1's four
                     // defects stayed invisible for a day.
                     eprintln!("sadna: present failed: {error:?}");
@@ -931,6 +1027,9 @@ fn main() {
                     record.origin = Some((first.x, first.y));
                     record.grid = Some((geometry.cols, geometry.rows));
                     record.panes = snapshot(&canvas);
+                    record.dividers = canvas.dividers();
+                    record.gutter = Some(canvas.grid().gutter);
+                    record.scale = window.scale_factor().ok();
                     record.reserved = Some(
                         ((BAR_HEIGHT + titlebar_inset(&window)) * window.scale_factor().unwrap_or(1.0))
                             as u32,

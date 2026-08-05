@@ -11,5 +11,6 @@ pub mod agent;
 pub mod canvas;
 pub mod clipboard;
 pub mod keys;
+pub mod launch;
 pub mod layout;
 pub mod wheel;

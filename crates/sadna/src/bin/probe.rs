@@ -1,4 +1,4 @@
-//! Purpose: THE ORACLE. A live terminal in a raw `tao` + `wry` window - the shell Bindary was
+//! Purpose: THE ORACLE. A live terminal in a raw `tao` + `wry` window - the shell Sadna was
 //!   built on before Tauri, kept working so the Tauri host can be compared against something
 //!   that is known to be right.
 //! Why it survived the Tauri decision: the same reason the Swift host survived this one being
@@ -7,13 +7,13 @@
 //!   (`cargo run --bin probe`) instead of by argument. It retires when Tauri reaches parity.
 //!
 //! Original card follows.
-//! Purpose: B2.3 - a LIVE terminal in the Bindary window, with the chrome webview above it.
+//! Purpose: B2.3 - a LIVE terminal in the Sadna window, with the chrome webview above it.
 //! Public surface: a binary. Nothing links against it.
 //! Why this file: B2.1 proved a GPU surface presents in a `tao` window; B2.2 proved a
 //!   transparent `wry` webview composites over it and measured where input lands. Neither ran a
 //!   shell. This one does: `Session` (pty -> core -> renderer) presents into the window under a
 //!   chrome strip that owns the top of the window rather than covering it.
-//! NOT responsible for: tabs, splits, palettes, agents, or anything Bindary will actually ship.
+//! NOT responsible for: tabs, splits, palettes, agents, or anything Sadna will actually ship.
 //!   The chrome page is still a fixture. Also not responsible for the modes the key encoder
 //!   branches on - see `keys::options`, a named gap.
 //! Test strategy: the parts that can be checked by a machine are checked where they live -
@@ -26,7 +26,7 @@
 //! that is left. Overlapping instead would look identical at a glance and permanently hide the
 //! child's top rows - which is precisely the class of defect B1 kept producing.
 
-use bindary::{clipboard, keys};
+use sadna::{clipboard, keys};
 
 use std::process::Command;
 use std::sync::Arc;
@@ -70,7 +70,7 @@ fn install_menus() -> Result<Menu, muda::Error> {
 
     // The FIRST submenu is the application menu on macOS, whatever it is called; Edit must come
     // after it or the standard items land in the wrong place.
-    let app = Submenu::new("Bindary", true);
+    let app = Submenu::new("Sadna", true);
     app.append(&PredefinedMenuItem::quit(None))?;
 
     let edit = Submenu::new("Edit", true);
@@ -120,7 +120,7 @@ fn main() {
 
     let window = Arc::new(
         WindowBuilder::new()
-            .with_title("Bindary")
+            .with_title("Sadna")
             .with_inner_size(LogicalSize::new(900.0, 560.0))
             .build(&event_loop)
             .expect("a window"),
@@ -142,7 +142,7 @@ fn main() {
     ) {
         Ok(session) => session,
         Err(error) => {
-            eprintln!("bindary: no session: {error:?}");
+            eprintln!("sadna: no session: {error:?}");
             std::process::exit(1);
         }
     };
@@ -156,7 +156,7 @@ fn main() {
         cell.height,
     );
     if let Err(error) = session.resize(geometry) {
-        eprintln!("bindary: initial resize refused: {error:?}");
+        eprintln!("sadna: initial resize refused: {error:?}");
     }
 
     // The GPU surface FIRST, the webview second. On macOS wgpu creates the CAMetalLayer here and
@@ -170,7 +170,7 @@ fn main() {
     ) {
         Ok(target) => target,
         Err(error) => {
-            eprintln!("bindary: no swapchain: {error}");
+            eprintln!("sadna: no swapchain: {error}");
             std::process::exit(1);
         }
     };
@@ -187,12 +187,12 @@ fn main() {
             size: WebviewSize::new(logical.width, BAR_HEIGHT).into(),
         })
         .with_accept_first_mouse(true)
-        .with_ipc_handler(|request| println!("bindary: chrome {}", request.body()))
+        .with_ipc_handler(|request| println!("sadna: chrome {}", request.body()))
         .build_as_child(&window)
         .expect("a child webview over the window");
 
     println!(
-        "bindary: {}x{} cells at {}x{}px, strip {strip}px, scale {scale}",
+        "sadna: {}x{} cells at {}x{}px, strip {strip}px, scale {scale}",
         geometry.cols, geometry.rows, cell.width, cell.height
     );
 
@@ -233,7 +233,7 @@ fn main() {
                         keys::encode_press(&event, keys::mods_from(modifiers), &session.key_options());
                     if !bytes.is_empty() {
                         if let Err(error) = session.send(&bytes) {
-                            eprintln!("bindary: send failed: {error:?}");
+                            eprintln!("sadna: send failed: {error:?}");
                         }
                     }
                 }
@@ -282,12 +282,12 @@ fn main() {
                 let strip = (BAR_HEIGHT * scale) as u32;
 
                 if let Err(error) = session.resize_window(width, height) {
-                    eprintln!("bindary: window resize refused: {error:?}");
+                    eprintln!("sadna: window resize refused: {error:?}");
                 }
                 let cell = session.cell_metrics();
                 let geometry = grid_for(width, height, strip, cell.width, cell.height);
                 if let Err(error) = session.resize(geometry) {
-                    eprintln!("bindary: grid resize refused: {error:?}");
+                    eprintln!("sadna: grid resize refused: {error:?}");
                 }
 
                 // The origin is re-applied because the strip is a function of the SCALE, and a
@@ -300,7 +300,7 @@ fn main() {
                     position: LogicalPosition::new(0.0, 0.0).into(),
                     size: WebviewSize::new(logical.width, BAR_HEIGHT).into(),
                 }) {
-                    eprintln!("bindary: webview set_bounds failed: {error}");
+                    eprintln!("sadna: webview set_bounds failed: {error}");
                 }
                 window.request_redraw();
             }
@@ -320,7 +320,7 @@ fn main() {
                         // is exactly how B1's four defects stayed invisible.
                         Err(SessionError::NoWindow) => unreachable!("a window is attached"),
                         Err(error) => {
-                            eprintln!("bindary: present failed: {error:?}");
+                            eprintln!("sadna: present failed: {error:?}");
                             *control_flow = ControlFlow::Exit;
                         }
                     }

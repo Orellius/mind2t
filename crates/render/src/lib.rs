@@ -46,3 +46,13 @@ pub use present::{Blitter, PresentError, WindowTarget};
 pub use renderer::Renderer;
 pub use shape::{PositionedGlyph, Shaper, needs_shaping};
 pub use surface::{Surface, TruncatingSurface};
+
+/// The wgpu this crate is built against, re-exported.
+///
+/// Not a convenience: `Blitter::blit` and `WindowTarget` take `wgpu::TextureView` and
+/// `wgpu::TextureFormat` in their signatures, so a caller that builds its own render target has
+/// to use the SAME wgpu, and a caller that declares its own dependency can silently get a second
+/// copy of the crate. Two wgpu versions in one tree do not fail to compile against each other -
+/// they produce types that are merely unrelated, and the error arrives as a mismatch nobody
+/// wrote. Re-exporting is how the version stops being guessable.
+pub use wgpu;

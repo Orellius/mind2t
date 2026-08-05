@@ -658,6 +658,18 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   The chrome is embedded at COMPILE time from `chrome/dist`, so a stale bundle ships silently;
   the script rebuilds it first. `chrome/dist` and `crates/bindary/gen` are gitignored, like
   `web/dist`.
+- **ONE GPU CONTEXT PER CANVAS, NOT PER SESSION** (B3.4, 2026-08-05). `Session::spawn` builds its
+  own `GpuContext`, which is right for the one-terminal hosts and wrong for every pane: a
+  composited frame is ONE render pass, and a pass can only bind buffers from its own device. So a
+  canvas spawns through `Session::spawn_on` / `spawn_fitted_on` with the host's context, and the
+  window's swapchain is built on that same one. Two things make this worth writing down rather
+  than fixing quietly. It is **invisible to any test that does not present** - the canvas landed
+  with real children, exact tiling and a green suite while being unable to draw itself. And it
+  does not fail as "wrong device": wgpu reports it at `create_bind_group` as a usage-flags
+  complaint about the wrong buffer entirely, so the message points away from the cause.
+  `every_pane_reaches_one_frame_at_its_own_rect` (`crates/bindary/tests/canvas.rs`) is the gate,
+  and the mutant - one context per pane - was seen red while the other two canvas tests stayed
+  green.
 - **THE GATE DRIVES THE SESSION, NEVER APPKIT - AND THAT BOUNDARY IS THE HONEST PART** (B2.5).
   Four of the twelve invariants exercise a real child: a directory report, a paste, and a wheel
   scroll with its stillness control. All three are driven through `Session`, because

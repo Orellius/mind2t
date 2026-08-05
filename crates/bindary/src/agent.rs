@@ -482,16 +482,32 @@ mod tests {
             // The shell is asked the same question in the same order, so a disagreement is about
             // resolution and not about which candidate was preferred.
             let theirs = agent.candidates.iter().find_map(|candidate| {
-                let output = std::process::Command::new("/bin/sh")
-                    .arg("-c")
-                    .arg(format!("command -v {candidate}"))
-                    .output()
-                    .ok()?;
-                output
-                    .status
-                    .success()
-                    .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
-                    .filter(|path| !path.is_empty())
+                // Asking the shell can itself fail under the suite's fork pressure, and an
+                // `.ok()?` here read that failure as "not installed" - a None carrying two
+                // meanings. Measured 2026-08-06: one full-suite run reported claude missing
+                // while the same question, asked alone, finds it. A failed spawn is retried
+                // and then loud; it is never a verdict about what is installed.
+                let mut last_err = None;
+                for attempt in 0..3u32 {
+                    if attempt > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(25 << attempt));
+                    }
+                    match std::process::Command::new("/bin/sh")
+                        .arg("-c")
+                        .arg(format!("command -v {candidate}"))
+                        .output()
+                    {
+                        Ok(output) => {
+                            return output
+                                .status
+                                .success()
+                                .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+                                .filter(|path| !path.is_empty());
+                        }
+                        Err(err) => last_err = Some(err),
+                    }
+                }
+                panic!("could not ask the shell about {candidate}: {last_err:?}");
             });
             assert_eq!(
                 ours, theirs,

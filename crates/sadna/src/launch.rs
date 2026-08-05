@@ -351,7 +351,7 @@ mod tests {
     /// rather than assumed. Run it with:
     ///
     /// ```sh
-    /// cargo test -p bindary --lib launch::tests::a_real_agent -- --ignored --nocapture
+    /// cargo test -p sadna --lib launch::tests::a_real_agent -- --ignored --nocapture
     /// ```
     #[test]
     #[ignore = "starts a real, authenticated agent CLI; run by hand"]

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Bindary",
+  "productName": "Sadna",
   "version": "0.1.0",
-  "identifier": "com.orellius.bindary",
+  "identifier": "com.orellius.sadna",
   "build": {
     "frontendDist": "../../chrome/dist",
     "beforeBuildCommand": "bun run --cwd ../../chrome build"

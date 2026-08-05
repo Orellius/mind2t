@@ -1,4 +1,4 @@
-//! Purpose: B2.4 - Bindary's Tauri host. A Tauri window whose terminal is a native GPU surface
+//! Purpose: B2.4 - Sadna's Tauri host. A Tauri window whose terminal is a native GPU surface
 //!   and whose chrome is a React webview docked above it.
 //! Public surface: a binary.
 //! Why this file: Orel chose Tauri + React + TypeScript on 2026-08-04. Everything unusual here
@@ -23,8 +23,8 @@ use std::cell::{Cell, RefCell};
 use std::process::Command;
 use std::rc::Rc;
 
-use bindary::canvas::{Canvas, PaneSpec};
-use bindary::layout::{Canvas as Grid, Rect};
+use sadna::canvas::{Canvas, PaneSpec};
+use sadna::layout::{Canvas as Grid, Rect};
 use ruuah_vt_host::session::{MouseAction, MouseMods, Session};
 use ruuah_vt_render::{GpuContext, GpuSurface, WindowTarget};
 use tauri::webview::WebviewBuilder;
@@ -44,7 +44,7 @@ const FONT_SIZE: f32 = 16.0;
 /// change yet is a second place for the shape to live when the spec arrives.
 const GRID: Grid = Grid { rows: 1, cols: 2 };
 
-const SESSION_EVENT: &str = "bindary://session";
+const SESSION_EVENT: &str = "sadna://session";
 
 /// Runs the whole host with NOTHING on screen: the window is created hidden, no key monitor is
 /// installed, diagnostics are printed and the process exits on its own.
@@ -55,7 +55,7 @@ const SESSION_EVENT: &str = "bindary://session";
 /// things that make a running window hostile to whoever owns the machine - it cannot take focus
 /// and it cannot swallow a keystroke.
 ///
-/// Enabled with `BINDARY_HEADLESS=1`.
+/// Enabled with `SADNA_HEADLESS=1`.
 ///
 /// A CEILING, not a duration: the run ends the moment it has collected everything it came for,
 /// so a healthy gate is far quicker than this. The number only has to outlast the slowest thing
@@ -70,13 +70,13 @@ const HEADLESS_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
 const CWD_PROBE: &str = "/tmp/ruuah-cwd-probe";
 
 /// What the smoke pastes. No newline: it must sit on the prompt as text, not execute.
-const PASTE_PROBE: &str = "bindary-paste-probe";
+const PASTE_PROBE: &str = "sadna-paste-probe";
 
 /// What the smoke asks the child to print once its scrollback is filled.
-const FILL_MARKER: &str = "BINDARY-FILLED";
+const FILL_MARKER: &str = "SADNA-FILLED";
 
 /// What the child prints when it has turned mouse reporting on.
-const MOUSE_MARKER: &str = "BINDARY-MOUSE";
+const MOUSE_MARKER: &str = "SADNA-MOUSE";
 
 /// The SGR report a press in the top-left cell produces, as `cat` echoes it back: ESC is drawn
 /// `^[` by ECHOCTL, so this is the printable form, not the wire form.
@@ -109,7 +109,7 @@ const REPROBE: std::time::Duration = std::time::Duration::from_millis(400);
 
 fn headless() -> bool {
     std::env::args().any(|argument| argument == "--smoke")
-        || std::env::var("BINDARY_HEADLESS").is_ok_and(|value| value == "1")
+        || std::env::var("SADNA_HEADLESS").is_ok_and(|value| value == "1")
 }
 
 /// What the smoke run learned, filled in as it happens and judged at the end.
@@ -304,7 +304,7 @@ impl Smoke {
 
         let mut passed = true;
         for (held, what) in checks {
-            println!("bindary: [{}] {what}", if held { "PASS" } else { "FAIL" });
+            println!("sadna: [{}] {what}", if held { "PASS" } else { "FAIL" });
             passed &= held;
         }
         passed
@@ -387,7 +387,7 @@ impl InputProbe {
                 // says the shell is finished with it.
                 let command = format!("seq 1 200; printf '{FILL_MARKER}\\n'\r");
                 if let Err(error) = session.send(command.as_bytes()) {
-                    eprintln!("bindary: probe command refused: {error:?}");
+                    eprintln!("sadna: probe command refused: {error:?}");
                 }
                 // The first half of the mouse claim, taken here because it is the only moment
                 // the child provably has NOT asked for reporting. Recorded, never asserted on
@@ -402,7 +402,7 @@ impl InputProbe {
                 // and inside `1200` if the window is ever bigger, so it would report finished
                 // while the child is still printing.
                 if session.visible_text().contains(FILL_MARKER) || waited >= Self::PATIENCE {
-                    bindary::clipboard::paste_text(session, PASTE_PROBE);
+                    sadna::clipboard::paste_text(session, PASTE_PROBE);
                     self.enter(Stage::Pasting);
                 }
             }
@@ -432,7 +432,7 @@ impl InputProbe {
                     "\x15printf '\\033]7;file://localhost{CWD_PROBE}\\a\\033[?1000h\\033[?1006h{MOUSE_MARKER}\\n'; exec cat\r"
                 );
                 if let Err(error) = session.send(command.as_bytes()) {
-                    eprintln!("bindary: cwd probe refused: {error:?}");
+                    eprintln!("sadna: cwd probe refused: {error:?}");
                 }
                 self.enter(Stage::Reporting);
             }
@@ -570,7 +570,7 @@ fn main() {
     // on one thread with no locks and no `Send` gymnastics around types that must never leave
     // this thread anyway.
     let window = WindowBuilder::new(&app, "main")
-        .title("Bindary")
+        .title("Sadna")
         .inner_size(900.0, 560.0)
         .visible(!headless())
         .build()
@@ -586,7 +586,7 @@ fn main() {
     let gpu = match GpuContext::new() {
         Ok(gpu) => gpu,
         Err(error) => {
-            eprintln!("bindary: no GPU: {error}");
+            eprintln!("sadna: no GPU: {error}");
             std::process::exit(1);
         }
     };
@@ -602,7 +602,7 @@ fn main() {
     ) {
         Ok(canvas) => canvas,
         Err(error) => {
-            eprintln!("bindary: no canvas: {error:?}");
+            eprintln!("sadna: no canvas: {error:?}");
             std::process::exit(1);
         }
     };
@@ -621,7 +621,7 @@ fn main() {
     ) {
         Ok(target) => target,
         Err(error) => {
-            eprintln!("bindary: no swapchain: {error}");
+            eprintln!("sadna: no swapchain: {error}");
             std::process::exit(1);
         }
     };
@@ -633,11 +633,11 @@ fn main() {
     for candidate in ["index.html", "/index.html"] {
         match app.asset_resolver().get(candidate.to_string()) {
             Some(asset) => println!(
-                "bindary: asset {candidate:?} -> {} bytes, mime {}",
+                "sadna: asset {candidate:?} -> {} bytes, mime {}",
                 asset.bytes.len(),
                 asset.mime_type
             ),
-            None => println!("bindary: asset {candidate:?} -> MISSING"),
+            None => println!("sadna: asset {candidate:?} -> MISSING"),
         }
     }
 
@@ -650,10 +650,10 @@ fn main() {
         match "tauri://localhost/index.html".parse() {
             Ok(url) => {
                 if let Err(error) = chrome.navigate(url) {
-                    eprintln!("bindary: the chrome refused to navigate: {error}");
+                    eprintln!("sadna: the chrome refused to navigate: {error}");
                 }
             }
-            Err(error) => eprintln!("bindary: bad chrome url: {error}"),
+            Err(error) => eprintln!("sadna: bad chrome url: {error}"),
         }
     }
 
@@ -661,14 +661,14 @@ fn main() {
         let geometry = pane.session.geometry();
         let cell = pane.session.cell_metrics();
         println!(
-            "bindary: pane {index} {}x{} cells at {}x{}px, rect {:?}, strip {strip}px, scale {scale}",
+            "sadna: pane {index} {}x{} cells at {}x{}px, rect {:?}, strip {strip}px, scale {scale}",
             geometry.cols, geometry.rows, cell.width, cell.height, pane.rect
         );
     }
     // Measured, not assumed. Every number here has already been wrong once in this project, and
     // each was found by a print contradicting a screenshot rather than by reading the code.
     println!(
-        "bindary: inner {}x{} outer {:?} area {:?}",
+        "sadna: inner {}x{} outer {:?} area {:?}",
         physical.width,
         physical.height,
         window.outer_size().ok(),
@@ -676,12 +676,12 @@ fn main() {
     );
     if let Some(chrome) = window.get_webview("chrome") {
         println!(
-            "bindary: chrome webview position {:?} size {:?}",
+            "sadna: chrome webview position {:?} size {:?}",
             chrome.position().ok(),
             chrome.size().ok()
         );
     } else {
-        println!("bindary: NO chrome webview is registered on this window");
+        println!("sadna: NO chrome webview is registered on this window");
     }
     #[cfg(target_os = "macos")]
     view_tree(&window);
@@ -707,14 +707,14 @@ fn main() {
     // Without this the strip shows placeholders forever, and it is not a race that shows up in
     // testing: the host emits on frame one, the chrome's module loads a few hundred milliseconds
     // later, and the state only ever changes again if the window is resized. Measured here as
-    // `text: "BINDARY\n-\n-"` while the session was 94x27. The Swift host's panel bridge solved
+    // `text: "SADNA\n-\n-"` while the session was 94x27. The Swift host's panel bridge solved
     // the identical problem by replaying the latest message per kind; this is the same rule.
     let ready = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let announced_ready = std::sync::Arc::clone(&ready);
     let replay = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let requested = std::sync::Arc::clone(&replay);
-    app.listen("bindary://chrome-ready", move |event| {
-        println!("bindary: chrome reported ready, payload {}", event.payload());
+    app.listen("sadna://chrome-ready", move |event| {
+        println!("sadna: chrome reported ready, payload {}", event.payload());
         requested.store(true, std::sync::atomic::Ordering::Relaxed);
         announced_ready.store(true, std::sync::atomic::Ordering::Relaxed);
     });
@@ -789,7 +789,7 @@ fn main() {
                 if let Err(error) = target.present_all(&mut panes, clear) {
                     // Loud and fatal. A present that fails and falls back is how B1's four
                     // defects stayed invisible for a day.
-                    eprintln!("bindary: present failed: {error:?}");
+                    eprintln!("sadna: present failed: {error:?}");
                     handle.exit(1);
                 }
             }
@@ -826,10 +826,10 @@ fn main() {
                         exited,
                     },
                 ) {
-                    eprintln!("bindary: could not reach the chrome: {error}");
+                    eprintln!("sadna: could not reach the chrome: {error}");
                 } else {
                     println!(
-                        "bindary: told the chrome {}x{} cwd={} exited={exited}",
+                        "sadna: told the chrome {}x{} cwd={} exited={exited}",
                         geometry.cols,
                         geometry.rows,
                         cwd.as_deref().unwrap_or("-"),
@@ -918,7 +918,7 @@ fn main() {
                         && (!headless() || document.contains(CWD_PROBE))
                 })
             };
-            let probing = headless() || std::env::var("BINDARY_PROBE").is_ok();
+            let probing = headless() || std::env::var("SADNA_PROBE").is_ok();
             if probing && settled && !agreed && probed_at.is_none_or(|at| at.elapsed() >= REPROBE)
             {
                 probed_at = Some(std::time::Instant::now());
@@ -948,7 +948,7 @@ fn main() {
             if headless() && !finished && (collected || started.elapsed() >= HEADLESS_BUDGET) {
                 finished = true;
                 println!(
-                    "bindary: headless run complete after {frames} frames in {:?}",
+                    "sadna: headless run complete after {frames} frames in {:?}",
                     started.elapsed()
                 );
                 #[cfg(target_os = "macos")]
@@ -961,14 +961,14 @@ fn main() {
                 // The sequence itself, printed as evidence: a check that reads "did this value
                 // ever appear" is only auditable if the values it saw are on the screen too.
                 println!(
-                    "bindary: directories reported {:?}",
+                    "sadna: directories reported {:?}",
                     smoke.borrow().cwd_seen
                 );
                 let passed = smoke.borrow().judge(
                     page_finished.load(std::sync::atomic::Ordering::Relaxed),
                     ready.load(std::sync::atomic::Ordering::Relaxed),
                 );
-                println!("bindary: SMOKE {}", if passed { "PASSED" } else { "FAILED" });
+                println!("sadna: SMOKE {}", if passed { "PASSED" } else { "FAILED" });
                 // The exit CODE is the gate's whole output to a script, and `AppHandle::exit`
                 // does NOT carry it - measured: a FAILED smoke still exited 0, which would have
                 // made this gate decoration the moment anything trusted it. The child is shut
@@ -1003,7 +1003,7 @@ fn main() {
                 // Reported, not fatal: a window dragged smaller than the grid can hold is the
                 // operator asking for something impossible, and the last good tiling stays on
                 // screen until they let go.
-                eprintln!("bindary: canvas resize refused: {error:?}");
+                eprintln!("sadna: canvas resize refused: {error:?}");
             }
 
             // The webview is a child view with no autoresizing mask; nothing moves it but this.
@@ -1026,8 +1026,8 @@ mod input {
     use std::ptr::NonNull;
     use std::rc::Rc;
 
-    use bindary::canvas::Canvas;
-    use bindary::{clipboard, wheel};
+    use sadna::canvas::Canvas;
+    use sadna::{clipboard, wheel};
     use block2::RcBlock;
     use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
@@ -1041,7 +1041,7 @@ mod input {
 
     use super::Focus;
 
-    /// Whether to print what each input path saw. `BINDARY_TRACE=1`.
+    /// Whether to print what each input path saw. `SADNA_TRACE=1`.
     ///
     /// Off by default and not a debug leftover: the whole layer is invisible by construction -
     /// a key that does nothing, a click that does nothing and a path that was never reached
@@ -1050,7 +1050,7 @@ mod input {
     fn tracing() -> bool {
         use std::sync::OnceLock;
         static ON: OnceLock<bool> = OnceLock::new();
-        *ON.get_or_init(|| std::env::var("BINDARY_TRACE").is_ok_and(|value| value == "1"))
+        *ON.get_or_init(|| std::env::var("SADNA_TRACE").is_ok_and(|value| value == "1"))
     }
 
     /// Where an event landed, in the space the mouse encoder measures in.
@@ -1153,12 +1153,12 @@ mod input {
             Ok(reported) => {
                 if tracing() && (reported || action != MouseAction::Motion) {
                     println!(
-                        "bindary: TRACE mouse {action:?} code={code} pane={index} at \
+                        "sadna: TRACE mouse {action:?} code={code} pane={index} at \
                          ({x:.0},{y:.0})px mode={mode:?} reported={reported}"
                     );
                 }
             }
-            Err(error) => eprintln!("bindary: mouse report refused: {error:?}"),
+            Err(error) => eprintln!("sadna: mouse report refused: {error:?}"),
         }
     }
 
@@ -1203,13 +1203,13 @@ mod input {
                     // being ignored.
                     let Some((x, y, over_strip, _)) = surface_point(event, mtm, bar_height) else {
                         if tracing() {
-                            println!("bindary: TRACE mouse down with NO window on the event");
+                            println!("sadna: TRACE mouse down with NO window on the event");
                         }
                         return pass;
                     };
                     if tracing() {
                         println!(
-                            "bindary: TRACE mouse down at ({x:.0},{y:.0})px over_strip={over_strip}"
+                            "sadna: TRACE mouse down at ({x:.0},{y:.0})px over_strip={over_strip}"
                         );
                     }
                     let under = (!over_strip)
@@ -1320,7 +1320,7 @@ mod input {
                     match pane.session.wheel(local_x, local_y, rows, mods_of(event)) {
                         Ok(true) => {}
                         Ok(false) => pane.session.scroll(rows),
-                        Err(error) => eprintln!("bindary: wheel refused: {error:?}"),
+                        Err(error) => eprintln!("sadna: wheel refused: {error:?}"),
                     }
                     std::ptr::null_mut()
                 }
@@ -1351,7 +1351,7 @@ mod input {
                         );
                         if tracing() {
                             println!(
-                                "bindary: TRACE cmd chord keycode={} key={chord:?} plain={plain} pane={index}",
+                                "sadna: TRACE cmd chord keycode={} key={chord:?} plain={plain} pane={index}",
                                 event.keyCode(),
                             );
                         }
@@ -1363,14 +1363,14 @@ mod input {
                             };
                             if tracing() {
                                 println!(
-                                    "bindary: TRACE clipboard holds {:?} chars, bracketed={}",
+                                    "sadna: TRACE clipboard holds {:?} chars, bracketed={}",
                                     text.as_ref().map(|value| value.chars().count()),
                                     pane.session.bracketed_paste(),
                                 );
                             }
                             match text {
                                 Some(text) => clipboard::paste_text(&pane.session, &text),
-                                None => eprintln!("bindary: the clipboard holds no text"),
+                                None => eprintln!("sadna: the clipboard holds no text"),
                             }
                             return std::ptr::null_mut();
                         }
@@ -1429,7 +1429,7 @@ mod input {
                         return pass;
                     }
                     if let Err(error) = pane.session.send(&bytes) {
-                        eprintln!("bindary: send failed: {error:?}");
+                        eprintln!("sadna: send failed: {error:?}");
                     }
                     std::ptr::null_mut()
                 }
@@ -1495,12 +1495,12 @@ fn view_tree(window: &tauri::Window) -> Vec<String> {
 
     let mut layers = Vec::new();
     let Ok(handle) = window.ns_window() else {
-        println!("bindary: no ns_window to inspect");
+        println!("sadna: no ns_window to inspect");
         return layers;
     };
     let ns_window: *mut AnyObject = handle.cast();
     if ns_window.is_null() {
-        println!("bindary: ns_window is null");
+        println!("sadna: ns_window is null");
         return layers;
     }
 
@@ -1509,12 +1509,12 @@ fn view_tree(window: &tauri::Window) -> Vec<String> {
     unsafe {
         let content: Option<Retained<NSView>> = objc2::msg_send![ns_window, contentView];
         let Some(content) = content else {
-            println!("bindary: window has no contentView");
+            println!("sadna: window has no contentView");
             return layers;
         };
         let frame = content.frame();
         println!(
-            "bindary: contentView {}x{}",
+            "sadna: contentView {}x{}",
             frame.size.width, frame.size.height
         );
         // Z-ORDER, measured instead of looked at. A layer's position in its superlayer's
@@ -1525,7 +1525,7 @@ fn view_tree(window: &tauri::Window) -> Vec<String> {
         if let Some(layer) = layer {
             let class: Retained<objc2_foundation::NSString> =
                 objc2::msg_send![&*layer, description];
-            println!("bindary: contentView.layer {}", class.to_string());
+            println!("sadna: contentView.layer {}", class.to_string());
             let sublayers: Option<Retained<objc2_foundation::NSArray>> =
                 objc2::msg_send![&*layer, sublayers];
             match sublayers {
@@ -1536,11 +1536,11 @@ fn view_tree(window: &tauri::Window) -> Vec<String> {
                             objc2::msg_send![&*sublayers, objectAtIndex: index];
                         let name: Retained<objc2_foundation::NSString> =
                             objc2::msg_send![&*sublayer, className];
-                        println!("bindary:   layer[{index}] {} (later = on top)", name.to_string());
+                        println!("sadna:   layer[{index}] {} (later = on top)", name.to_string());
                         layers.push(name.to_string());
                     }
                 }
-                None => println!("bindary: contentView.layer has no sublayers"),
+                None => println!("sadna: contentView.layer has no sublayers"),
             }
         }
 
@@ -1548,7 +1548,7 @@ fn view_tree(window: &tauri::Window) -> Vec<String> {
             let frame = view.frame();
             let class = view.class().name().to_string_lossy().into_owned();
             println!(
-                "bindary:   subview[{index}] {class} at ({}, {}) {}x{} hidden={}",
+                "sadna:   subview[{index}] {class} at ({}, {}) {}x{} hidden={}",
                 frame.origin.x,
                 frame.origin.y,
                 frame.size.width,
@@ -1595,9 +1595,9 @@ fn titlebar_inset(window: &tauri::Window) -> f64 {
         // inset of 0 and a correct inset both satisfy "origin clears the strip".
         // Printed only when something is measuring: the derived number was wrong once and the
         // gate could not see it, so the raw inputs stay available - but not on every launch.
-        if headless() || std::env::var("BINDARY_PROBE").is_ok() {
+        if headless() || std::env::var("SADNA_PROBE").is_ok() {
             println!(
-                "bindary: window frame h={} contentView h={} contentLayoutRect h={} inset={inset}",
+                "sadna: window frame h={} contentView h={} contentLayoutRect h={} inset={inset}",
                 frame.size.height,
                 content.frame().size.height,
                 layout.size.height,
@@ -1620,7 +1620,7 @@ fn attach_chrome(
     finished: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Option<String> {
     let Ok(physical) = window.inner_size() else {
-        eprintln!("bindary: no window size, no chrome");
+        eprintln!("sadna: no window size, no chrome");
         return None;
     };
     let scale = window.scale_factor().unwrap_or(1.0);
@@ -1636,7 +1636,7 @@ fn attach_chrome(
             .background_color(tauri::webview::Color(0x10, 0x10, 0x16, 0xff))
             .on_page_load(move |webview, payload| {
                 println!(
-                    "bindary: chrome page {:?} url={}",
+                    "sadna: chrome page {:?} url={}",
                     payload.event(),
                     webview.url().map(|url| url.to_string()).unwrap_or_default()
                 );
@@ -1649,11 +1649,11 @@ fn attach_chrome(
     ) {
         Ok(chrome) => {
             let url = chrome.url().map(|url| url.to_string()).ok();
-            println!("bindary: chrome attached, url={url:?} size={:?}", chrome.size().ok());
+            println!("sadna: chrome attached, url={url:?} size={:?}", chrome.size().ok());
             url
         }
         Err(error) => {
-            eprintln!("bindary: the chrome webview refused to attach: {error}");
+            eprintln!("sadna: the chrome webview refused to attach: {error}");
             None
         }
     }
@@ -1698,12 +1698,12 @@ fn probe_document(window: &tauri::Window, smoke: std::rc::Rc<std::cell::RefCell<
                 if !value.is_null() {
                     let text: Retained<NSString> = objc2::msg_send![value, description];
                     let text = text.to_string();
-                    println!("bindary: document says {text}");
+                    println!("sadna: document says {text}");
                     record.borrow_mut().document = Some(text);
                 }
                 if !error.is_null() {
                     let text: Retained<NSString> = objc2::msg_send![error, description];
-                    println!("bindary: document probe failed: {}", text.to_string());
+                    println!("sadna: document probe failed: {}", text.to_string());
                 }
             });
             let _: () = objc2::msg_send![&**view, evaluateJavaScript: &*script, completionHandler: &*handler];
@@ -1757,7 +1757,7 @@ fn webview_state(window: &tauri::Window) {
             let title: Option<Retained<NSString>> = objc2::msg_send![&**view, title];
             let title = title.map(|value| value.to_string()).unwrap_or_default();
             println!(
-                "bindary: WKWebView url={described} progress={progress} loading={loading} title={title:?}"
+                "sadna: WKWebView url={described} progress={progress} loading={loading} title={title:?}"
             );
         }
     }

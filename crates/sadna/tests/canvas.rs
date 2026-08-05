@@ -14,8 +14,8 @@
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use bindary::canvas::{Canvas, PaneSpec};
-use bindary::layout::{Canvas as Grid, Rect};
+use sadna::canvas::{Canvas, PaneSpec};
+use sadna::layout::{Canvas as Grid, Rect};
 use ruuah_vt_render::{GpuContext, Surface, wgpu};
 
 const FONT: f32 = 16.0;

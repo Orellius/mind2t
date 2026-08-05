@@ -341,20 +341,27 @@ impl Session {
     /// polling advances the terminal, presenting puts a frame on screen, and the two run at
     /// different rates - a resize presents without polling, a quiet terminal polls without
     /// needing to present.
+    /// The colour the margin around this session's grid should be cleared to.
+    ///
+    /// The frame's own top-left style, falling back to the palette default. A grid rounds to
+    /// whole cells, so a window is almost never an exact multiple of the surface and the
+    /// remainder is visible - clearing it to black while the terminal renders on its own
+    /// background draws a hard band down the edge (operator-spotted 2026-08-04).
+    ///
+    /// Public because a canvas clears ONCE for the whole window and then blits N panes into it,
+    /// so the colour has to be askable from outside the session that owns it.
+    pub fn clear_color(&self) -> ruuah_vt_render::Rgba {
+        let palette = self.renderer.palette();
+        if self.frame.is_valid() {
+            let style = self.frame.style(self.frame.cell(0, 0).style_id());
+            palette.draw(&style).background
+        } else {
+            palette.default_background
+        }
+    }
+
     pub fn present(&mut self) -> Result<(), SessionError> {
-        // The margin colour comes from the frame's own top-left style, falling back to the
-        // palette default. A grid rounds to whole cells, so a window is almost never an exact
-        // multiple of the surface and the remainder is visible - clearing it to black while the
-        // terminal renders on its own background draws a hard band down the edge.
-        let clear = {
-            let palette = self.renderer.palette();
-            if self.frame.is_valid() {
-                let style = self.frame.style(self.frame.cell(0, 0).style_id());
-                palette.draw(&style).background
-            } else {
-                palette.default_background
-            }
-        };
+        let clear = self.clear_color();
         let renderer = &mut self.renderer;
         let window = self.window.as_mut().ok_or(SessionError::NoWindow)?;
         window

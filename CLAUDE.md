@@ -65,6 +65,65 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
+**B3.6 one window, panes on demand, `[tested]` headlessly 2026-08-06 (`b3-5-divider`).** Orel's
+call: the window opens with ONE pane like any other terminal, and **cmd+D splits it to the right**,
+as Ghostty does. The pre-split 1x2 canvas was B3.4 scaffolding and read as a window already in use.
+Gate is now **19 invariants** - it opens with one pane, splits, and every geometry check runs
+against the result.
+
+- **`Canvas::split` validates before it mutates.** The new session is spawned and every new rect
+  measured against the same `fit` the panes will use from then on; only after that do the existing
+  panes move. The order is the point - the alternative resizes everyone, discovers the last cell is
+  one column wide, and leaves the operator with a smaller canvas and no new pane. A refused split
+  leaves the canvas exactly as it was.
+- **Re-tiling goes through `resize`, not by hand**, so a split and a window resize cannot disagree
+  about how a pane moves. One path updates rects, ptys and mouse geometry.
+- **Single-row canvases only** (`CanvasError::NotSplittable`). Adding a column to a two-row grid
+  adds TWO panes and renumbers every existing one, which is not what a key press asked for. Refused
+  rather than approximated until a split tree exists; pinned by a test.
+- **The gate drives `Canvas::split`, never a synthesized cmd+D** - a real chord would type into
+  whatever the operator is doing. The chord itself (event mask, keycode match) is **live-tap debt**,
+  the same boundary as every other AppKit path here (SCAR-014). It is matched on the KEYCODE, so
+  the Hebrew layout cannot kill it.
+- Mutant seen red: a split that adds a pane without resizing the existing one - "pane 0 still
+  claims 180 columns after a split - it is drawing under its neighbour".
+
+**B3.5 the pane divider, `[tested]` headlessly 2026-08-06 (`b3-5-divider`).** Two terminals no
+longer read as one surface: the layout reserves a gutter between panes and a solid rule is painted
+into exactly that gap, in the same render pass. Gates: workspace suite green, difftest 207/207,
+`scripts/smoke-sadna.sh` **17 of 17** (the new one is the rule in the live window).
+
+- **The gutter is taken OUT of the panes, never painted over them.** The alternative covers a
+  column the child is writing into, and a terminal whose last column sits under a rule looks like
+  a program that truncates its own output. Panes genuinely have less room, their ptys are told so,
+  and `each_pane_tells_its_child_its_own_size` now subtracts the rule's cost rather than demanding
+  the full width - the honest half of the choice.
+- **"Let the clear colour show through the gap" was designed and REJECTED before it was built.**
+  It costs no renderer code at all, and it is wrong: a pane's surface is whole CELLS, so up to a
+  cell of margin inside every pane's rect is already uncovered and shows the clear colour. Making
+  the clear the divider colour would paint a grey band down every pane's right edge and along its
+  bottom. The rule is drawn explicitly instead - `Fill` and a second pipeline in `present.rs`,
+  recorded into the SAME pass, because a second pass is a second command buffer and this backend
+  has already deadlocked once on Metal's 64-buffer pool.
+- **One arithmetic, two outputs.** `edge()` is a free function shared by `tile` and `dividers`, so
+  the rule cannot land beside the gap the panes gave up. The coverage map now counts panes AND
+  dividers together: a pane-only map is satisfied by panes that leave a gap, which is what a gutter
+  IS, so it could no longer tell a reserved gutter from a lost pixel.
+- **The map found a real defect on first run**: an area narrower than its own gutters collapsed
+  every cell to zero and left the rules claiming pixels past the canvas edge. Dividers are clipped
+  to the area, and the degenerate case still tiles exactly.
+- **A mutant that PASSED is recorded next to the ones that failed** (`present.rs` solid shader):
+  dropping the "above or left of the rect" guard changes nothing, because an underflowed unsigned
+  coordinate is enormous and the extent check discards it anyway. The pane path's identical comment
+  claims otherwise and is wrong for the same reason - flagged, not rewritten. The comparison that
+  IS load-bearing is `>=` versus `>`, seen red as "the rule bled into the right pane".
+- Four mutants seen red: panes ignoring the gutter offset (double coverage), the extent off-by-one,
+  the gutter measured in points instead of physical pixels (the scale trap, caught by the live
+  gate), and a gutter reserved with nothing drawn into it.
+- **The LOOK is `[untested - needs your eyes]`.** `divider_color` lifts a dark background and drops
+  a light one by a fixed amount so the rule follows the theme; the weight is a defensible default,
+  not a verdict. No window has been put on screen (standing order).
+
 **B4.2 an agent launches into a pane and is SEEN from the grid, `[tested]` 2026-08-05
 (`b4-agent-registry`).** `crates/sadna/src/launch.rs`: spawn fitted, observe, retry with a
 doubling backoff. **A real Claude Code CLI ran in a pane and its own interface was read back with

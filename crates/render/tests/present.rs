@@ -291,7 +291,7 @@ fn two_panes_land_side_by_side_in_one_frame() {
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    blitter.blit_all(&mut [(&mut left, (0, 0)), (&mut right, (RIGHT, 0))], &view, clear);
+    blitter.blit_all(&mut [(&mut left, (0, 0)), (&mut right, (RIGHT, 0))], &[], &view, clear);
     let target = read_back(&context, &texture, WIDTH, HEIGHT);
 
     let pixel = |x: u32, y: u32| {
@@ -315,6 +315,84 @@ fn two_panes_land_side_by_side_in_one_frame() {
             "the gap at x={x} holds pane pixels; the panes overlap instead of tiling"
         );
     }
+}
+
+/// A fill paints its rect and NOTHING else - the divider between two panes.
+///
+/// Mutants this was RUN against, because a test's claim about what it catches is worth exactly
+/// what was measured (2026-08-06):
+/// - `>=` to `>` in the extent check - the rule one pixel too wide. **Seen red**: "the rule bled
+///   into the right pane". This is the defect class that matters, because the fill is painted
+///   after the panes, so a rule one pixel too wide silently eats a column the child is writing
+///   into - the exact thing taking the gutter out of the panes was meant to avoid.
+/// - Dropping the shader's "above or left of the rect" guard. **Seen GREEN, deliberately kept in
+///   the record**: with unsigned arithmetic an underflowed coordinate becomes enormous and the
+///   extent check discards it anyway, so that guard is belt-and-braces rather than load-bearing.
+///   Worth knowing, because the pane path's identical comment claims otherwise and is wrong for
+///   the same reason.
+/// The panes' corners are asserted after the fill lands, which is what catches a fill that
+/// ignores its rect entirely and repaints the frame.
+#[test]
+fn a_fill_paints_its_rect_and_leaves_the_panes_alone() {
+    const PANE: u32 = 24;
+    const GAP: u32 = 4;
+    const RIGHT: u32 = PANE + GAP;
+    const RULE: [u8; 4] = [90, 90, 96, 255];
+
+    let context = GpuContext::new().expect("a GPU");
+    let mut left = GpuSurface::with_context(context.clone(), PANE, HEIGHT).expect("left");
+    let mut right = GpuSurface::with_context(context.clone(), PANE, HEIGHT).expect("right");
+    left.fill(0, 0, PANE, HEIGHT, [200, 40, 10, 255]);
+    left.fill(0, 0, 1, 1, [255, 255, 255, 255]);
+    right.fill(0, 0, PANE, HEIGHT, [10, 60, 220, 255]);
+    right.fill(0, 0, 1, 1, [0, 0, 0, 255]);
+
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let blitter = Blitter::new(&context, format).expect("a non-sRGB target is accepted");
+    let device = context.device();
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("divider target"),
+        size: wgpu::Extent3d { width: WIDTH, height: HEIGHT, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+    // The rule fills the gap exactly, and starts at a non-zero x and y so an implementation that
+    // ignored the origin would land somewhere visibly different rather than by luck in place.
+    let fill = ruuah_vt_render::Fill { x: PANE, y: 2, width: GAP, height: HEIGHT - 4, color: RULE };
+    blitter.blit_all(
+        &mut [(&mut left, (0, 0)), (&mut right, (RIGHT, 0))],
+        &[fill],
+        &view,
+        wgpu::Color { r: 0.0, g: 1.0, b: 0.0, a: 1.0 },
+    );
+    let target = read_back(&context, &texture, WIDTH, HEIGHT);
+    let pixel = |x: u32, y: u32| {
+        let at = ((y * WIDTH + x) * 4) as usize;
+        [target[at], target[at + 1], target[at + 2], target[at + 3]]
+    };
+
+    for x in PANE..RIGHT {
+        assert_eq!(pixel(x, 2), RULE, "the rule is missing at x={x}");
+        assert_eq!(
+            pixel(x, 1),
+            [0, 255, 0, 255],
+            "the rule painted above its own rect at x={x}"
+        );
+    }
+    assert_eq!(pixel(PANE - 1, 4), [200, 40, 10, 255], "the rule bled into the left pane");
+    assert_eq!(pixel(RIGHT, 4), [10, 60, 220, 255], "the rule bled into the right pane");
+    assert_eq!(
+        pixel(0, 0),
+        [255, 255, 255, 255],
+        "the left pane's corner is gone - an unclipped fill repaints the entire frame"
+    );
+    assert_eq!(pixel(RIGHT, 0), [0, 0, 0, 255], "the right pane's corner is gone");
 }
 
 /// Two assertions, and the first is what makes the second mean anything: the pixel AT the

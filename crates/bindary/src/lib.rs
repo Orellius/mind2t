@@ -7,6 +7,7 @@
 //! NOT responsible for: windows, event loops, or the session. Those differ between the two
 //!   hosts, and that difference is the whole point of keeping both.
 
+pub mod agent;
 pub mod canvas;
 pub mod clipboard;
 pub mod keys;

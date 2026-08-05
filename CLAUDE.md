@@ -60,6 +60,14 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
+**B4.1 the agent registry and the auto-approve guard, `[tested]` 2026-08-05
+(`b4-agent-registry`).** `crates/bindary/src/agent.rs`: ten agent CLIs with the fields that
+actually differ (binary candidates, prompt strategy, spawn grace, resume template), a PATH probe
+with the asymmetric cache (5 min hit / 10 s miss), and the guard that refuses to auto-type an
+approval bypass. Nothing spawns yet - B4.2 puts an agent in a pane and verifies it from the typed
+grid. Five of the ten are installed here: claude, codex, gemini, opencode, grok. Two gotchas
+below carry the findings.
+
 **B3.4 the host is a CANVAS, `[tested]` headlessly 2026-08-05 (`b3-4-host-canvas`).** Bindary's
 window no longer holds one terminal. It holds a `Canvas` - a wizard-shaped grid (hardcoded 1x2
 until B5 declares one), one live session per cell, all of them presented in a single swapchain
@@ -660,6 +668,22 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
 
 ## Project rules & gotchas
 
+- **A GENERIC BINARY NAME IS NOT A CANDIDATE** (B4.1, 2026-08-05). `crates/bindary/src/agent.rs`
+  carries the agent-CLI matrix recovered from BridgeSpace. It probes bare **`agent`** first for
+  Cursor - and on this machine `agent` is `~/.grok/bin/agent`, so "launch Cursor" starts **Grok**,
+  silently, with a working agent in the pane. Found by the probe's very first run against the
+  shell's own `command -v`, which is why availability is MEASURED rather than trusted (SCAR-003 -
+  the registry is a claim about the world, and the world disagrees). `no_two_agents_can_resolve_to
+  _the_same_binary` now refuses a name claimed twice and a name generic enough to belong to
+  somebody else. A false negative (agent reported missing) is always preferable to a false
+  positive (the wrong vendor's agent running your prompt).
+- **THE AUTO-APPROVE GUARD IS NEVER A SANITISER.** `agent::screen` REFUSES a launch carrying
+  `--yolo`, `--dangerously-skip-permissions`, `-a never` and the rest; it never strips them and
+  proceeds. Stripping would leave the operator believing approvals were off when they were not.
+  Matched as WHOLE argv tokens, because `--auto` is Factory's bypass and `--autosave` is not, and
+  a guard that refuses near-misses is one people learn to route around. Both directions are
+  tested and both mutants were seen red: substring matching fails the near-miss test, a guard that
+  never fires fails the other three.
 - **BINDARY'S GATE IS `scripts/smoke-bindary.sh`, AND IT NEEDS NO SCREEN.** Orel's standing order
   (2026-08-04) while he works in parallel sessions: no windows on his display, no synthetic
   input. The script runs the real Tauri host with its window ordered out and asserts **sixteen**

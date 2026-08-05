@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!--
+    Sadna (סדנה, workshop) - the app mark.
+
+    The mark IS the product: a canvas split into panes with a rule between them, which is
+    literally what B3.5 and B3.6 built. Two panes rather than three, because at 16pt in the Dock
+    a third column closes to mush; the caret is what says "terminal" once the panes are too small
+    to read as anything but blocks.
+
+    Drawn at 1024 and downsampled by the iconset build. Every radius is proportional, so the
+    small sizes stay the same shape rather than a different, blurrier one.
+  -->
+  <!--
+    Value separation is set for 32px, not for 1024. Rendered at 32 the first version was a dark
+    blob: the panes were two steps from the plate and one step from the well, and every one of
+    those steps disappears into the same grey once the whole mark is a thumbnail. The plate is
+    now clearly the darkest thing, the panes clearly lighter, and the caret carries the only hue.
+    Judge this at 32 - it is the size the Dock and the switcher actually draw.
+  -->
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c2029"/>
+      <stop offset="1" stop-color="#0a0c11"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.10"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.02"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="caret" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffc978"/>
+      <stop offset="1" stop-color="#f59f3f"/>
+    </linearGradient>
+  </defs>
+
+  <!-- The plate. macOS rounds its own corners on the iconset, so this radius only has to look
+       right if the icon is ever shown unmasked. -->
+  <rect x="64" y="64" width="896" height="896" rx="200" ry="200" fill="url(#plate)"/>
+  <rect x="64" y="64" width="896" height="896" rx="200" ry="200" fill="url(#glass)"/>
+  <rect x="65.5" y="65.5" width="893" height="893" rx="198.5" ry="198.5"
+        fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="3"/>
+
+  <!-- The canvas: one dark well the panes sit in, so the rule reads as a gap in a surface
+       rather than as a drawn line floating on the plate. -->
+  <rect x="168" y="216" width="688" height="592" rx="64" ry="64" fill="#05060a"/>
+
+  <!-- The panes, deliberately much lighter than the plate. The insets are equal and the rule
+       takes the middle - the same arithmetic the layout does, where the gap comes OUT of the
+       panes rather than being painted over them. -->
+  <rect x="200" y="248" width="304" height="528" rx="32" ry="32" fill="#333b4b"/>
+  <rect x="520" y="248" width="304" height="528" rx="32" ry="32" fill="#28303e"/>
+
+  <!-- The rule: the plate's own darkness showing through, so it reads as a gap rather than as a
+       drawn line. 16 wide survives to 32px as a visible seam because the two panes either side
+       are different values. -->
+  <rect x="504" y="248" width="16" height="528" fill="#05060a"/>
+
+  <!-- The caret: the only hue in the mark, and big enough to survive a 32px downsample as more
+       than a smudge. It is what makes the mark read as a TERMINAL once the panes are too small
+       to be anything but blocks. -->
+  <rect x="248" y="320" width="152" height="56" rx="16" ry="16" fill="url(#caret)"/>
+  <!-- Output under it. Kept short and low-contrast so they never look like text asking to be
+       read - at 32px they are texture, not lines. -->
+  <rect x="248" y="424" width="200" height="28" rx="12" ry="12" fill="#ffffff" fill-opacity="0.30"/>
+  <rect x="248" y="492" width="136" height="28" rx="12" ry="12" fill="#ffffff" fill-opacity="0.20"/>
+
+  <!-- The right pane runs its own thing: an agent, dimmer because it is not the focused one. -->
+  <rect x="568" y="320" width="168" height="28" rx="12" ry="12" fill="#ffffff" fill-opacity="0.26"/>
+  <rect x="568" y="388" width="216" height="28" rx="12" ry="12" fill="#ffffff" fill-opacity="0.18"/>
+  <rect x="568" y="456" width="120" height="28" rx="12" ry="12" fill="#ffffff" fill-opacity="0.13"/>
+</svg>

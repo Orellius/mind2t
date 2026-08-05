@@ -26,6 +26,8 @@ use std::rc::Rc;
 use sadna::canvas::{Canvas, PaneSpec};
 use sadna::layout::{Canvas as Grid, Rect};
 use ruuah_vt_host::session::{MouseAction, MouseMods, Session};
+use ruuah_vt_frame::BaseDirection;
+use ruuah_vt_host::config::Config;
 use ruuah_vt_render::{Fill, GpuContext, GpuSurface, WindowTarget};
 use tauri::webview::WebviewBuilder;
 use tauri::window::WindowBuilder;
@@ -637,9 +639,58 @@ fn snapshot(canvas: &Canvas) -> Vec<(Rect, (u16, u16))> {
         .collect()
 }
 
-fn shell() -> Command {
-    let path = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    Command::new(path)
+/// Where Sadna reads `config.toml` and `themes/<name>.toml` from.
+///
+/// `~/.sadna`, falling back to `~/.ruuah` when only the older directory exists. The fallback is
+/// not politeness: the engine's config loader has always defaulted to `~/.ruuah`, the `.app`
+/// ships that way, and an operator who already has a theme there would otherwise open Sadna and
+/// find a terminal wearing the default scheme with nothing to explain why.
+fn config_dir() -> Option<std::path::PathBuf> {
+    let home = std::path::PathBuf::from(std::env::var_os("HOME")?);
+    let sadna = home.join(".sadna");
+    if sadna.join("config.toml").is_file() {
+        return Some(sadna);
+    }
+    let ruuah = home.join(".ruuah");
+    if ruuah.join("config.toml").is_file() {
+        return Some(ruuah);
+    }
+    Some(sadna)
+}
+
+/// Applies the operator's appearance settings to one pane.
+///
+/// ONE function called from every place a pane is born - launch, cmd+D, and the gate - because
+/// the failure is silent and cosmetic in the worst way: a pane that skipped it wears the default
+/// xterm scheme beside its themed neighbour, which reads as a rendering bug in the new pane
+/// rather than as a line of setup nobody called.
+fn dress(session: &mut ruuah_vt_host::session::Session, config: &Config) {
+    session.set_palette(config.palette.clone());
+    // Hebrew-first by default, matching the `.app`. `Auto` flips a row's flow only when that
+    // row's own text resolves right-to-left, so column-addressed TUI output stays where the
+    // program drew it - which is why it is safe as a default rather than a preference.
+    if config.auto_direction.unwrap_or(true) {
+        session.set_base_direction(BaseDirection::Auto);
+    }
+}
+
+/// The shell a new pane runs, honouring the config's own `shell` line.
+///
+/// Run through `/bin/sh -c` when configured, because the key is a COMMAND LINE and not a path -
+/// people put `cd` and arguments in it, and the `.app` has always treated it that way. An
+/// unconfigured shell is the login `$SHELL`, spawned directly.
+fn shell_from(config: &Config) -> Command {
+    match config.shell.as_deref() {
+        Some(line) if !line.trim().is_empty() => {
+            let mut command = Command::new("/bin/sh");
+            command.arg("-c").arg(line);
+            command
+        }
+        _ => {
+            let path = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+            Command::new(path)
+        }
+    }
 }
 
 /// The area the canvas tiles: the window minus the chrome strip, in PHYSICAL pixels.
@@ -678,6 +729,17 @@ fn main() {
     let physical = window.inner_size().expect("the window size");
     let strip = ((BAR_HEIGHT + titlebar_inset(&window)) * scale) as u32;
 
+    // The config the engine already knew how to read and this host had never asked for: theme,
+    // font, shell, and the Hebrew-first direction. Loading never fails - an absent file is the
+    // default state, and anything that could not be honoured comes back in `error` rather than
+    // as a refusal to start. It is REPORTED, because a typo that silently does nothing is the
+    // thing the loader's strict key checking exists to prevent.
+    let config = Config::load(config_dir().as_deref());
+    if let Some(error) = &config.error {
+        eprintln!("sadna: config: {error}");
+    }
+    let font_size = if config.font_size > 0.0 { config.font_size } else { FONT_SIZE };
+
     // ONE context for every pane AND for the window's swapchain. A render pass binds buffers
     // from a single device, so a pane that built its own could not be composited at all - see
     // `Session::spawn_on`, and the gate `every_pane_reaches_one_frame_at_its_own_rect`.
@@ -695,8 +757,10 @@ fn main() {
         grid(scale),
         canvas_area(physical.width, physical.height, strip),
         &specs,
-        FONT_SIZE * scale as f32,
-        |_spec| shell(),
+        // The configured size, scaled. The scale is applied HERE and not in the config, because
+        // the config is a document about points and this is the only place that knows the display.
+        font_size * scale as f32,
+        |_spec| shell_from(&config),
     ) {
         Ok(canvas) => canvas,
         Err(error) => {
@@ -704,6 +768,16 @@ fn main() {
             std::process::exit(1);
         }
     };
+
+    // The theme and the Hebrew-first direction, applied to every pane the canvas just made.
+    //
+    // Done here rather than inside `Canvas::spawn` because a canvas is geometry and a theme is
+    // appearance - and the split path would otherwise need its own copy of this, which is exactly
+    // how one pane ends up wearing a different scheme from its neighbour.
+    let mut canvas = canvas;
+    for pane in canvas.panes_mut() {
+        dress(&mut pane.session, &config);
+    }
 
     // SURFACE FIRST. The webview is added after this call and therefore lands above it; reversed,
     // the terminal covers the chrome and nothing errors. See the module card.
@@ -801,12 +875,19 @@ fn main() {
     // gate splits too, and a context is reference-counted - both hand out the same device.
     let split_gpu = gpu.clone();
     let smoke_gpu = gpu.clone();
+    // A pane made later runs the SAME configured shell as the ones made at launch. Cloned rather
+    // than borrowed because both of these outlive this scope inside closures, and a split that
+    // quietly fell back to $SHELL would diverge from the window it was split out of.
+    let split_config = config.clone();
+    let monitor_config = config.clone();
+    let smoke_config = config.clone();
     let _monitor = (!headless()).then(|| {
         input::monitor(
             Rc::clone(&canvas),
             Rc::clone(&focus),
             BAR_HEIGHT,
-            move || (split_gpu.clone(), shell(), FONT_SIZE * scale as f32),
+            move || (split_gpu.clone(), shell_from(&split_config), font_size * scale as f32),
+            move |session| dress(session, &monitor_config),
         )
     });
 
@@ -1060,7 +1141,7 @@ fn main() {
                     // into whatever the operator is doing. What that leaves untested is the chord
                     // itself - the event mask and the keycode match - and that is a live tap, not
                     // a covered path (SCAR-014).
-                    let (command, font) = (shell(), FONT_SIZE * scale as f32);
+                    let (command, font) = (shell_from(&smoke_config), font_size * scale as f32);
                     if let Err(error) = canvas.split(&smoke_gpu, command, font) {
                         eprintln!("sadna: smoke could not split: {error:?}");
                     }
@@ -1326,6 +1407,9 @@ mod input {
         focus: Rc<Cell<Focus>>,
         bar_height: f64,
         spawn: impl Fn() -> (GpuContext, std::process::Command, f32) + 'static,
+        // Applies the operator's appearance settings to a pane the chord just made. A closure
+        // rather than a `Config` so this module never learns what a config is - it reads input.
+        dress_pane: impl Fn(&mut ruuah_vt_host::session::Session) + 'static,
     ) -> Option<Retained<AnyObject>> {
         // Captured once: the monitor and its handler both run on the main thread, and proving
         // that here is cheaper than proving it at every AppKit call inside the block.
@@ -1520,6 +1604,11 @@ mod input {
                             let (gpu, command, font) = spawn();
                             match canvas.split(&gpu, command, font) {
                                 Ok(index) => {
+                                    // The new pane is dressed before anything draws it, or it
+                                    // arrives wearing the default scheme beside its neighbour.
+                                    if let Some(pane) = canvas.panes_mut().get_mut(index) {
+                                        dress_pane(&mut pane.session);
+                                    }
                                     // Focus follows the new pane, which is what every terminal
                                     // does and what makes the chord usable twice in a row.
                                     focus.set(Focus::Pane(index));

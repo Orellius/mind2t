@@ -1,5 +1,5 @@
-//! Purpose: the paste path - clipboard bytes to the child, fenced when the child asked.
-//! Public surface: `paste`, `paste_text`, `text`.
+//! Purpose: the clipboard path in both directions - bytes to the child, and a selection out.
+//! Public surface: `paste`, `paste_text`, `text`, `set_text`.
 //! Why this file: both hosts paste, and this was written twice before it was written once. The
 //!   split between the two functions here is the load-bearing part: `paste_text` takes the text
 //!   as an ARGUMENT, so a gate can exercise the whole encode-and-send path with a fixture and
@@ -32,6 +32,38 @@ pub fn paste_text(session: &Session, text: &str) {
     if let Err(error) = session.send(&bytes) {
         eprintln!("sadna: paste failed: {error:?}");
     }
+}
+
+/// Puts `text` on the general pasteboard, replacing whatever was there.
+///
+/// `clearContents` is not optional and not a courtesy: a pasteboard still holding a previous
+/// declaration accepts the write and hands the OLD value to the next reader, so a copy would
+/// appear to work and paste something else. The generation it returns is ignored - nothing here
+/// races another writer for ownership.
+///
+/// Empty text is refused. A selection that formats to nothing is a real outcome (a drag across
+/// blank cells), and silently emptying the operator's clipboard because they twitched the mouse
+/// is worse than doing nothing.
+#[cfg(target_os = "macos")]
+pub fn set_text(text: &str) -> bool {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+    use objc2_foundation::NSString;
+    if text.is_empty() {
+        return false;
+    }
+    let pasteboard = NSPasteboard::generalPasteboard();
+    unsafe {
+        pasteboard.clearContents();
+        pasteboard.setString_forType(&NSString::from_str(text), NSPasteboardTypeString)
+    }
+}
+
+/// No clipboard reached for on other platforms yet (B6), and answering `false` says so rather
+/// than reporting a copy that never happened.
+#[cfg(not(target_os = "macos"))]
+pub fn set_text(text: &str) -> bool {
+    let _ = text;
+    false
 }
 
 /// The general pasteboard's string, or `None` when it holds something else (an image, a file).

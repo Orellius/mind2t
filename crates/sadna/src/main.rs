@@ -126,6 +126,15 @@ const MOUSE_MARKER: &str = "SADNA-MOUSE";
 /// What the child prints to describe the environment the host handed it.
 const ENV_MARKER: &str = "SADNA-ENV";
 
+/// The line the selection probes run against, and the word inside it they must find.
+///
+/// The hyphen is the whole point: `-` is NOT a word boundary in the rules ported from the
+/// oracle, so `alpha-beta` is ONE word. A host that re-derived the rules from anything sensible
+/// splits it at the hyphen, and this fixture is what makes that visible instead of plausible.
+const SELECT_MARKER: &str = "SADNA-SELECT";
+const SELECT_WORD: &str = "alpha-beta";
+const SELECT_TAIL: &str = "gamma";
+
 /// The terminal type the host DECLARES to every child it spawns.
 ///
 /// Declared rather than inherited: an app launched from Finder inherits no environment at all,
@@ -228,6 +237,21 @@ struct Smoke {
     click_after_enable: Option<bool>,
     /// Whether the report came back off the child as text - the proof it was not merely encoded.
     mouse_echo: bool,
+    /// What a double-click, a drag and cmd+C's own formatter answered on a KNOWN line.
+    ///
+    /// The fixture is chosen to discriminate rather than to pass: `alpha-beta` contains a hyphen,
+    /// which is NOT a word boundary in the oracle's rules, so a host that re-derived those rules
+    /// from something reasonable-looking answers `alpha`, a host that selected the whole row
+    /// answers the row, and a host with no selection at all answers `None`. Three different
+    /// wrong answers, all distinguishable from the right one.
+    selected_word: Option<String>,
+    selected_drag: Option<String>,
+    /// Grid width at the base font, at a larger one, and after going back - in that order.
+    ///
+    /// Three readings for the same reason the scroll check takes three: "the grid changed" is
+    /// satisfied by a host that resized for any reason at all, and only the RETURN to the
+    /// original width shows that the size chord moved a font rather than the window.
+    zoom_cols: Option<(u16, u16, u16)>,
     /// What the CHILD says about the environment it was handed, read back off the grid.
     ///
     /// Three fields, because three separate things make a shell unable to run anything and each
@@ -315,6 +339,13 @@ impl Smoke {
                 .zip(self.layers.iter().rposition(|layer| !layer.contains("Wgpu")))
                 .is_some_and(|(terminal, chrome)| terminal < chrome);
 
+        // A bigger font means FEWER columns in the same pixels, and coming back to the base size
+        // must land on the width it started from. The second half is what makes this a font
+        // check rather than a resize check.
+        let zoomed = self
+            .zoom_cols
+            .is_some_and(|(base, larger, restored)| larger < base && restored == base);
+
         // Three reads, one verdict: the viewport moved AND the grid was otherwise still. Without
         // the middle term, a child that kept printing would satisfy "it changed" forever and the
         // check would pass on a host whose wheel is not wired at all.
@@ -385,7 +416,7 @@ impl Smoke {
                 .zip(&self.after_resize)
                 .all(|(before, after)| after.1.0 < before.1.0 && after.1.1 < before.1.1);
 
-        let checks: [(bool, &str); 23] = [
+        let checks: [(bool, &str); 26] = [
             (
                 self.panes_at_open == Some(1),
                 "the window OPENS with one pane, like any other terminal - panes are made with \
@@ -470,6 +501,24 @@ impl Smoke {
                  which encoding it into a buffer nobody wrote would not",
             ),
             (
+                self.selected_word.as_deref() == Some(SELECT_WORD),
+                "a double-click selects a WORD by the oracle's own rules, hyphen included - a \
+                 host that re-derived the boundaries answers 'alpha', one that selected the row \
+                 answers the row, and one with no selection answers nothing",
+            ),
+            (
+                self.selected_drag.as_deref() == Some(&format!("{SELECT_WORD} {SELECT_TAIL}")),
+                "and a DRAG selects what it was dragged across, formatted the way cmd+C will \
+                 paste it - the range and the text are separate defects and only the text is \
+                 the thing the operator actually gets",
+            ),
+            (
+                zoomed,
+                "the font-size chord re-derives the grid and going back restores it - a check \
+                 that only asked whether the grid changed would pass on a window that resized \
+                 for any reason at all",
+            ),
+            (
                 re_tiled,
                 "a window resize re-tiles every pane to the NEW area and shrinks every pane's \
                  own grid with it - the first thing an operator does, and the one path where \
@@ -538,6 +587,12 @@ enum Stage {
     Scrolled,
     /// Clicked with reporting on; waiting for the report to come back off the child.
     Clicking,
+    /// The selection fixture is in flight; waiting for it to land on the grid.
+    Selecting,
+    /// The fixture is on screen: probe a word, then a drag, then read what cmd+C would copy.
+    Probing,
+    /// The font-size chord, measured on the grid it produces and then put back.
+    Zooming,
     Done,
 }
 
@@ -725,12 +780,110 @@ impl InputProbe {
             }
 
             Stage::Clicking => {
-                if session.visible_text().contains(MOUSE_REPORT) {
-                    smoke.mouse_echo = true;
-                    self.enter(Stage::Done);
-                } else if waited >= Self::PATIENCE {
-                    self.enter(Stage::Done);
+                let finished =
+                    session.visible_text().contains(MOUSE_REPORT) || waited >= Self::PATIENCE;
+                if finished {
+                    smoke.mouse_echo = session.visible_text().contains(MOUSE_REPORT);
+                    self.enter(Stage::Selecting);
                 }
+            }
+
+            Stage::Selecting => {
+                // Sent straight to `cat`, which is what the `Pasting` stage left running - and
+                // by then there is no shell at all, because that stage used `exec`. Interrupting
+                // `cat` to get a prompt back does not work either: it IS the child, so the
+                // interrupt ends the session. Measured, both ways, before this shape.
+                //
+                // `cat` echoes what it receives, so the fixture reaches the grid as plain text
+                // with nothing to substitute - which is simpler than the environment report's
+                // `printf`, and needs no format-string trick to tell a real line from an echo
+                // because every copy on screen is the same real text.
+                let line = format!("{SELECT_MARKER} {SELECT_WORD} {SELECT_TAIL}\r");
+                if let Err(error) = session.send(line.as_bytes()) {
+                    eprintln!("sadna: select fixture refused: {error:?}");
+                }
+                self.enter(Stage::Probing);
+            }
+
+            Stage::Probing => {
+                let Some((row, column)) = fixture_at(session) else {
+                    if waited >= Self::PATIENCE {
+                        // Printed, not merely left to fail: "the fixture never landed" and "the
+                        // selection is broken" are different defects with the same red line, and
+                        // without the grid there is nothing to tell them apart.
+                        eprintln!(
+                            "sadna: the select fixture never landed. grid says:\n{}",
+                            session.visible_text(),
+                        );
+                        self.enter(Stage::Zooming);
+                    }
+                    return;
+                };
+
+                // A double-click is a POINT, so the probe is aimed at the middle of a cell
+                // inside the word rather than at its corner. Aiming at the cell boundary is how
+                // a rounding difference between the highlight and the mouse encoder would hide.
+                let cell = session.cell_metrics();
+                let at = |x: u16, y: u16| {
+                    (
+                        f32::from(x) * cell.width as f32 + cell.width as f32 / 2.0,
+                        f32::from(y) * cell.height as f32 + cell.height as f32 / 2.0,
+                    )
+                };
+                let word_start = column + SELECT_MARKER.chars().count() as u16 + 1;
+                let (wx, wy) = at(word_start + 2, row);
+                if session.select_word_at(wx, wy) {
+                    smoke.selected_word = session.selection_text();
+                }
+
+                // Then the DRAG: anchored on the word's first cell, held on the last cell of the
+                // trailing token. This is the path the pointer takes, one layer below AppKit.
+                let last = word_start
+                    + (SELECT_WORD.chars().count() + 1 + SELECT_TAIL.chars().count()) as u16
+                    - 1;
+                let (ax, ay) = at(word_start, row);
+                if let Some(anchor) = session.cell_at(ax, ay) {
+                    let (bx, by) = at(last, row);
+                    if session.select_to(anchor, bx, by) {
+                        smoke.selected_drag = session.selection_text();
+                    }
+                }
+                session.set_selection(None);
+                self.enter(Stage::Zooming);
+            }
+
+            Stage::Zooming => {
+                // The pixel area is computed ONCE and both calls are given it, so the restore
+                // lands on exactly the width it started from. Re-deriving the area from the grid
+                // after the first call would floor it against the new cell size and the restore
+                // would come back a cell short - a real defect in this check rather than in the
+                // code it measures.
+                let cell = session.cell_metrics();
+                let before = session.geometry();
+                let width = u32::from(before.cols) * cell.width;
+                let height = u32::from(before.rows) * cell.height;
+                let base = session.font_size();
+
+                let larger = match session.set_font_size(base * 1.5, width, height) {
+                    Ok(Some(geometry)) => geometry.cols,
+                    Ok(None) => before.cols,
+                    Err(error) => {
+                        eprintln!("sadna: zoom refused: {error:?}");
+                        self.enter(Stage::Done);
+                        return;
+                    }
+                };
+                let restored = match session.set_font_size(base, width, height) {
+                    Ok(Some(geometry)) => geometry.cols,
+                    Ok(None) => larger,
+                    Err(error) => {
+                        eprintln!("sadna: zoom restore refused: {error:?}");
+                        self.enter(Stage::Done);
+                        return;
+                    }
+                };
+                smoke.zoom_cols = Some((before.cols, larger, restored));
+                self.enter(Stage::Done);
             }
 
             Stage::Done => {}
@@ -775,6 +928,32 @@ fn active_pane(focus: &Cell<Focus>, panes: usize) -> usize {
         Focus::Pane(index) if index < panes => index,
         _ => 0,
     }
+}
+
+/// Where the selection fixture landed: its row, and the column the marker starts at.
+///
+/// The fixture reaches the grid TWICE - once as the tty's own echo of the bytes written, once as
+/// `cat` writing them back - and either copy is equally real text, so the first is taken. That
+/// is a property of sending plain text rather than a command: there is no format string to
+/// substitute, so an echo and an output are indistinguishable because they are identical.
+///
+/// The whole fixture must be on one line, or none of it: a row holding a torn half would hand
+/// the word probe a column pointing at the wrong cell, and the answer would look like a
+/// selection defect.
+///
+/// Columns are counted in CHARS, exact here only because the fixture is ASCII. Choosing an ASCII
+/// fixture is what keeps this helper from needing the grid's own cell widths.
+fn fixture_at(session: &Session) -> Option<(u16, u16)> {
+    for (row, line) in session.visible_text().lines().enumerate() {
+        if !line.contains(SELECT_WORD) || !line.contains(SELECT_TAIL) {
+            continue;
+        }
+        let Some(column) = line.find(SELECT_MARKER) else {
+            continue;
+        };
+        return Some((u16::try_from(row).ok()?, u16::try_from(column).ok()?));
+    }
+    None
 }
 
 /// Every pane's rect and its own grid, in order - the canvas as it currently stands.
@@ -1065,6 +1244,7 @@ fn main() {
             Rc::clone(&canvas),
             Rc::clone(&focus),
             BAR_HEIGHT,
+            font_size * scale as f32,
             move || (split_gpu.clone(), shell_from(&split_config), font_size * scale as f32),
             move |session| dress(session, &monitor_config),
         )
@@ -1538,6 +1718,11 @@ mod input {
 
     /// Hands one pointer event to a pane, in that pane's own coordinates. Silence is the common,
     /// correct outcome.
+    ///
+    /// Returns whether the CHILD took the event. That answer is what routes the gesture: a
+    /// program with mouse reporting on owns the pointer, and a host that also selected would
+    /// paint a highlight over a click the program is already acting on - two responses to one
+    /// gesture, which reads as the terminal fighting the program.
     fn report(
         canvas: &Rc<RefCell<Canvas>>,
         index: usize,
@@ -1545,7 +1730,7 @@ mod input {
         action: MouseAction,
         x: f32,
         y: f32,
-    ) {
+    ) -> bool {
         let code = match action {
             // Motion with no button held is code 0. A DRAG is motion with its button, and the
             // encoder needs to know which one, so the two cannot share a constant.
@@ -1554,7 +1739,7 @@ mod input {
         };
         let mut canvas = canvas.borrow_mut();
         let Some(pane) = canvas.panes_mut().get_mut(index) else {
-            return;
+            return false;
         };
         let mode = pane.session.frame().mouse_event();
         match pane.session.mouse(action, code, mods_of(event), x, y) {
@@ -1565,8 +1750,110 @@ mod input {
                          ({x:.0},{y:.0})px mode={mode:?} reported={reported}"
                     );
                 }
+                reported
             }
-            Err(error) => eprintln!("sadna: mouse report refused: {error:?}"),
+            Err(error) => {
+                eprintln!("sadna: mouse report refused: {error:?}");
+                // A refusal is not the child claiming the pointer. Answering `true` here would
+                // make a broken pty silently disable selection as well.
+                false
+            }
+        }
+    }
+
+    /// Which way a font-size chord moves. `None` is every other chord.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum FontStep {
+        Larger,
+        Smaller,
+        Reset,
+    }
+
+    /// The three size chords, matched on the KEY and never on the character.
+    ///
+    /// `plain` is required for cmd+0 and cmd+minus and deliberately NOT for the enlarge chord:
+    /// the key carrying `+` is shift+`=` on this layout, so a `plain` requirement there would
+    /// make cmd+plus - which is what a person actually presses - a dead chord while cmd+= worked.
+    fn font_step(chord: Key, plain: bool) -> Option<FontStep> {
+        match chord {
+            Key::Equal => Some(FontStep::Larger),
+            Key::Minus if plain => Some(FontStep::Smaller),
+            Key::Digit0 if plain => Some(FontStep::Reset),
+            _ => None,
+        }
+    }
+
+    /// Applies a size step to EVERY pane, and re-derives each one's grid from its own rect.
+    ///
+    /// Every pane, not the focused one, and that is a real constraint rather than a preference:
+    /// the wheel accumulator is shared across panes and is correct only while they agree on a
+    /// cell height (see the scroll branch). Letting one pane hold a different font would make a
+    /// slow trackpad scroll round to zero in one pane and not in its neighbour.
+    ///
+    /// The step is MULTIPLICATIVE - ten percent - so it is independent of the display scale. An
+    /// additive step in points would have to be scaled by the backing factor at every call site,
+    /// and this host's font sizes are already stored scaled; a raw `+1.0` would move half a point
+    /// on a 2x display and a whole one on a 1x.
+    fn resize_font(canvas: &mut Canvas, base: f32, step: FontStep) {
+        for pane in canvas.panes_mut() {
+            let size = match step {
+                FontStep::Larger => pane.session.font_size() * 1.1,
+                FontStep::Smaller => pane.session.font_size() / 1.1,
+                FontStep::Reset => base,
+            };
+            let (width, height) = (pane.rect.width, pane.rect.height);
+            match pane.session.set_font_size(size, width, height) {
+                Ok(Some(geometry)) if tracing() => {
+                    println!(
+                        "sadna: TRACE font {size:.1}px in {width}x{height}px -> {}x{} cells",
+                        geometry.cols, geometry.rows,
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => eprintln!("sadna: font resize refused: {error:?}"),
+            }
+        }
+    }
+
+    /// Opens an OSC 8 target with whatever the system says handles it.
+    ///
+    /// Handed to `open`, never interpreted here, and that is the security boundary: a terminal
+    /// that parsed the scheme itself would have to decide what to do with the ones it did not
+    /// recognise, and a child can emit ANY string as a link. Letting Launch Services refuse it
+    /// keeps the decision with the part of the machine that already owns it.
+    fn open_link(link: &str) {
+        match std::process::Command::new("/usr/bin/open").arg(link).spawn() {
+            Ok(_) => {
+                if tracing() {
+                    println!("sadna: TRACE opening link {link:?}");
+                }
+            }
+            Err(error) => eprintln!("sadna: cannot open {link:?}: {error:?}"),
+        }
+    }
+
+    /// Whether this event should select rather than be reported to the child.
+    ///
+    /// SHIFT is the override every terminal has and the one that makes a full-screen program
+    /// usable: with mouse reporting on, `vim` and an agent CLI own every click, so without this
+    /// there is no way to copy a line off the screen at all. Holding shift takes the pointer
+    /// back for the host, which is why the report is SKIPPED entirely rather than sent and then
+    /// also selected on - sending it would have the program act on a click meant for us.
+    fn selects_instead(event: &NSEvent) -> bool {
+        event
+            .modifierFlags()
+            .contains(NSEventModifierFlags::Shift)
+    }
+
+    /// Copies the focused pane's selection, and says whether anything was put on the pasteboard.
+    fn copy_selection(canvas: &Rc<RefCell<Canvas>>, index: usize) -> bool {
+        let text = {
+            let canvas = canvas.borrow();
+            canvas.panes().get(index).and_then(|pane| pane.session.selection_text())
+        };
+        match text {
+            Some(text) => clipboard::set_text(&text),
+            None => false,
         }
     }
 
@@ -1585,6 +1872,10 @@ mod input {
         canvas: Rc<RefCell<Canvas>>,
         focus: Rc<Cell<Focus>>,
         bar_height: f64,
+        // The configured size, already scaled - what cmd+0 goes back to. Passed in rather than
+        // read off a pane, because by the time the chord is pressed no pane still knows what the
+        // size was before the operator started zooming.
+        base_font: f32,
         spawn: impl Fn() -> (GpuContext, std::process::Command, f32) + 'static,
         // Applies the operator's appearance settings to a pane the chord just made. A closure
         // rather than a `Config` so this module never learns what a config is - it reads input.
@@ -1604,6 +1895,13 @@ mod input {
         // holding a button forever - and the held-button bookkeeping lives inside each pane, so
         // the next bare motion over it reports a drag nobody is performing.
         let captured: Cell<Option<usize>> = Cell::new(None);
+
+        // Where a selection drag was anchored: the pane, and the cell the button went down on.
+        // Separate from `captured` because they answer different questions - `captured` is which
+        // pane owns the BUTTON (true even when the child is taking the reports), this is whether
+        // a SELECTION is in progress. Folding them into one would make a drag inside a program
+        // with mouse reporting on paint a highlight it never asked for.
+        let anchor: Cell<Option<(usize, (u16, u16))>> = Cell::new(None);
 
         let handler = RcBlock::new(move |event: NonNull<NSEvent>| -> *mut NSEvent {
             let event = unsafe { event.as_ref() };
@@ -1639,7 +1937,72 @@ mod input {
                     }
                     if let Some((index, local_x, local_y)) = under {
                         captured.set(Some(index));
-                        report(&canvas, index, event, MouseAction::Press, local_x, local_y);
+
+                        // cmd+click opens the OSC 8 link under the pointer, the way every
+                        // terminal that has links does it. Taken before the report and before
+                        // any selection: the gesture is a navigation, and there is nothing to
+                        // select or report if it hits one.
+                        if event.r#type() == objc2_app_kit::NSEventType::LeftMouseDown
+                            && event.modifierFlags().contains(NSEventModifierFlags::Command)
+                        {
+                            let link = canvas
+                                .borrow()
+                                .panes()
+                                .get(index)
+                                .and_then(|pane| pane.session.link_at(local_x, local_y));
+                            if let Some(link) = link {
+                                open_link(&link);
+                                return std::ptr::null_mut();
+                            }
+                        }
+
+                        let taken = if selects_instead(event) {
+                            false
+                        } else {
+                            report(&canvas, index, event, MouseAction::Press, local_x, local_y)
+                        };
+
+                        // The gesture is the host's only when the child did not take the click.
+                        if !taken && event.r#type() == objc2_app_kit::NSEventType::LeftMouseDown {
+                            let mut canvas = canvas.borrow_mut();
+                            if let Some(pane) = canvas.panes_mut().get_mut(index) {
+                                // AppKit counts a click's repeats for us, and it is the only
+                                // source that gets the machine's own double-click INTERVAL right
+                                // - a hand-rolled timer would disagree with every other app on
+                                // this Mac. Past three it cycles, so a fourth click starts over
+                                // rather than doing nothing.
+                                match event.clickCount() % 3 {
+                                    2 => {
+                                        pane.session.select_word_at(local_x, local_y);
+                                        anchor.set(None);
+                                    }
+                                    0 => {
+                                        pane.session.select_line_at(local_x, local_y);
+                                        anchor.set(None);
+                                    }
+                                    _ => {
+                                        // A plain press CLEARS the old highlight and arms a
+                                        // drag. Clearing on press rather than on release is what
+                                        // every terminal does: the selection should disappear the
+                                        // moment the operator commits to a new gesture, not when
+                                        // they finish it.
+                                        pane.session.set_selection(None);
+                                        anchor.set(
+                                            pane.session
+                                                .cell_at(local_x, local_y)
+                                                .map(|cell| (index, cell)),
+                                        );
+                                    }
+                                }
+                                if tracing() {
+                                    println!(
+                                        "sadna: TRACE select clicks={} pane={index} -> {:?}",
+                                        event.clickCount(),
+                                        pane.session.selection(),
+                                    );
+                                }
+                            }
+                        }
                     }
                     // Passed on regardless. The window still needs the event for its own
                     // business - dragging by the title bar, the traffic lights, the webview's
@@ -1664,10 +2027,16 @@ mod input {
                         // the guard would live to the end of the block and every release would
                         // panic on an already-borrowed RefCell.
                         let point = local(&canvas.borrow(), index, x, y);
-                        if let Some((local_x, local_y)) = point {
+                        if let Some((local_x, local_y)) = point
+                            && !selects_instead(event)
+                        {
                             report(&canvas, index, event, MouseAction::Release, local_x, local_y);
                         }
                     }
+                    // The drag is over; the SELECTION it produced stays. Disarming here rather
+                    // than leaving the anchor set is what keeps a later bare move from extending
+                    // a selection the operator finished with the button up.
+                    anchor.set(None);
                     pass
                 }
 
@@ -1689,7 +2058,29 @@ mod input {
                             None => pane_under(&canvas, x, y),
                         };
                         if let Some((index, local_x, local_y)) = routed {
-                            report(&canvas, index, event, MouseAction::Motion, local_x, local_y);
+                            // A drag with a live anchor EXTENDS the selection instead of being
+                            // reported. The anchor is only ever set when the child declined the
+                            // press, so this cannot steal motion from a program that is tracking
+                            // the pointer.
+                            match anchor.get() {
+                                Some((armed, from)) if armed == index => {
+                                    let mut canvas = canvas.borrow_mut();
+                                    if let Some(pane) = canvas.panes_mut().get_mut(index) {
+                                        pane.session.select_to(from, local_x, local_y);
+                                    }
+                                }
+                                _ if selects_instead(event) => {}
+                                _ => {
+                                    report(
+                                        &canvas,
+                                        index,
+                                        event,
+                                        MouseAction::Motion,
+                                        local_x,
+                                        local_y,
+                                    );
+                                }
+                            }
                         }
                     }
                     pass
@@ -1799,6 +2190,40 @@ mod input {
                                     eprintln!("sadna: cannot split: {error:?}");
                                 }
                             }
+                            return std::ptr::null_mut();
+                        }
+
+                        // cmd+C copies the highlight. It is deliberately NOT unconditional: with
+                        // nothing selected the chord must fall through to the child as ^C, or
+                        // interrupting a running command stops working the moment a terminal
+                        // learns to copy. Ghostty makes the same distinction.
+                        if chord == Key::C && plain {
+                            let copied = copy_selection(&canvas, index);
+                            if tracing() {
+                                println!("sadna: TRACE cmd+C pane={index} copied={copied}");
+                            }
+                            if copied {
+                                return std::ptr::null_mut();
+                            }
+                            return pass;
+                        }
+
+                        // cmd+A selects the visible grid. Visible, not the scrollback: a frame is
+                        // a viewport and history is not in it (`Session::select_all_visible`).
+                        if chord == Key::A && plain {
+                            let mut canvas = canvas.borrow_mut();
+                            if let Some(pane) = canvas.panes_mut().get_mut(index) {
+                                pane.session.select_all_visible();
+                            }
+                            return std::ptr::null_mut();
+                        }
+
+                        // The font-size chords. `plain` is not required for the zoom pair: the
+                        // key that carries `+` is shift+`=` on this layout, so demanding no
+                        // shift would make cmd+plus dead exactly where a person presses it.
+                        if let Some(step) = font_step(chord, plain) {
+                            let mut canvas = canvas.borrow_mut();
+                            resize_font(&mut canvas, base_font, step);
                             return std::ptr::null_mut();
                         }
 

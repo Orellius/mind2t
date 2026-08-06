@@ -262,7 +262,12 @@ fn out_of_viewport(event: &Event, size: &Size) -> bool {
 
 /// Surface pixels to a zero-based cell, the oracle's exact arithmetic: padding off,
 /// clamp at zero, floor-divide, clamp to the (padding-derived) grid edge.
-fn pos_to_cell(x: f32, y: f32, size: &Size) -> (u32, u32) {
+///
+/// Public because SELECTION needs the same answer. A host that computed its own
+/// pixel-to-cell would put the highlight on one cell while the child was told the
+/// pointer was on another, and the two would agree everywhere except the padding and
+/// the last column -- which is precisely where a person notices.
+pub fn pos_to_cell(x: f32, y: f32, size: &Size) -> (u32, u32) {
     let term_x = f64::from(x) - f64::from(size.padding_left);
     let term_y = f64::from(y) - f64::from(size.padding_top);
     let (cols, rows) = size.grid();

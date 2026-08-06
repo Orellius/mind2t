@@ -19,7 +19,8 @@ use std::process::Command;
 
 use crate::pointer::{Input, Pointer, Wheel};
 use ruuah_vt_core::events::Event;
-use ruuah_vt_frame::{BaseDirection, Frame, FrameReader};
+use ruuah_vt_core::selection;
+use ruuah_vt_frame::{BaseDirection, Frame, FrameReader, FrameSelection};
 use ruuah_vt_pty::key::{KeyOptions, OptionAsAlt};
 // Re-exported under host-facing names: a caller wiring a window should not have to learn that
 // the mouse encoder lives in the pty crate to name a click.
@@ -28,6 +29,29 @@ use ruuah_vt_pty::{Geometry, Host, Options, SpawnError};
 use ruuah_vt_render::{
     CellMetrics, FontStack, GpuContext, GpuSurface, Palette, PresentError, Renderer, WindowTarget,
 };
+
+/// Smallest font the size chords will go to. Below this the cell is a couple of pixels wide and
+/// the grid becomes large enough to be slow while being unreadable, which is not a state worth
+/// being able to reach by holding a key down.
+pub const MIN_FONT_SIZE: f32 = 6.0;
+
+/// Largest font the size chords will go to. The ceiling exists because the grid floors at one
+/// cell: past the point where a single glyph fills the pane, every further step tells the child
+/// the same 1x1 grid while doing a full renderer rebuild each time.
+pub const MAX_FONT_SIZE: f32 = 72.0;
+
+/// A core selection range in the frame's own coordinates.
+///
+/// Total, with no fallible branch, precisely because the rows that produced the range came from
+/// this frame: the conversion is an unwrap of two `Point`s, and the seam that used to be
+/// dangerous - absolute scrollback rows against viewport rows - no longer exists on this path
+/// because the probe was fed viewport rows to begin with.
+fn into_frame_selection(found: &ruuah_vt_snapshot::Selection) -> FrameSelection {
+    FrameSelection {
+        start: (found.start.x, found.start.y),
+        end: (found.end.x, found.end.y),
+    }
+}
 
 /// The grid, in cells. Pixels are derived from it and the font, never the other way round.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -528,6 +552,178 @@ impl Session {
             }
             Wheel::Viewport => Ok(false),
         }
+    }
+
+    /// Which viewport cell a surface pixel lands on, or `None` before mouse geometry is set.
+    ///
+    /// The same arithmetic the mouse encoder uses, so a highlight and a mouse report can never
+    /// name different cells for one pointer position.
+    pub fn cell_at(&self, x: f32, y: f32) -> Option<(u16, u16)> {
+        self.pointer.cell_at(self.renderer.cell_metrics(), x, y)
+    }
+
+    /// The highlighted range, viewport-relative.
+    pub fn selection(&self) -> Option<FrameSelection> {
+        self.frame.selection
+    }
+
+    /// Sets or clears the highlight, and makes the next poll repaint.
+    ///
+    /// The repaint is NOT incidental. A selection changes no terminal state, so the frame's
+    /// generation does not move, so `poll` would return `false` and the highlight would appear
+    /// only the next time the child happened to write something - a selection that shows up
+    /// when you press a key. Resetting `drawn_generation` forces the full-frame path, which is
+    /// also what ERASING the previous highlight needs: a partial repaint touches only rows the
+    /// child dirtied, and the row the operator just deselected is not one of them.
+    pub fn set_selection(&mut self, selection: Option<FrameSelection>) {
+        if self.frame.selection == selection {
+            return;
+        }
+        self.frame.selection = selection;
+        self.drawn_generation = 0;
+    }
+
+    /// Extends a drag: a selection anchored at `anchor`, held at the cell under the pointer.
+    ///
+    /// Endpoint order is the GESTURE's, not reading order - a drag upward leaves `start` after
+    /// `end` - because that is what tells the host which end the pointer holds. Every reader
+    /// goes through `FrameSelection::ordered`.
+    pub fn select_to(&mut self, anchor: (u16, u16), x: f32, y: f32) -> bool {
+        let Some(head) = self.cell_at(x, y) else {
+            return false;
+        };
+        self.set_selection(Some(FrameSelection { start: anchor, end: head }));
+        true
+    }
+
+    /// Selects the word under a pixel position. `false` means there is nothing selectable there,
+    /// which is a real answer: a double-click on a blank cell selects nothing.
+    pub fn select_word_at(&mut self, x: f32, y: f32) -> bool {
+        self.select_with(x, y, selection::select_word)
+    }
+
+    /// Selects the line under a pixel position, trailing whitespace trimmed by the same rule the
+    /// oracle uses.
+    pub fn select_line_at(&mut self, x: f32, y: f32) -> bool {
+        self.select_with(x, y, selection::select_line)
+    }
+
+    /// Selects the whole visible grid.
+    ///
+    /// Visible, not the whole scrollback: a frame is a viewport and history is not in it. Said
+    /// out loud because `Terminal::select`'s `All` DOES reach into history, and the two answering
+    /// differently is a difference a person can see.
+    pub fn select_all_visible(&mut self) -> bool {
+        let rows = self.frame.viewport_rows();
+        match selection::select_all(&rows, self.frame.cols) {
+            Some(found) => {
+                self.set_selection(Some(into_frame_selection(&found)));
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The clipboard text for the current highlight, or `None` when nothing is selected.
+    ///
+    /// Formatted by `ruuah_vt_core::selection::format`, which is the function the differential
+    /// corpus measures against the oracle - trailing whitespace, soft-wrap joining and all. A
+    /// host that walked the grid itself would produce text that looks right and pastes wrong.
+    pub fn selection_text(&self) -> Option<String> {
+        let selection = self.frame.selection?;
+        let rows = self.frame.viewport_rows();
+        let ((sx, sy), (ex, ey)) = selection.ordered();
+        Some(selection::format(
+            &rows,
+            self.frame.cols,
+            &ruuah_vt_snapshot::Selection {
+                start: ruuah_vt_snapshot::Point { x: sx, y: sy },
+                end: ruuah_vt_snapshot::Point { x: ex, y: ey },
+                rectangle: false,
+            },
+        ))
+    }
+
+    /// Shared body of the word and line probes: viewport rows in, frame-space highlight out.
+    fn select_with(
+        &mut self,
+        x: f32,
+        y: f32,
+        probe: fn(
+            &[ruuah_vt_snapshot::Row],
+            u16,
+            ruuah_vt_snapshot::Point,
+        ) -> Option<ruuah_vt_snapshot::Selection>,
+    ) -> bool {
+        let Some((col, row)) = self.cell_at(x, y) else {
+            return false;
+        };
+        let rows = self.frame.viewport_rows();
+        match probe(&rows, self.frame.cols, ruuah_vt_snapshot::Point { x: col, y: row }) {
+            Some(found) => {
+                self.set_selection(Some(into_frame_selection(&found)));
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The OSC 8 link under a pixel position, if the child published one there.
+    pub fn link_at(&self, x: f32, y: f32) -> Option<String> {
+        let (col, row) = self.cell_at(x, y)?;
+        self.frame.link(col, row).map(str::to_string)
+    }
+
+    /// Rebuilds at a new font size inside the SAME pixel area, re-deriving the grid from it.
+    ///
+    /// `width`/`height` are the pane's physical pixels and come from the caller because the
+    /// caller is what tiles them. Deriving the area from the current grid instead would floor it
+    /// against the old cell size, so every font-size step would shed up to one cell of width and
+    /// the terminal would creep smaller each time the chord was pressed.
+    ///
+    /// The grid is DERIVED, never carried: larger glyphs in one window mean fewer columns, and a
+    /// host that kept `cols` would draw wider than the window and tell the child a size it cannot
+    /// see. `Ok(None)` means the size was already in force.
+    pub fn set_font_size(
+        &mut self,
+        size: f32,
+        width: u32,
+        height: u32,
+    ) -> Result<Option<SessionGeometry>, SessionError> {
+        let size = size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
+        if (size - self.font_size).abs() < f32::EPSILON {
+            return Ok(None);
+        }
+        let fonts = FontStack::with_primary(self.font_family.as_deref(), size)
+            .map_err(|error| SessionError::Render(error.to_string()))?;
+        let cell = fonts.metrics();
+        let geometry = SessionGeometry {
+            cols: (width / cell.width.max(1)).max(1) as u16,
+            rows: (height / cell.height.max(1)).max(1) as u16,
+        };
+
+        // The pty leads, the same order `resize` uses and for the same reason: the child redraws
+        // on SIGWINCH, and a renderer still sized for the old grid draws that redraw clipped.
+        self.host
+            .resize(Geometry { cols: geometry.cols, rows: geometry.rows })
+            .map_err(|error| SessionError::Resize(format!("{error:?}")))?;
+        self.font_size = size;
+        self.renderer = build(&self.gpu, geometry, size, self.font_family.as_deref())?;
+        // A fresh renderer starts on the default scheme; without this the theme lasts exactly
+        // until the first font-size chord.
+        self.renderer.set_palette(self.palette.clone());
+        self.geometry = geometry;
+        // The highlight is in CELL coordinates and the cells just changed size underneath it, so
+        // it now names different text than the operator selected. Clearing also marks the frame
+        // for a full repaint, which the new grid needs anyway.
+        self.frame.selection = None;
+        self.drawn_generation = 0;
+        Ok(Some(geometry))
+    }
+
+    /// The current font size in points.
+    pub fn font_size(&self) -> f32 {
+        self.font_size
     }
 
     /// Ends the child and its pump, cleanly.

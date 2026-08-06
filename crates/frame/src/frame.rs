@@ -12,7 +12,7 @@
 //!   agreement with the core is tested end to end in `tests/publish.rs`; the layout is
 //!   measured against 91,707 Unicode cases in `tests/bidi_conformance.rs`.
 
-use ruuah_vt_snapshot::{Semantic, Style, Wide};
+use ruuah_vt_snapshot::{Cell, Row, RowSemantic, Semantic, Style, Wide};
 
 use crate::bidi::{BaseDirection, visual_spans};
 use crate::packed::{PackedCell, unpack_style};
@@ -372,6 +372,57 @@ impl Frame {
     /// This row soft-wraps into the next.
     pub fn wraps(&self, y: u16) -> bool {
         self.row_flags.get(usize::from(y)).is_some_and(|f| f.0)
+    }
+
+    /// This row is the continuation of a soft-wrap from the previous one.
+    ///
+    /// The other half of the pair the publisher already writes. Nothing read it until
+    /// selection did: a word that wraps across two rows is one word, and the rule that says so
+    /// tests this flag.
+    pub fn wrap_continuation(&self, y: u16) -> bool {
+        self.row_flags.get(usize::from(y)).is_some_and(|f| f.1)
+    }
+
+    /// The visible grid as snapshot rows -- the shape `ruuah_vt_core::selection` reads.
+    ///
+    /// This exists so the host does NOT get a second selection implementation. The rules that
+    /// decide where a word ends were ported from the oracle's `selection_codepoints.zig` and
+    /// are pinned by differential corpus cases; a host that re-derived them from packed cells
+    /// would be a second copy with no oracle behind it, drifting on the first character anyone
+    /// argued about.
+    ///
+    /// These are VIEWPORT rows, so a point going in and a range coming out are both
+    /// viewport-relative and `FrameSelection` needs no conversion -- which is the seam that
+    /// paints the highlight one screen away from the pointer when it is got wrong.
+    ///
+    /// The cost, stated rather than hidden: a selection derived from these cannot reach into
+    /// scrollback the way `Terminal::select` can, because scrollback is not in a frame. What is
+    /// on screen is what selects.
+    ///
+    /// `semantic_prompt` is the row default: this frame carries semantics per CELL, and no
+    /// selection rule reads a row's own prompt state.
+    pub fn viewport_rows(&self) -> Vec<Row> {
+        let mut scratch = [0u8; crate::CLUSTER_BYTES];
+        let mut rows = Vec::with_capacity(usize::from(self.rows));
+        for y in 0..self.rows {
+            let mut cells = Vec::with_capacity(usize::from(self.cols));
+            for x in 0..self.cols {
+                let cell = self.cell(x, y);
+                cells.push(Cell {
+                    text: cell.cluster(&mut scratch).to_string(),
+                    wide: cell.wide(),
+                    style: self.style(cell.style_id()),
+                    semantic: cell.semantic(),
+                });
+            }
+            rows.push(Row {
+                wrap: self.wraps(y),
+                wrap_continuation: self.wrap_continuation(y),
+                semantic_prompt: RowSemantic::default(),
+                cells,
+            });
+        }
+        rows
     }
 
     /// Whether this frame corresponds to a real publish.

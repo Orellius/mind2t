@@ -116,6 +116,18 @@ impl Pointer {
         self.screen_width != 0 && self.screen_height != 0
     }
 
+    /// Which viewport cell a surface pixel lands on, or `None` before geometry is set.
+    ///
+    /// Shares `pos_to_cell` with the report encoder rather than repeating its arithmetic, so
+    /// the cell the operator sees highlighted and the cell the child is told about are the same
+    /// cell by construction. They would otherwise agree everywhere except inside the padding
+    /// and at the last column, which is exactly where a person notices.
+    pub fn cell_at(&self, cell: CellMetrics, x: f32, y: f32) -> Option<(u16, u16)> {
+        let size = self.size(cell)?;
+        let (col, row) = ruuah_vt_pty::mouse::pos_to_cell(x, y, &size);
+        Some((col.min(u32::from(u16::MAX)) as u16, row.min(u32::from(u16::MAX)) as u16))
+    }
+
     fn size(&self, cell: CellMetrics) -> Option<Size> {
         if !self.has_geometry() {
             return None;

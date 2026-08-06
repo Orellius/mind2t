@@ -1,71 +1,68 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <!--
-    Sadna (סדנה, workshop) - the app mark.
+    Sadna (סדנה, workshop) - the app mark. 2026-08-06.
 
-    The mark IS the product: a canvas split into panes with a rule between them, which is
-    literally what B3.5 and B3.6 built. Two panes rather than three, because at 16pt in the Dock
-    a third column closes to mush; the caret is what says "terminal" once the panes are too small
-    to read as anything but blocks.
+    WHAT IT IS: a prompt, pointing the other way. A chevron aimed LEFT with the block cursor
+    sitting to its left, which is where a cursor sits on a right-to-left line. Every terminal
+    icon in the Dock is a `>` and a block; this one is the mirror of that, and the mirror is
+    the whole product claim - Ghostty has no bidi at all, and Hebrew is why this exists.
 
-    Drawn at 1024 and downsampled by the iconset build. Every radius is proportional, so the
-    small sizes stay the same shape rather than a different, blurrier one.
-  -->
-  <!--
-    Value separation is set for 32px, not for 1024. Rendered at 32 the first version was a dark
-    blob: the panes were two steps from the plate and one step from the well, and every one of
-    those steps disappears into the same grey once the whole mark is a thumbnail. The plate is
-    now clearly the darkest thing, the panes clearly lighter, and the caret carries the only hue.
-    Judge this at 32 - it is the size the Dock and the switcher actually draw.
+    WHY NOT THE LETTER. The version before this drew ס (samekh, the first letter of סדנה) as a
+    rounded ring with the caret in its counter. Rendered at 32 it did not read as a Hebrew
+    letter to anyone who was not told; it read as a record button. A mark that needs a caption
+    has failed, so the letter is gone and the direction carries the meaning instead.
+
+    THE COLOURS ARE THE PRODUCT'S OWN, measured from `crates/render/src/color.rs`: ground
+    #0d0d0d and ink #ffffff, the operator's 2026-07-29 call of "near-black ground, pure white
+    ink, the sixteen stay vivid". The cursor is #f0c674, palette index 3 of that same scheme.
+    The first mark used a blue-grey plate and an amber caret, which belonged to no theme this
+    terminal ships.
+
+    JUDGE IT AT 32 PIXELS - the size the Dock and the switcher actually draw, and the size at
+    which the previous two attempts failed. The chevron stroke is 104/1024, a little over three
+    device pixels there; the cursor is 152 wide so it stays a block rather than a speck. The GAP between the
+    cursor and the chevron is 128 units, four device pixels at 32 - the first attempt left 44 and
+    the two shapes fused into one blob shaped like a bowtie.
   -->
   <defs>
-    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1c2029"/>
-      <stop offset="1" stop-color="#0a0c11"/>
+    <!-- The terminal's own ground, lifted at the top so the plate has a light source without
+         becoming a different colour. -->
+    <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c1c1c"/>
+      <stop offset="1" stop-color="#0d0d0d"/>
     </linearGradient>
-    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.10"/>
-      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.02"/>
+    <!-- The hairline every macOS icon carries: bright at the top, gone by the middle. Without
+         it the plate has no edge against a dark Dock. -->
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.24"/>
+      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0.05"/>
       <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
-    <linearGradient id="caret" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffc978"/>
-      <stop offset="1" stop-color="#f59f3f"/>
+    <linearGradient id="ink" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e2e2e2"/>
     </linearGradient>
   </defs>
 
-  <!-- The plate. macOS rounds its own corners on the iconset, so this radius only has to look
-       right if the icon is ever shown unmasked. -->
-  <rect x="64" y="64" width="896" height="896" rx="200" ry="200" fill="url(#plate)"/>
-  <rect x="64" y="64" width="896" height="896" rx="200" ry="200" fill="url(#glass)"/>
-  <rect x="65.5" y="65.5" width="893" height="893" rx="198.5" ry="198.5"
-        fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="3"/>
+  <!-- The plate. macOS masks its own corners on the iconset, so this radius only matters where
+       the mark is shown unmasked - which the README and the release page both do. -->
+  <rect x="64" y="64" width="896" height="896" rx="200" ry="200" fill="url(#ground)"/>
+  <rect x="65" y="65" width="894" height="894" rx="199" ry="199"
+        fill="none" stroke="url(#rim)" stroke-width="2"/>
 
-  <!-- The canvas: one dark well the panes sit in, so the rule reads as a gap in a surface
-       rather than as a drawn line floating on the plate. -->
-  <rect x="168" y="216" width="688" height="592" rx="64" ry="64" fill="#05060a"/>
+  <!--
+    The chevron, aimed left. Drawn as a stroked polyline with round joins so it keeps its weight
+    when the whole mark is downsampled; a filled arrowhead goes muddy at 32 because its point is
+    thinner than a pixel.
+  -->
+  <polyline points="708,342 508,512 708,682"
+            fill="none" stroke="url(#ink)" stroke-width="98"
+            stroke-linecap="round" stroke-linejoin="round"/>
 
-  <!-- The panes, deliberately much lighter than the plate. The insets are equal and the rule
-       takes the middle - the same arithmetic the layout does, where the gap comes OUT of the
-       panes rather than being painted over them. -->
-  <rect x="200" y="248" width="304" height="528" rx="32" ry="32" fill="#333b4b"/>
-  <rect x="520" y="248" width="304" height="528" rx="32" ry="32" fill="#28303e"/>
-
-  <!-- The rule: the plate's own darkness showing through, so it reads as a gap rather than as a
-       drawn line. 16 wide survives to 32px as a visible seam because the two panes either side
-       are different values. -->
-  <rect x="504" y="248" width="16" height="528" fill="#05060a"/>
-
-  <!-- The caret: the only hue in the mark, and big enough to survive a 32px downsample as more
-       than a smudge. It is what makes the mark read as a TERMINAL once the panes are too small
-       to be anything but blocks. -->
-  <rect x="248" y="320" width="152" height="56" rx="16" ry="16" fill="url(#caret)"/>
-  <!-- Output under it. Kept short and low-contrast so they never look like text asking to be
-       read - at 32px they are texture, not lines. -->
-  <rect x="248" y="424" width="200" height="28" rx="12" ry="12" fill="#ffffff" fill-opacity="0.30"/>
-  <rect x="248" y="492" width="136" height="28" rx="12" ry="12" fill="#ffffff" fill-opacity="0.20"/>
-
-  <!-- The right pane runs its own thing: an agent, dimmer because it is not the focused one. -->
-  <rect x="568" y="320" width="168" height="28" rx="12" ry="12" fill="#ffffff" fill-opacity="0.26"/>
-  <rect x="568" y="388" width="216" height="28" rx="12" ry="12" fill="#ffffff" fill-opacity="0.18"/>
-  <rect x="568" y="456" width="120" height="28" rx="12" ry="12" fill="#ffffff" fill-opacity="0.13"/>
+  <!--
+    The block cursor, LEFT of the chevron - the position that only makes sense on an RTL line,
+    and the entire point of the mark. Cell-shaped rather than square, so it reads as a terminal
+    cursor and not as a bullet.
+  -->
+  <rect x="228" y="436" width="152" height="152" rx="18" ry="18" fill="#f0c674"/>
 </svg>

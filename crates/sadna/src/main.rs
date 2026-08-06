@@ -123,6 +123,17 @@ const FILL_MARKER: &str = "SADNA-FILLED";
 /// What the child prints when it has turned mouse reporting on.
 const MOUSE_MARKER: &str = "SADNA-MOUSE";
 
+/// What the child prints to describe the environment the host handed it.
+const ENV_MARKER: &str = "SADNA-ENV";
+
+/// The terminal type the host DECLARES to every child it spawns.
+///
+/// Declared rather than inherited: an app launched from Finder inherits no environment at all,
+/// so a host that passes on its own TERM hands the child an empty one and every ncurses program
+/// exits before drawing. The gate asserts this exact value against a deliberately poisoned
+/// TERM, which is the only way the check can tell declaring from inheriting.
+pub const CHILD_TERM: &str = "xterm-256color";
+
 /// The SGR report a press in the top-left cell produces, as `cat` echoes it back: ESC is drawn
 /// `^[` by ECHOCTL, so this is the printable form, not the wire form.
 const MOUSE_REPORT: &str = "^[[<0;1;1M";
@@ -217,9 +228,64 @@ struct Smoke {
     click_after_enable: Option<bool>,
     /// Whether the report came back off the child as text - the proof it was not merely encoded.
     mouse_echo: bool,
+    /// What the CHILD says about the environment it was handed, read back off the grid.
+    ///
+    /// Three fields, because three separate things make a shell unable to run anything and each
+    /// is invisible from outside the pty: `TERM` (empty means no terminal database, so every
+    /// ncurses program aborts), the shell's own option flags (a non-interactive zsh sources no
+    /// `.zshrc`, so `PATH` never gains homebrew and half the operator's tools stop existing),
+    /// and whether this window inherited the launching Claude session's markers (an agent CLI
+    /// then believes it is a child session rather than a fresh one).
+    child_env: Option<String>,
 }
 
 impl Smoke {
+    /// One `name=[value]` field out of the child's environment report.
+    ///
+    /// Returns `None` when the report never arrived at all, which every check below treats as a
+    /// failure rather than as a pass: an absent measurement is not evidence of a good one.
+    fn env_field(&self, name: &str) -> Option<&str> {
+        let line = self.child_env.as_deref()?;
+        let start = line.find(&format!("{name}=["))? + name.len() + 2;
+        let rest = &line[start..];
+        rest.find(']').map(|end| &rest[..end])
+    }
+
+    /// The child must report the term the HOST declares, not merely a non-empty one.
+    ///
+    /// "Non-empty" was the first version of this check and it passed vacuously: the gate runs
+    /// under `cargo run`, so the child inherited the operator's own `TERM` and the assertion
+    /// was measuring the launching shell rather than the host. `smoke-sadna.sh` now poisons
+    /// `TERM=dumb` before launching, which is what makes this discriminating - an inheriting
+    /// host reports `dumb` and fails, and a declaring host reports what it declared.
+    fn child_has_terminfo(&self) -> bool {
+        matches!(self.env_field("term"), Some(term) if term == CHILD_TERM)
+    }
+
+    /// A LOGIN shell, which is a different claim from an interactive one and the one that was
+    /// actually broken.
+    ///
+    /// Correction worth keeping: the first version of this check asserted INTERACTIVE, on the
+    /// theory that a shell spawned with no arguments is not. It is - POSIX makes a shell with
+    /// no operands and a terminal on stdin interactive by default, and a pty is a terminal, so
+    /// `.zshrc` was being sourced all along and the check passed against the broken host. What
+    /// is NOT inherited is login-ness, so `/etc/zprofile` (path_helper) and `~/.zprofile`
+    /// (where homebrew's shellenv usually lives) never run. That is the half that removes the
+    /// operator's tools from `PATH`.
+    fn child_is_login_shell(&self) -> bool {
+        matches!(self.env_field("login"), Some(value) if value == "yes")
+    }
+
+    fn child_session_is_fresh(&self) -> bool {
+        matches!(self.env_field("cc"), Some(marker) if marker == "none")
+    }
+
+    /// The operator-level claim, and the only one that answers his actual sentence: a real CLI
+    /// resolves inside the pane. Everything above is a mechanism; this is the symptom.
+    fn child_can_find_a_cli(&self) -> bool {
+        matches!(self.env_field("cli"), Some(value) if value == "yes")
+    }
+
     /// Every check, and what each one exists to catch. Returns whether all of them held.
     ///
     /// Each line is a defect this session actually hit, in the order it hit them. That is the
@@ -310,7 +376,7 @@ impl Smoke {
                 .zip(&self.after_resize)
                 .all(|(before, after)| after.1.0 < before.1.0 && after.1.1 < before.1.1);
 
-        let checks: [(bool, &str); 19] = [
+        let checks: [(bool, &str); 23] = [
             (
                 self.panes_at_open == Some(1),
                 "the window OPENS with one pane, like any other terminal - panes are made with \
@@ -400,6 +466,31 @@ impl Smoke {
                  own grid with it - the first thing an operator does, and the one path where \
                  tiling and the pty can disagree",
             ),
+            (
+                self.child_can_find_a_cli(),
+                "a real CLI RESOLVES inside the pane - the operator's sentence was 'no CLI \
+                 can run inside Sadna', and this is that sentence as an assertion rather \
+                 than as a mechanism",
+            ),
+            (
+                self.child_is_login_shell(),
+                "the child is a LOGIN shell - without it /etc/zprofile (path_helper) and \
+                 ~/.zprofile never run, so PATH never gains homebrew and the tools are \
+                 simply absent. Interactivity is NOT the missing half: a shell with a pty \
+                 on stdin is interactive already",
+            ),
+            (
+                self.child_has_terminfo(),
+                "the host DECLARES the terminal type rather than passing on its own - the \
+                 gate launches with TERM=dumb precisely so an inheriting host fails here, \
+                 and a Finder-launched app inherits nothing at all",
+            ),
+            (
+                self.child_session_is_fresh(),
+                "the launching Claude session's markers do NOT reach the child - a terminal \
+                 window is a session boundary, and an agent CLI that inherits them believes \
+                 it is a child session of whatever opened the window",
+            ),
         ];
 
         let mut passed = true;
@@ -485,7 +576,26 @@ impl InputProbe {
                 }
                 // Enough output to give the wheel somewhere to scroll to, then a marker that
                 // says the shell is finished with it.
-                let command = format!("seq 1 200; printf '{FILL_MARKER}\\n'\r");
+                //
+                // The environment report rides on the front of it because it costs one line and
+                // it is the only way to see what the child was ACTUALLY handed - the shell
+                // itself answering, rather than the host asserting something about itself.
+                //
+                // `[[ -o login ]]`, and the double bracket is load-bearing: zsh's single-bracket
+                // `[` rejects `-o` outright ("too many arguments") and the substitution then
+                // reports `no` for every shell alive, including a correct one. That is how this
+                // check first failed against a host that had already been fixed - the probe was
+                // the broken half. It is zsh/bash syntax, which is what the default `$SHELL`
+                // is here; a `/bin/sh` configured through `config.shell` reports `no` and the
+                // brace group keeps the parse error off the child's screen.
+                let command = format!(
+                    "printf '{ENV_MARKER} term=[%s] login=[%s] cc=[%s] cli=[%s]\\n' \
+                     \"${{TERM:-none}}\" \
+                     \"$({{ [[ -o login ]] && echo yes || echo no; }} 2>/dev/null)\" \
+                     \"${{CLAUDECODE:-none}}\" \
+                     \"$(command -v claude >/dev/null 2>&1 && echo yes || echo no)\"; \
+                     seq 1 200; printf '{FILL_MARKER}\\n'\r"
+                );
                 if let Err(error) = session.send(command.as_bytes()) {
                     eprintln!("sadna: probe command refused: {error:?}");
                 }
@@ -498,6 +608,19 @@ impl InputProbe {
             }
 
             Stage::Filling => {
+                // Taken here rather than at the end: the report is one line at the top of 200,
+                // so it scrolls out of the viewport within a second of arriving.
+                if smoke.child_env.is_none() {
+                    // `%s` is what tells the ECHOED command apart from its output. An
+                    // interactive shell echoes the line it was typed, so the marker appears
+                    // twice and the first occurrence is the format string itself - a reader
+                    // that took line one would report `term=[%s]` and pass or fail on noise.
+                    smoke.child_env = session
+                        .visible_text()
+                        .lines()
+                        .find(|line| line.contains(ENV_MARKER) && !line.contains("%s"))
+                        .map(|line| line.trim().to_string());
+                }
                 // The marker, never the last number: `200` appears in the middle of the count
                 // and inside `1200` if the window is ever bigger, so it would report finished
                 // while the child is still printing.
@@ -680,7 +803,7 @@ fn dress(session: &mut ruuah_vt_host::session::Session, config: &Config) {
 /// people put `cd` and arguments in it, and the `.app` has always treated it that way. An
 /// unconfigured shell is the login `$SHELL`, spawned directly.
 fn shell_from(config: &Config) -> Command {
-    match config.shell.as_deref() {
+    let mut command = match config.shell.as_deref() {
         Some(line) if !line.trim().is_empty() => {
             let mut command = Command::new("/bin/sh");
             command.arg("-c").arg(line);
@@ -688,9 +811,38 @@ fn shell_from(config: &Config) -> Command {
         }
         _ => {
             let path = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-            Command::new(path)
+            let mut command = Command::new(path);
+            // `-l`, and the reason is narrower than it looks. A shell with a pty on stdin is
+            // INTERACTIVE already, by POSIX, so `.zshrc` was being sourced all along - that
+            // was not the missing piece and asserting it passed against the broken host. What
+            // no argument gives you is LOGIN: without it `/etc/zprofile` (which runs
+            // path_helper) and `~/.zprofile` (where homebrew's shellenv usually lives) never
+            // run at all, so the pane's PATH is whatever launched the app, and from Finder
+            // that is the bare system default.
+            command.arg("-l");
+            command
         }
-    }
+    };
+    // Everything below is the contract the C ABI host has had since slice 8
+    // (`crates/host/src/lib.rs`) and this host never got. That divergence is the exact failure
+    // the "the Swift host is the ORACLE, not the corpse" law exists to catch, and no gate
+    // compared the two until now.
+    //
+    // TERM is DECLARED, never passed through: an app launched from Finder inherits no
+    // environment, so a child handed an empty TERM finds no terminfo entry and every ncurses
+    // program exits before drawing a cell. That is what "no CLI can run" looks like from the
+    // outside, and it is invisible when the app is started from a terminal that already has one.
+    command.env("TERM", CHILD_TERM);
+    // Declared for the same reason and not merely echoed: without it a program that checks for
+    // truecolor support falls back to 256 colours in a terminal that has had 24-bit colour
+    // since slice 1.
+    command.env("COLORTERM", "truecolor");
+    // A terminal window is a SESSION BOUNDARY. Leaving these set makes an agent CLI opened in
+    // a pane believe it is a child of whatever session launched Sadna - seen live 2026-07-29,
+    // fixed in the C host, and never carried across to this one.
+    command.env_remove("CLAUDECODE");
+    command.env_remove("CLAUDE_CODE_CHILD_SESSION");
+    command
 }
 
 /// The area the canvas tiles: the window minus the chrome strip, in PHYSICAL pixels.

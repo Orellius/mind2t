@@ -16,4 +16,25 @@ cd "$root"
 # The host embeds chrome/dist at COMPILE time, so a stale bundle silently ships an old chrome.
 bun run --cwd chrome build >/dev/null
 
-exec cargo run -q -p sadna --bin sadna -- --smoke
+# Built first, then launched through a POISONED environment. Both halves matter.
+#
+# Without the poison the environment invariants pass while measuring nothing: the gate runs under
+# the operator's own terminal, so a host that simply passes its environment through hands the
+# child a perfectly good TERM and a PATH already full of tools, and the checks end up reading the
+# launching shell rather than the host. Measured - three of the four passed against a host that
+# declared nothing at all.
+#
+# The case being stood in for is a Finder launch, which inherits NOTHING. `PATH` is cut to the
+# system default (only a LOGIN shell's /etc/zprofile and ~/.zprofile put homebrew back), `TERM`
+# is set to a type with no useful terminfo, and the Claude session markers are set so a host that
+# forgets to scrub them reports them straight back.
+#
+# The build happens before the poison because cargo itself needs the real PATH.
+cargo build -q -p sadna --bin sadna
+
+exec env \
+    PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+    TERM=dumb \
+    CLAUDECODE=smoke-poison \
+    CLAUDE_CODE_CHILD_SESSION=smoke-poison \
+    ./target/debug/sadna --smoke

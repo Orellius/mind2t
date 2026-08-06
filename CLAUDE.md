@@ -274,10 +274,25 @@ is **D2b and is not built**; nothing in the app can select anything yet.
 - Six killed: `.` added to the boundary set, line selection not following a soft wrap upward,
   line selection joining upward across a hard break, the formatter keeping trailing blanks,
   the formatter emitting a newline across a soft wrap, and the history offset dropped.
-- **Rename fallout the gate caught**: after the directory moved, `cargo test --workspace`
-  failed in Tauri's build script on a generated permissions path baked with the OLD absolute
-  directory. 2,819 files under `target/` still held it. `cargo clean -p tauri -p mind2t` is the
-  fix; a plain rebuild is not, and the error names a missing file rather than a stale path.
+- **RENAMING THE DIRECTORY REQUIRES A FULL `cargo clean`, AND THE NARROW ONE IS A TRAP I FELL
+  INTO TWICE.** Measured on both renames of 2026-08-06.
+  - First rename: `cargo test --workspace` failed in Tauri's build script on a generated
+    permissions path baked with the OLD absolute directory; 2,819 files under `target/` held
+    it. That produced the note "`cargo clean -p tauri -p <product>` is the fix", which was
+    **wrong** - it described the first symptom, not the cause.
+  - Second rename, with that narrow clean applied: `ruuah-vt-abi --test differential` failed
+    with `the corpus is committed: NotFound`. **`CARGO_MANIFEST_DIR` is baked at COMPILE time**,
+    so any cached artifact still resolves paths against the old directory. Seven files in this
+    workspace bake it: `difftest/src/case.rs`, `abi/tests/differential.rs`,
+    `frame/tests/bidi_conformance.rs`, `pty/tests/keycode.rs`, `pty/tests/esctest.rs`,
+    `host/tests/shell_integration.rs`, `ghostty/build.rs`.
+  - **The tell that nearly cost the finding**: the failing test PASSED when re-run standalone
+    (that invocation rebuilt it) and failed again under `--workspace` (which reused a different
+    cached binary). "It passes now" was available and would have been false.
+  - The fix is a bare `cargo clean` and a full rebuild. It cost 53.7 GiB of artifacts and a few
+    minutes. Gates re-run from the new path afterwards: 688 / 223 of 223 / smoke 26 of 26.
+  - The errors name a MISSING FILE, never a stale path, so nothing in the message points at the
+    rename. If a gate fails right after the directory moves, clean before diagnosing.
 
 **B3.6 one window, panes on demand, `[tested]` headlessly 2026-08-06 (`b3-5-divider`).** Orel's
 call: the window opens with ONE pane like any other terminal, and **cmd+D splits it to the right**,

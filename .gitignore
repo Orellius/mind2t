@@ -1,7 +1,10 @@
 /target
 /vendor
 /swift/.build
-/web/node_modules
+# Unanchored on purpose. This read `/web/node_modules` and therefore did not cover
+# `chrome/`, so 997 files and 69 MB of chrome's dependency tree were committed and nobody
+# noticed - a path-anchored ignore only ever protects the directories somebody remembered.
+node_modules/
 # The panel document is a build product (scripts/build-web.sh), like the Rust archives.
 /web/dist
 /chrome/dist

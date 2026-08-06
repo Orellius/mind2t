@@ -208,6 +208,11 @@ unsafe fn read_snapshot(handle: GhosttyTerminal, reader: Reader) -> Snapshot {
             grid,
             history,
             damage: None,
+            // The published C ABI has no selection surface, so this side of the comparison
+            // carries none. That is a real statement about the drop-in: selection lives in
+            // libghostty-vt's own selection.h, which is a DIFFERENT header from the one this
+            // crate implements, and adding it here would claim an export we do not have.
+            selections: Vec::new(),
             title: {
                 let raw: GhosttyString = get(handle, GHOSTTY_TERMINAL_DATA_TITLE);
                 if raw.ptr.is_null() || raw.len == 0 {

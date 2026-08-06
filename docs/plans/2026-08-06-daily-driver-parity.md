@@ -49,10 +49,22 @@ push-once palette silently reverted at the first window drag.
 
 ## The ten, in order
 
+**ORDER CHANGED 2026-08-06, on measurement: D2 goes before D1.** The oracle publishes a full
+`selection.h` (14 entry points) and no search API whatsoever, so selection can be gated
+differentially and search cannot. Selection is also what a search hit is highlighted WITH, so
+nothing is lost by taking it first.
+
 1. **D1 Scrollback search.** The single most-missed feature in terminals that lack it. Ghostty's is
-   incremental and threaded over the whole scrollback (`src/terminal/search/`).
+   incremental and threaded over the whole scrollback (`src/terminal/search/`). **No oracle** -
+   the C ABI has no search surface, so its gate will be a reference implementation plus mutants,
+   which is weaker than the corpus and has to be said out loud.
 2. **D2 Selection and copy.** Click-drag, double-click word (with a word-chars notion),
    triple-click line, rectangular; cmd+C. Prerequisite for search-selection and for `copy-on-select`.
+   - **D2a the model: DONE 2026-08-06** `[tested]`, 15 corpus cases against the oracle. Word,
+     line and select-all ranges plus the clipboard text. See the repo `CLAUDE.md`.
+   - **D2b the gesture: NOT BUILT.** Click-drag, double and triple click, cmd+C, and painting
+     the highlight. Nothing in the app can select anything yet. Rectangular selection is
+     modelled (`Selection::rectangle`) and not implemented.
 3. **D3 Tabs.**
 4. **D4 Keybind configuration.** Sadna's chords are hardcoded today.
 5. **D5 Font size chords** - cmd+plus / cmd+minus / cmd+0. The C surface already has

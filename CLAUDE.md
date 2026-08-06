@@ -65,6 +65,58 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
+**D2a the selection MODEL, `[tested]` differentially 2026-08-06.** Word, line and select-all
+ranges plus the clipboard text they format to, in `crates/core/src/selection.rs`, agreeing
+with libghostty-vt on all 15 corpus cases. Gates: **675 tests / difftest 223/223 / smoke 19 of
+19**. The GUI half - click-drag, double and triple click, cmd+C, and drawing the highlight -
+is **D2b and is not built**; nothing in the app can select anything yet.
+
+- **D2 was taken before D1 on measured evidence.** The oracle publishes a whole
+  `selection.h` (1061 lines, 14 entry points) and **no search API at all**, so selection gets
+  the differential gate that has caught every defect in this project for ten slices and search
+  cannot. Selection is also what search needs to highlight a hit with, so the order is free.
+- **The harness went first, and its blind spot here was total**: `Snapshot` could not
+  represent a selected range, so a `select_word` returning the whole screen would have scored
+  a perfect MATCH on every case in the corpus. `Snapshot` gained `selections`, `Case` gained
+  `select` probes, and the 12 new cases were pinned as `diff` against a `Terminal::select`
+  that answered nothing - **seen DIFF before a line of selection was written**, then promoted
+  to `match` by the implementation. That promotion is the evidence.
+- **A selection is a QUERY, not state.** No byte stream produces one, which is why it is the
+  first thing in this corpus a case has to ASK for, and why probes run last on both sides -
+  the oracle's refs are untracked snapshots that the next mutating call invalidates.
+- **The probe point is ACTIVE-relative and the answer is ABSOLUTE**, counting from the top of
+  scrollback. Nothing in the corpus could see that seam until
+  `select-word-with-scrollback-above` was added: every other selection case runs with an empty
+  history, where the two spaces coincide exactly. A candidate that drops the offset reports a
+  word from the wrong line and passes everything else.
+- **The oracle's own doc comment is WRONG and its code is the contract.** `selectWord` says "a
+  word is exclusively whitespace or exclusively non-whitespace"; it actually tests membership
+  in a boundary SET, and `.`, `/`, `-` and `_` are not in it. So a path, a filename and a flag
+  select whole - which is the most useful thing double-click does in a terminal - while `:`,
+  `;`, `(`, `)`, `$` and `│` do bound. Ported verbatim into `Rules`, then confirmed by
+  measurement (`foo.bar` selects whole).
+- **Nine mutants run, six killed outright, and the three survivors are recorded rather than
+  quietly dropped** - two are now closed and the third stays as a correction:
+  1. A forward scan that drops the last cell of a hard line survived the ENTIRE corpus,
+     because no case had a word ending at the last column. `select-word-filling-a-whole-row`
+     (5 columns, `abcde`) closes it. Without that cell, every word that fills a line loses its
+     last character.
+  2. Treating a wide cell's spacer tail as text survived, because this core writes a tail with
+     no codepoint, so the emptiness test already answered correctly and the `SpacerTail` clause
+     was doing nothing. Closed by a unit control that builds a tail carrying text, which the
+     grid never produces and a hand-built `Row` can.
+  3. Swapping the two guards in the BACKWARD word scan changed nothing, because both of them
+     break - so their order cannot affect the answer. The comment claiming that asymmetry was
+     load-bearing was wrong and now says so. The FORWARD asymmetry is real and is pinned by
+     case 1 above.
+- Six killed: `.` added to the boundary set, line selection not following a soft wrap upward,
+  line selection joining upward across a hard break, the formatter keeping trailing blanks,
+  the formatter emitting a newline across a soft wrap, and the history offset dropped.
+- **Rename fallout the gate caught**: after the directory moved, `cargo test --workspace`
+  failed in Tauri's build script on a generated permissions path baked with the OLD absolute
+  directory. 2,819 files under `target/` still held it. `cargo clean -p tauri -p sadna` is the
+  fix; a plain rebuild is not, and the error names a missing file rather than a stale path.
+
 **B3.6 one window, panes on demand, `[tested]` headlessly 2026-08-06 (`b3-5-divider`).** Orel's
 call: the window opens with ONE pane like any other terminal, and **cmd+D splits it to the right**,
 as Ghostty does. The pre-split 1x2 canvas was B3.4 scaffolding and read as a window already in use.

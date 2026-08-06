@@ -72,6 +72,16 @@ fn main() {
         // GHOSTTY_TERMINAL_DATA_PWD and _TITLE answer through this; no allowlisted
         // function names it, so bindgen would not pull it in on its own.
         .allowlist_type("GhosttyString")
+        // Selection. The oracle for D2: word, line and select-all ranges plus the
+        // formatter that produces the clipboard text, so both halves of a selection
+        // are measured against the real thing rather than agreed with ourselves.
+        .allowlist_function("ghostty_terminal_select_(word|line|all)")
+        .allowlist_function("ghostty_terminal_selection_format_alloc")
+        .allowlist_function("ghostty_free")
+        .allowlist_type("GhosttySelection")
+        .allowlist_type("GhosttyTerminalSelect(Word|Line)Options")
+        .allowlist_type("GhosttyTerminalSelectionFormatOptions")
+        .allowlist_type("GhosttyFormatterFormat")
         .layout_tests(true)
         .generate()
         .expect("bindgen failed against the vendored libghostty-vt headers");

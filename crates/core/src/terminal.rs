@@ -11,7 +11,8 @@
 //!   restating expected cell contents here.
 
 use ruuah_vt_snapshot::{
-    Cursor, Damage, Dirty, RowSemantic, Screen as SnapshotScreen, Snapshot, Style,
+    Cursor, Damage, Dirty, Point, RowSemantic, Screen as SnapshotScreen, SelectionKind,
+    SelectionProbe, Snapshot, Style,
 };
 use unicode_width::UnicodeWidthChar;
 use vte::{Params, Perform};
@@ -72,6 +73,35 @@ impl Terminal {
 
     pub fn snapshot(&self) -> Snapshot {
         self.state.snapshot()
+    }
+
+    /// Derives one selection from a point and formats it as the clipboard would.
+    ///
+    /// `at` arrives in ACTIVE-area coordinates, because that is where a click happens, and
+    /// the range comes back in ABSOLUTE ones counting from the top of scrollback - which is
+    /// what the oracle's grid refs report and therefore what the corpus pins. The asymmetry
+    /// is deliberate and it is the thing to check first when a selection lands one screen
+    /// too high.
+    ///
+    /// This materialises the whole buffer as rows. That is the right trade for a query
+    /// driven by a human gesture and the wrong one for anything per-frame, so it is not a
+    /// path a renderer may take.
+    pub fn select(&self, kind: SelectionKind, at: Point) -> SelectionProbe {
+        let screen = self.state.screen();
+        let cols = screen.grid.cols();
+        let mut rows = screen.history.to_rows();
+        let history_len = rows.len() as u16;
+        rows.extend(screen.grid.to_rows());
+
+        let absolute = Point { x: at.x, y: at.y.saturating_add(history_len) };
+        let selection = match kind {
+            SelectionKind::Word => crate::selection::select_word(&rows, cols, absolute),
+            SelectionKind::Line => crate::selection::select_line(&rows, cols, absolute),
+            SelectionKind::All => crate::selection::select_all(&rows, cols),
+        };
+        let text = selection.map(|s| crate::selection::format(&rows, cols, &s));
+
+        SelectionProbe { kind, at, selection, text }
     }
 
     /// The active screen buffer, for a consumer that reads the grid directly.
@@ -540,6 +570,8 @@ impl State {
                 cursor: self.colors.cursor.get(),
                 palette: self.colors.palette.current.clone(),
             },
+            // Filled by the caller from its own probe list; see `Terminal::select`.
+            selections: Vec::new(),
         }
     }
 

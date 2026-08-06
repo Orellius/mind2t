@@ -12,7 +12,7 @@
 # mismatch, because a corpus that silently loses cases still reports a confident verdict
 # over whatever survived -- measured: truncating to 30 printed "30/30 met expectation"
 # and exited 0. Adding or removing a case means updating this number in the same edit.
-declared_cases = 207
+declared_cases = 223
 
 # ---------------------------------------------------------------------------
 # Expected to MATCH. These are what the slice 0 stub already implements, and they
@@ -1633,3 +1633,134 @@ name = "ris-clears-deccolm-state-but-keeps-the-width"
 expect = "match"
 bytes = "\u001B[?40h\u001B[?3h\u001Bc"
 note = "fullReset (Terminal.zig:4459) resets the mode table - modes 3 and 40 both drop - but performs NO resize, so the grid stays 132 columns wide after RIS. xterm resizes back to 80 here and esctest asserts that; we follow the oracle and lose test_RIS_ResetDECCOLM on the width half, deliberately."
+
+# ---------------------------------------------------------------------------
+# D2 SELECTION. These are the first cases in the corpus that ask a QUESTION rather
+# than only writing bytes: `select` derives a range from a point after the stream has
+# run. libghostty-vt answers through ghostty_terminal_select_word/line/all plus its
+# formatter, so word boundaries, line trimming and the clipboard text are all measured
+# against the real thing instead of agreed with ourselves.
+#
+# Every one of them is `diff` today because `Terminal::select` reports "no selectable
+# content" for everything. That is the harness being shown to SEE selection before a
+# line of it is written - the failure these produce when selection lands is the feature,
+# and each gets promoted to `match` then.
+# ---------------------------------------------------------------------------
+
+[[case]]
+name = "select-word-in-the-middle"
+expect = "match"
+bytes = "hello world"
+select = [{ kind = "word", x = 2, y = 0 }]
+note = "The simplest word selection there is: a point inside 'hello' selects 'hello' and not the line."
+
+[[case]]
+name = "select-word-at-its-last-cell"
+expect = "match"
+bytes = "hello world"
+select = [{ kind = "word", x = 4, y = 0 }]
+note = "The boundary cell belongs to the word. An off-by-one in the forward scan stops one short here and nowhere else."
+
+[[case]]
+name = "select-word-on-the-space-between-words"
+expect = "match"
+bytes = "hello world"
+select = [{ kind = "word", x = 5, y = 0 }]
+note = "Whitespace is its own run in Ghostty's rules, not a boundary that snaps to a neighbour. Measured rather than assumed - a plausible implementation returns the word to the left."
+
+[[case]]
+name = "select-word-across-punctuation"
+expect = "match"
+bytes = "foo.bar baz"
+select = [{ kind = "word", x = 1, y = 0 }]
+note = "Whether '.' bounds a word is a boundary-codepoint question with a real answer in the oracle, and it is the difference between selecting a filename and selecting its stem."
+
+[[case]]
+name = "select-word-on-a-blank-cell"
+expect = "match"
+bytes = "hi"
+select = [{ kind = "word", x = 10, y = 0 }]
+note = "MEASURED: past the text the oracle answers NO_VALUE - a blank cell has no word. Passing today only because the candidate answers nothing for everything, so it is a pin on the oracle rather than proof about us; when selection lands it becomes the case that stops a word scan from selecting a run of blanks."
+
+[[case]]
+name = "select-word-hebrew"
+expect = "match"
+bytes = "שלום עולם"
+select = [{ kind = "word", x = 1, y = 0 }]
+note = "The word rules must not be ASCII-only. Selection is logical, never visual - the range is in grid order and reordering is the renderer's business."
+
+[[case]]
+name = "select-word-wide-cell"
+expect = "match"
+bytes = "你好 world"
+select = [{ kind = "word", x = 1, y = 0 }]
+note = "MEASURED, not assumed: x=1 is the spacer tail of a wide cell and the oracle answers NO_VALUE there - a spacer tail has no word. Passing today only because the candidate answers nothing for everything; once selection lands this case demands it keeps answering nothing HERE, which is the half a word implementation gets wrong by scanning cells rather than clusters."
+
+[[case]]
+name = "select-line-simple"
+expect = "match"
+bytes = "hello world"
+select = [{ kind = "line", x = 3, y = 0 }]
+note = "A line selection covers the whole line whatever column it is asked from, trimmed of trailing blanks."
+
+[[case]]
+name = "select-line-with-trailing-blanks"
+expect = "match"
+bytes = "abc   "
+select = [{ kind = "line", x = 0, y = 0 }]
+note = "Trailing whitespace is trimmed by the line rules AND by the formatter. Two independent trims, and a range that keeps them while the text drops them is a real disagreement this case can see."
+
+[[case]]
+name = "select-line-across-a-soft-wrap"
+expect = "match"
+cols = 10
+bytes = "abcdefghijklmno"
+select = [{ kind = "line", x = 2, y = 1 }]
+note = "One logical line spanning two rows. Asked from the continuation row, the selection must reach back to the row that started it - the case a row-shaped implementation gets wrong."
+
+[[case]]
+name = "select-line-on-the-second-of-two-hard-lines"
+expect = "match"
+bytes = "one\r\ntwo"
+select = [{ kind = "line", x = 1, y = 1 }]
+note = "The mirror of the soft-wrap case: a hard line break really is a boundary, so a line selection must NOT reach back. An implementation that always joins upward passes the previous case and fails this one."
+
+[[case]]
+name = "select-all-two-lines"
+expect = "match"
+bytes = "one\r\ntwo"
+select = [{ kind = "all", x = 0, y = 0 }]
+note = "Select-all covers every selectable cell, which is not the same as every cell: the blank rows below the text are the question."
+
+[[case]]
+name = "select-all-with-scrollback"
+expect = "match"
+rows = 2
+scrollback = 100
+bytes = "one\r\ntwo\r\nthree\r\nfour"
+select = [{ kind = "all", x = 0, y = 0 }]
+note = "Whether select-all reaches into history is the whole question for a terminal with scrollback, and it decides what cmd+A gives the operator."
+
+[[case]]
+name = "two-probes-on-one-grid"
+expect = "match"
+bytes = "alpha beta"
+select = [{ kind = "word", x = 0, y = 0 }, { kind = "word", x = 7, y = 0 }]
+note = "Two probes against one grid, so the probe list is proven to be a list rather than a single hidden slot - and the paths carry their index."
+
+[[case]]
+name = "select-word-with-scrollback-above"
+expect = "match"
+rows = 2
+scrollback = 100
+bytes = "one\r\ntwo\r\nthree\r\nfour"
+select = [{ kind = "word", x = 1, y = 0 }]
+note = "The coordinate seam, and nothing else in the corpus could see it: the probe point is ACTIVE-relative (row 0 of a two-row screen) while the range comes back ABSOLUTE, counting the two rows that scrolled into history. A candidate that forgets the offset reports a word from the wrong line entirely and looks perfectly correct on every case with no scrollback - which is every other selection case here."
+
+[[case]]
+name = "select-word-filling-a-whole-row"
+expect = "match"
+cols = 5
+bytes = "abcde"
+select = [{ kind = "word", x = 1, y = 0 }]
+note = "The word ends exactly at the last column of a row that does not soft-wrap. That cell BELONGS to the word, and it is the one place the forward scan takes its inclusive branch - a scan that returns the previous cell there loses the last character of every word that fills a line, and every other case in this corpus stays green. Added after a mutant with that exact shape survived the whole corpus."

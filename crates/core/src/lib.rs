@@ -30,6 +30,7 @@ pub mod reflow;
 mod replies;
 pub mod resize;
 pub mod screen;
+pub mod selection;
 mod semantic;
 pub mod sgr;
 mod sixel;

@@ -77,6 +77,8 @@ pub fn diff(oracle: &Snapshot, candidate: &Snapshot) -> Vec<Difference> {
         ));
     }
 
+    diff_selections(oracle, candidate, &mut out);
+
     // The OSC colour state. Dynamic colours first, then the palette entry by entry --
     // one difference per index, so a case that overrides index 1 and a wholesale
     // default-table drift read differently in the report.
@@ -239,6 +241,98 @@ pub fn diff(oracle: &Snapshot, candidate: &Snapshot) -> Vec<Difference> {
 /// Only when both sides observed it. A case that does not ask for damage leaves `None` on
 /// both, and one that does gets it from both, so a mismatch here is a real disagreement
 /// rather than a case half-configured.
+/// Compares the selection probes elementwise.
+///
+/// Each probe yields up to four independent paths - both endpoints, the rectangle flag
+/// and the text - because they fail independently. In particular a range can be exactly
+/// right while the text is wrong: the trailing-whitespace and soft-wrap rules live in the
+/// formatter, not in the range, and the text is the half that reaches the clipboard.
+fn diff_selections(oracle: &Snapshot, candidate: &Snapshot, out: &mut Vec<Difference>) {
+    if oracle.selections.len() != candidate.selections.len() {
+        out.push(Difference::new(
+            "selections.len",
+            oracle.selections.len(),
+            candidate.selections.len(),
+        ));
+        return;
+    }
+
+    for (i, (o, c)) in oracle.selections.iter().zip(candidate.selections.iter()).enumerate() {
+        if o.kind != c.kind || o.at != c.at {
+            // Both sides answer the same probe list, so this is a harness bug rather than a
+            // terminal disagreement. Reported instead of asserted: a panic here would take
+            // down a corpus run that is otherwise producing useful results.
+            out.push(Difference::new(
+                &format!("selection[{i}].probe"),
+                format!("{:?}@{},{}", o.kind, o.at.x, o.at.y),
+                format!("{:?}@{},{}", c.kind, c.at.x, c.at.y),
+            ));
+            continue;
+        }
+
+        let path = format!("selection[{i}]");
+        match (&o.selection, &c.selection) {
+            (Some(os), Some(cs)) => {
+                if os.start != cs.start {
+                    out.push(Difference::new(
+                        &format!("{path}.start"),
+                        format!("{},{}", os.start.x, os.start.y),
+                        format!("{},{}", cs.start.x, cs.start.y),
+                    ));
+                }
+                if os.end != cs.end {
+                    out.push(Difference::new(
+                        &format!("{path}.end"),
+                        format!("{},{}", os.end.x, os.end.y),
+                        format!("{},{}", cs.end.x, cs.end.y),
+                    ));
+                }
+                if os.rectangle != cs.rectangle {
+                    out.push(Difference::new(
+                        &format!("{path}.rectangle"),
+                        os.rectangle,
+                        cs.rectangle,
+                    ));
+                }
+            }
+            // Both sides reporting "no selectable content" is AGREEMENT, and it is a real
+            // answer rather than a hole: the oracle returns GHOSTTY_NO_VALUE for a blank
+            // cell and for the spacer tail of a wide cell. Found by this comparison's own
+            // first corpus run, which reported `oracle=none candidate=none` as a difference.
+            (None, None) => {}
+            // "No selectable content" against a range is the disagreement that matters most
+            // here: it is what a missing implementation looks like from the outside.
+            (o_sel, c_sel) => out.push(Difference::new(
+                &format!("{path}.selection"),
+                describe_selection(o_sel.as_ref()),
+                describe_selection(c_sel.as_ref()),
+            )),
+        }
+
+        if o.text != c.text {
+            out.push(Difference::new(
+                &format!("{path}.text"),
+                o.text.as_deref().map(quote).unwrap_or_else(|| "none".into()),
+                c.text.as_deref().map(quote).unwrap_or_else(|| "none".into()),
+            ));
+        }
+    }
+}
+
+fn describe_selection(selection: Option<&crate::grid::Selection>) -> String {
+    match selection {
+        None => "none".into(),
+        Some(s) => format!(
+            "{},{}..{},{}{}",
+            s.start.x,
+            s.start.y,
+            s.end.x,
+            s.end.y,
+            if s.rectangle { " rect" } else { "" }
+        ),
+    }
+}
+
 fn diff_damage(oracle: &Snapshot, candidate: &Snapshot, out: &mut Vec<Difference>) {
     let (Some(o), Some(c)) = (&oracle.damage, &candidate.damage) else {
         if oracle.damage.is_some() != candidate.damage.is_some() {
@@ -397,8 +491,8 @@ fn quote(text: &str) -> String {
 mod tests {
     use super::*;
     use crate::grid::{
-        Color, Cursor, Damage, Dirty, RowSemantic, Screen, Semantic, Underline, Wide,
-        describe_color,
+        Color, Cursor, Damage, Dirty, Point, RowSemantic, Screen, Selection, SelectionKind,
+        SelectionProbe, Semantic, Underline, Wide, describe_color,
     };
 
     fn snapshot(cols: u16, rows: u16) -> Snapshot {
@@ -427,6 +521,7 @@ mod tests {
             pwd: Vec::new(),
             colors: crate::grid::Colors::default(),
             title: String::new(),
+            selections: Vec::new(),
         }
     }
 
@@ -923,6 +1018,129 @@ mod tests {
 
         let found = diff(&a, &b);
         assert_eq!(found[0].candidate, "'\\u{05d0}'");
+    }
+
+    // The selection controls. Ten of the 24 comparisons in this file once had no test that
+    // failed when the comparison was deleted, and because most corpus cases expect MATCH,
+    // deleting a comparison only ever made more snapshots agree. Each of these fails if its
+    // arm is removed from `diff_selections`, which is the only thing that makes a green
+    // selection corpus mean anything.
+
+    fn probe(kind: SelectionKind, at: (u16, u16)) -> SelectionProbe {
+        SelectionProbe {
+            kind,
+            at: Point { x: at.0, y: at.1 },
+            selection: Some(Selection {
+                start: Point { x: 0, y: 0 },
+                end: Point { x: 4, y: 0 },
+                rectangle: false,
+            }),
+            text: Some("hello".into()),
+        }
+    }
+
+    #[test]
+    fn identical_selection_probes_are_not_reported() {
+        let mut a = snapshot(8, 2);
+        a.selections = vec![probe(SelectionKind::Word, (2, 0))];
+        let b = a.clone();
+
+        assert!(diff(&a, &b).is_empty());
+    }
+
+    #[test]
+    fn a_selection_range_that_moved_is_reported() {
+        let mut a = snapshot(8, 2);
+        a.selections = vec![probe(SelectionKind::Word, (2, 0))];
+        let mut b = a.clone();
+        b.selections[0].selection.as_mut().unwrap().end.x = 5;
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "selection[0].end");
+        assert_eq!(found[0].oracle, "4,0");
+        assert_eq!(found[0].candidate, "5,0");
+    }
+
+    /// The defect a range-only comparison cannot see: the same cells, formatted by a
+    /// different trailing-whitespace rule. The text is what reaches the clipboard.
+    #[test]
+    fn a_correct_range_with_the_wrong_text_is_still_reported() {
+        let mut a = snapshot(8, 2);
+        a.selections = vec![probe(SelectionKind::Word, (2, 0))];
+        let mut b = a.clone();
+        b.selections[0].text = Some("hello   ".into());
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "selection[0].text");
+        assert_eq!(found[0].candidate, "'hello   '");
+    }
+
+    /// What a missing implementation looks like from the outside, and the shape the first
+    /// run of every new selection corpus case produces.
+    #[test]
+    fn no_selection_against_a_range_is_reported() {
+        let mut a = snapshot(8, 2);
+        a.selections = vec![probe(SelectionKind::Word, (2, 0))];
+        let mut b = a.clone();
+        b.selections[0].selection = None;
+        b.selections[0].text = None;
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found[0].path, "selection[0].selection");
+        assert_eq!(found[0].oracle, "0,0..4,0");
+        assert_eq!(found[0].candidate, "none");
+        assert_eq!(found[1].path, "selection[0].text");
+    }
+
+    /// Agreement on "there is nothing selectable here" is agreement. The oracle really does
+    /// answer that for a blank cell and for the spacer tail of a wide cell, so treating it
+    /// as a difference made two honest corpus cases unpassable.
+    #[test]
+    fn both_sides_finding_nothing_selectable_is_not_a_difference() {
+        let mut a = snapshot(8, 2);
+        a.selections = vec![SelectionProbe {
+            kind: SelectionKind::Word,
+            at: Point { x: 7, y: 1 },
+            selection: None,
+            text: None,
+        }];
+        let b = a.clone();
+
+        assert!(diff(&a, &b).is_empty());
+    }
+
+    #[test]
+    fn a_rectangle_flag_that_flipped_is_reported() {
+        let mut a = snapshot(8, 2);
+        a.selections = vec![probe(SelectionKind::Line, (0, 1))];
+        let mut b = a.clone();
+        b.selections[0].selection.as_mut().unwrap().rectangle = true;
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "selection[0].rectangle");
+    }
+
+    /// Both sides are handed the same probe list, so a mismatch here is a harness fault.
+    /// It is reported rather than asserted: a panic would take down a corpus run that is
+    /// otherwise producing usable results.
+    #[test]
+    fn probes_that_do_not_line_up_are_reported_as_a_harness_fault() {
+        let mut a = snapshot(8, 2);
+        a.selections = vec![probe(SelectionKind::Word, (2, 0))];
+        let mut b = a.clone();
+        b.selections[0].kind = SelectionKind::Line;
+
+        let found = diff(&a, &b);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "selection[0].probe");
+
+        let mut c = a.clone();
+        c.selections.clear();
+        assert_eq!(diff(&a, &c)[0].path, "selections.len");
     }
 
     #[test]

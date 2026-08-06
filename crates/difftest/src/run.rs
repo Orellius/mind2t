@@ -132,6 +132,15 @@ pub fn run(case: &Case) -> Result<Outcome, RunError> {
         oracle.damage = Some(state.damage().map_err(oracle_error(case))?);
     }
 
+    // The probes run LAST on each side, after every write and resize, because the oracle's
+    // selection refs are untracked snapshots invalidated by the next mutating call.
+    for probe in &case.select {
+        let (kind, at) = probe.resolve();
+        oracle
+            .selections
+            .push(oracle_terminal.select(kind, at).map_err(oracle_error(case))?);
+    }
+
     let mut candidate_terminal = ruuah_vt_core::Terminal::with_scrollback(case.cols, case.rows, case.scrollback);
     candidate_terminal.write(bytes);
     if let Some(resize) = case.resize {
@@ -144,6 +153,10 @@ pub fn run(case: &Case) -> Result<Outcome, RunError> {
     let mut candidate = candidate_terminal.snapshot();
     if case.damage {
         candidate.damage = candidate_terminal.damage();
+    }
+    for probe in &case.select {
+        let (kind, at) = probe.resolve();
+        candidate.selections.push(candidate_terminal.select(kind, at));
     }
 
     let differences = diff(&oracle, &candidate);
@@ -198,6 +211,7 @@ mod tests {
             resize: None,
             after: String::new(),
             damage: false,
+            select: Vec::new(),
             note: String::new(),
             diff_paths: Some(pinned.iter().map(|p| (*p).to_string()).collect()),
         }

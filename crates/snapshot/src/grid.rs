@@ -155,7 +155,7 @@ pub struct Damage {
 /// Terminal modes that leave no trace on the grid.
 ///
 /// A mode like bracketed paste changes only what the HOST writes to the pty, so a core
-/// that ignores it entirely scores a perfect match on every grid comparison — which is
+/// that ignores it entirely scores a perfect match on every grid comparison - which is
 /// exactly the blind-spot shape every slice has hit. These are compared as state, not
 /// as behaviour, because there is no behaviour inside the core to compare.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -354,6 +354,62 @@ pub fn default_palette() -> Vec<Rgb> {
     palette
 }
 
+/// A point in the active screen's coordinate space, `(0, 0)` at the top left.
+///
+/// Deliberately viewport-relative rather than absolute: every corpus case addresses the
+/// active area, and an absolute point would silently change meaning the moment a case
+/// scrolls. Scrollback selection is a later observable and will need its own point space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Point {
+    pub x: u16,
+    pub y: u16,
+}
+
+/// Which selection a probe asked the terminal to derive.
+///
+/// One variant per oracle entry point, so a probe names a real API rather than a
+/// behaviour someone hopes both sides implement the same way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectionKind {
+    /// `ghostty_terminal_select_word` - the word under a point.
+    Word,
+    /// `ghostty_terminal_select_line` - the logical line under a point, trimmed.
+    Line,
+    /// `ghostty_terminal_select_all` - every selectable cell. Ignores the probe's point.
+    All,
+}
+
+/// A resolved selection range, inclusive at both ends.
+///
+/// `start` may lie after `end` in terminal order: the oracle keeps the endpoints in the
+/// order the gesture produced them and exposes the ordering separately, so normalising
+/// here would hide a real disagreement about which end is which.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Selection {
+    pub start: Point,
+    pub end: Point,
+    pub rectangle: bool,
+}
+
+/// One selection probe and everything it produced.
+///
+/// The text is carried beside the range because the two can disagree independently: a
+/// correct range formatted with the wrong trailing-whitespace rule is exactly the defect
+/// a range-only comparison cannot see, and it is the half the operator actually pastes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionProbe {
+    pub kind: SelectionKind,
+    /// Where the probe was taken. Meaningless for `All`, recorded anyway so a probe
+    /// identifies itself in a difference path without an index lookup.
+    pub at: Point,
+    /// `None` means the API reported no selectable content, which is a real answer and
+    /// not an error - a word probe on a blank cell produces it.
+    pub selection: Option<Selection>,
+    /// The clipboard text for that range: plain, unwrapped, trailing whitespace trimmed,
+    /// which is the combination the oracle documents as matching its own copy behaviour.
+    pub text: Option<String>,
+}
+
 /// The full observable state of a terminal at one instant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snapshot {
@@ -390,6 +446,13 @@ pub struct Snapshot {
     /// oracle surface and is deliberately absent here rather than compared against
     /// a value the other side cannot hold.
     pub title: String,
+    /// The selection probes the case asked for, in the order it asked for them.
+    ///
+    /// Empty on both sides for every case that asks for none, which is how the whole
+    /// pre-selection corpus stays untouched. Unlike the rest of this struct these are
+    /// QUERIES rather than state: a selection is derived on demand from a point, so it
+    /// cannot be observed by writing bytes and looking at the grid.
+    pub selections: Vec<SelectionProbe>,
 }
 
 impl Style {

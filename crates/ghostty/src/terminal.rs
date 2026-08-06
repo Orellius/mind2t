@@ -11,7 +11,10 @@
 use std::ffi::c_void;
 use std::mem;
 
-use ruuah_vt_snapshot::{Cell, Color, Colors, Cursor, Modes, Rgb, Row, Screen, Snapshot, Style};
+use ruuah_vt_snapshot::{
+    Cell, Color, Colors, Cursor, Modes, Point, Rgb, Row, Screen, Selection, SelectionKind,
+    SelectionProbe, Snapshot, Style,
+};
 
 use crate::convert::{convert_row_semantic, convert_semantic, convert_style, convert_wide};
 use crate::sys;
@@ -165,6 +168,10 @@ impl Terminal {
                     .into_owned()
                 }
             },
+            // Probes are appended by the caller after the snapshot is taken: they are
+            // queries against a point, not state a write produces, and only the case
+            // knows which points it wants.
+            selections: Vec::new(),
         })
     }
 
@@ -446,6 +453,101 @@ impl Terminal {
         }
 
         Ok(style)
+    }
+
+    /// Derives one selection and formats it, exactly as a copy would.
+    ///
+    /// `GHOSTTY_NO_VALUE` is a real answer here and not an error: a word probe on a blank
+    /// cell produces it, and folding it into the error path would make half the interesting
+    /// cases unrunnable. It maps to `None`, which is also what an unimplemented candidate
+    /// reports - so the corpus sees "no selectable content" against a range as a difference
+    /// rather than as a crash.
+    ///
+    /// The format options are plain / unwrap / trim, which `selection.h` documents as the
+    /// combination matching Ghostty's own `Screen.selectionString()` - the clipboard.
+    pub fn select(
+        &self,
+        kind: SelectionKind,
+        at: Point,
+    ) -> Result<SelectionProbe, Error> {
+        let mut raw: sys::GhosttySelection = unsafe { mem::zeroed() };
+        raw.size = mem::size_of::<sys::GhosttySelection>();
+
+        let code = match kind {
+            SelectionKind::Word => {
+                let mut options: sys::GhosttyTerminalSelectWordOptions = unsafe { mem::zeroed() };
+                options.size = mem::size_of::<sys::GhosttyTerminalSelectWordOptions>();
+                options.ref_ = self.grid_ref_at(
+                    sys::GhosttyPointTag_GHOSTTY_POINT_TAG_ACTIVE,
+                    at.x,
+                    u32::from(at.y),
+                )?;
+                unsafe { sys::ghostty_terminal_select_word(self.raw, &options, &mut raw) }
+            }
+            SelectionKind::Line => {
+                let mut options: sys::GhosttyTerminalSelectLineOptions = unsafe { mem::zeroed() };
+                options.size = mem::size_of::<sys::GhosttyTerminalSelectLineOptions>();
+                options.ref_ = self.grid_ref_at(
+                    sys::GhosttyPointTag_GHOSTTY_POINT_TAG_ACTIVE,
+                    at.x,
+                    u32::from(at.y),
+                )?;
+                options.semantic_prompt_boundary = true;
+                unsafe { sys::ghostty_terminal_select_line(self.raw, &options, &mut raw) }
+            }
+            SelectionKind::All => unsafe { sys::ghostty_terminal_select_all(self.raw, &mut raw) },
+        };
+
+        if code == sys::GhosttyResult_GHOSTTY_NO_VALUE {
+            return Ok(SelectionProbe { kind, at, selection: None, text: None });
+        }
+        check("ghostty_terminal_select_*", code)?;
+
+        let selection = Selection {
+            start: Point { x: raw.start.x, y: raw.start.y },
+            end: Point { x: raw.end.x, y: raw.end.y },
+            rectangle: raw.rectangle,
+        };
+        let text = self.format_selection(&raw)?;
+        Ok(SelectionProbe { kind, at, selection: Some(selection), text })
+    }
+
+    /// The clipboard text for a selection snapshot.
+    ///
+    /// The buffer comes from the library's own allocator and is freed with `ghostty_free`
+    /// on every path, including the lossy-UTF8 one: the bytes are not NUL-terminated and
+    /// are not ours to keep.
+    fn format_selection(&self, raw: &sys::GhosttySelection) -> Result<Option<String>, Error> {
+        let mut options: sys::GhosttyTerminalSelectionFormatOptions = unsafe { mem::zeroed() };
+        options.size = mem::size_of::<sys::GhosttyTerminalSelectionFormatOptions>();
+        options.emit = sys::GhosttyFormatterFormat_GHOSTTY_FORMATTER_FORMAT_PLAIN;
+        options.unwrap = true;
+        options.trim = true;
+        options.selection = raw;
+
+        let mut ptr: *mut u8 = std::ptr::null_mut();
+        let mut len: usize = 0;
+        let code = unsafe {
+            sys::ghostty_terminal_selection_format_alloc(
+                self.raw,
+                std::ptr::null(),
+                options,
+                &mut ptr,
+                &mut len,
+            )
+        };
+        if code == sys::GhosttyResult_GHOSTTY_NO_VALUE {
+            return Ok(None);
+        }
+        check("ghostty_terminal_selection_format_alloc", code)?;
+        if ptr.is_null() || len == 0 {
+            return Ok(Some(String::new()));
+        }
+
+        let text =
+            String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(ptr, len) }).into_owned();
+        unsafe { sys::ghostty_free(std::ptr::null(), ptr, len) };
+        Ok(Some(text))
     }
 
     fn grid_ref_at(

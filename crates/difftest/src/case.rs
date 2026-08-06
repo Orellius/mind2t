@@ -78,6 +78,46 @@ pub struct Resize {
     pub rows: u16,
 }
 
+/// One selection to derive after the stream has been written, and where from.
+///
+/// A selection is a QUERY, not state: no byte stream causes one, so unlike everything else
+/// in a case it has to be asked for. That is why it is a list on the case rather than a
+/// field on the snapshot - the same grid answers as many probes as the case wants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct Select {
+    /// `word`, `line` or `all`.
+    pub kind: SelectKind,
+    /// Column, in the active area. Ignored by `all`.
+    #[serde(default)]
+    pub x: u16,
+    /// Row, in the active area. Ignored by `all`.
+    #[serde(default)]
+    pub y: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SelectKind {
+    Word,
+    Line,
+    All,
+}
+
+impl Select {
+    /// The probe in the vocabulary both implementations speak.
+    ///
+    /// The corpus type stays separate from the snapshot type so the TOML spelling can change
+    /// without touching either terminal, and neither terminal has to depend on the corpus.
+    pub fn resolve(self) -> (ruuah_vt_snapshot::SelectionKind, ruuah_vt_snapshot::Point) {
+        let kind = match self.kind {
+            SelectKind::Word => ruuah_vt_snapshot::SelectionKind::Word,
+            SelectKind::Line => ruuah_vt_snapshot::SelectionKind::Line,
+            SelectKind::All => ruuah_vt_snapshot::SelectionKind::All,
+        };
+        (kind, ruuah_vt_snapshot::Point { x: self.x, y: self.y })
+    }
+}
+
 /// One byte stream, the geometry to run it at, and its expected verdict.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Case {
@@ -108,6 +148,12 @@ pub struct Case {
     /// reported is exactly what `after` changed.
     #[serde(default)]
     pub damage: bool,
+    /// Selections to derive once the stream, any resize and `after` have been applied.
+    ///
+    /// Empty for every case written before selection existed, which is how the rest of the
+    /// corpus stays untouched: both sides report an empty probe list and compare equal.
+    #[serde(default)]
+    pub select: Vec<Select>,
     /// Why this case exists, in one line. Shown in the report.
     #[serde(default)]
     pub note: String,

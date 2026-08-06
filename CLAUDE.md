@@ -94,19 +94,50 @@ markers since slice 8. Nothing compared the two. Gate is now **23 invariants**.
 - **A terminal window is a session boundary**: `CLAUDECODE` and `CLAUDE_CODE_CHILD_SESSION`
   are scrubbed, so an agent CLI opened in a pane is a fresh session rather than a child of
   whatever launched Sadna. Found live 2026-07-29, fixed in the C host, never carried here.
-- Seen red both ways: the three environment invariants fail against the pre-fix `shell_from`
-  and pass after it, with the poisoned environment in place.
+- Seen red both ways: reverting `-l`, the `TERM` declaration and the scrub makes the gate print
+  `term dumb | login no | cc smoke-poison` and fail three checks; the fix makes it print
+  `term xterm-256color | login yes | cc none`. **The gate prints the values it read**, because a
+  failing environment check is unreadable without them.
+- **The CLI check does NOT discriminate under the gate, and the code says so.** It reports `cli
+  yes` even against the fully reverted host, because the pane's shell is interactive whatever
+  the host does and `.zshrc` puts the tool back on `PATH`. It can only fail in the Finder case
+  it stands in for. The three beside it are what actually proved the fix (SCAR-004: a check that
+  cannot be seen to fail is not evidence).
+- **Two harness bugs, both found by the gate failing on a run where only the app icon had
+  changed** - and both would have made it lie rather than error:
+  1. `visible_text().contains(FILL_MARKER)` matched the **echoed command line**. An interactive
+     shell echoes what it was typed, so the marker was on screen before the child ran anything,
+     the stage advanced instantly, and all four checks failed against a correct host. The
+     environment report is now the completion signal, and `%s` is what tells a real line from
+     the echoed format string.
+  2. The report was one line carrying four fields, and **a pane during the gate is about 46
+     columns** because the window is split. It wrapped; the capture read `cc=` and nothing after
+     it. One field per line now.
 
-**The app mark was redrawn, 2026-08-06** (`assets/icon/sadna.svg`, the source; the 1024 PNG and
-`crates/sadna/icons/icon.png` are generated from it with `rsvg-convert`). It is a prompt chevron
-aimed **left** with the block cursor to its left - where a cursor sits on a right-to-left line.
-Every terminal icon in the Dock is a `>` and a block; this is the mirror, and the mirror is the
-product claim. Colours are the terminal's own, measured from `crates/render/src/color.rs`
-(#0d0d0d ground, #ffffff ink, #f0c674 cursor = palette index 3), replacing a blue-grey plate and
-amber caret that belonged to no theme this terminal ships. Two attempts were discarded at 32px,
-which is the only size worth judging at: a ס-as-ring version read as a record button, and the
-first chevron fused with the cursor into one blob because the gap was 44 units instead of 128.
-**The LOOK is `[untested - needs your eyes]`** - aesthetics are Orel's verdict, never mine.
+**The app mark was redrawn, 2026-08-06, and Orel picked it** (`assets/icon/sadna.svg` is the
+source; `sadna-1024.png` and `crates/sadna/icons/icon.png` are generated from it with
+`rsvg-convert` - regenerate BOTH after any edit, nothing does it automatically). A
+cabinet-maker's screwdriver on the diagonal, with the RTL prompt `_<` on the counter-diagonal.
+
+- **Colours are the terminal's own**, measured from `crates/render/src/color.rs`: #0d0d0d
+  ground, #f0c674 handle (palette index 3), steel cool and desaturated so it separates without
+  adding a third hue. The prompt is built from those same two materials rather than new ones.
+  The mark it replaced was a blue-grey plate with an amber caret, belonging to no theme this
+  terminal ships.
+- **The tool is a bezier silhouette, not stacked rectangles.** Four rounded rects rotated
+  together is what the first three attempts were and it is why they read as a toy: a driver's
+  handle swells past the ferrule and flares at the butt, and that curve is the whole reason the
+  object is recognisable. Proportion is the other half - handle about 2.4:1, shaft plus blade
+  longer than the handle. A fat handle over a short shaft read as food at 32.
+- **One light source, upper left**, held across handle crescent, shaft specular and ferrule
+  bevel. Disagreeing highlights are what make an icon feel wrong before anyone can name why.
+- **Judge every icon change at 32px.** Four versions died there while looking fine at 1024: ס
+  drawn as a ring read as a record button; a chevron and cursor 44 units apart fused into one
+  blob; a screwdriver assembled from rects lost its blade entirely; and the prompt tucked 22
+  units off the plate edge read as falling out of the icon. `rsvg-convert -w 32` then
+  `magick -filter point -resize 900%` is how to see it.
+- **Two elements is the ceiling**, and only with real separation - 74 units between cursor and
+  chevron here, and the prompt placed where the tool never crosses.
 
 **D2a the selection MODEL, `[tested]` differentially 2026-08-06.** Word, line and select-all
 ranges plus the clipboard text they format to, in `crates/core/src/selection.rs`, agreeing

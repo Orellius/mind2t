@@ -1,68 +1,142 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <!--
-    Sadna (סדנה, workshop) - the app mark. 2026-08-06.
+    Sadna (סדנה, workshop) - the app mark.
 
-    WHAT IT IS: a prompt, pointing the other way. A chevron aimed LEFT with the block cursor
-    sitting to its left, which is where a cursor sits on a right-to-left line. Every terminal
-    icon in the Dock is a `>` and a block; this one is the mirror of that, and the mirror is
-    the whole product claim - Ghostty has no bidi at all, and Hebrew is why this exists.
+    A cabinet-maker's screwdriver, drawn as a silhouette rather than assembled from rectangles.
+    The earlier attempts stacked four rounded rects and rotated them, which is why they read as
+    a toy: a real driver's handle is a tapered lozenge that swells past the ferrule and flares
+    again at the butt, and that curve is the entire reason the object is recognisable at any
+    size. It is one bezier outline here.
 
-    WHY NOT THE LETTER. The version before this drew ס (samekh, the first letter of סדנה) as a
-    rounded ring with the caret in its counter. Rendered at 32 it did not read as a Hebrew
-    letter to anyone who was not told; it read as a record button. A mark that needs a caption
-    has failed, so the letter is gone and the direction carries the meaning instead.
+    Proportion is the second half of it. The handle is roughly 2.4 times as long as it is wide
+    and the shaft plus blade are longer than the handle - a fatter handle over a short shaft is
+    what made the first drawn version read as a vegetable at 32 pixels rather than as a tool.
 
-    THE COLOURS ARE THE PRODUCT'S OWN, measured from `crates/render/src/color.rs`: ground
-    #0d0d0d and ink #ffffff, the operator's 2026-07-29 call of "near-black ground, pure white
-    ink, the sixteen stay vivid". The cursor is #f0c674, palette index 3 of that same scheme.
-    The first mark used a blue-grey plate and an amber caret, which belonged to no theme this
-    terminal ships.
+    The colours are the terminal's own, measured from `crates/render/src/color.rs`: ground
+    #0d0d0d, and the handle is palette index 3 (#f0c674) with its own shading rather than a flat
+    fill. Steel is cool and desaturated so it separates from the handle without introducing a
+    third hue.
 
-    JUDGE IT AT 32 PIXELS - the size the Dock and the switcher actually draw, and the size at
-    which the previous two attempts failed. The chevron stroke is 104/1024, a little over three
-    device pixels there; the cursor is 152 wide so it stays a block rather than a speck. The GAP between the
-    cursor and the chevron is 128 units, four device pixels at 32 - the first attempt left 44 and
-    the two shapes fused into one blob shaped like a bowtie.
+    One light source, upper left, and it is consistent across all four parts: the handle's
+    highlight, the shaft's specular stripe and the ferrule's top bevel all sit on the same side.
+    An icon whose highlights disagree looks wrong before anyone can say why.
+
+    Judged at 32, which is what the Dock draws. The tool runs corner to corner because a
+    diagonal buys about 40 percent more length than an axis-aligned one, and length is what
+    keeps the shaft visible when each pixel is 32 design units.
   -->
   <defs>
-    <!-- The terminal's own ground, lifted at the top so the plate has a light source without
-         becoming a different colour. -->
     <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#1c1c1c"/>
       <stop offset="1" stop-color="#0d0d0d"/>
     </linearGradient>
-    <!-- The hairline every macOS icon carries: bright at the top, gone by the middle. Without
-         it the plate has no edge against a dark Dock. -->
     <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#ffffff" stop-opacity="0.24"/>
       <stop offset="0.45" stop-color="#ffffff" stop-opacity="0.05"/>
       <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
-    <linearGradient id="ink" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="1" stop-color="#e2e2e2"/>
+
+    <!-- Handle: lit from the upper left, so the gradient runs across the tool's short axis. -->
+    <linearGradient id="wood" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f8dda2"/>
+      <stop offset="0.42" stop-color="#f0c674"/>
+      <stop offset="1" stop-color="#c9973f"/>
+    </linearGradient>
+    <!-- Steel: brightest just above the centre line, which is where a cylinder's specular sits. -->
+    <linearGradient id="steel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#b9c2cc"/>
+      <stop offset="0.34" stop-color="#f6f8fa"/>
+      <stop offset="0.62" stop-color="#d2d9e0"/>
+      <stop offset="1" stop-color="#8d959e"/>
+    </linearGradient>
+    <linearGradient id="collar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e0b168"/>
+      <stop offset="0.5" stop-color="#b8863a"/>
+      <stop offset="1" stop-color="#8a6228"/>
     </linearGradient>
   </defs>
 
-  <!-- The plate. macOS masks its own corners on the iconset, so this radius only matters where
-       the mark is shown unmasked - which the README and the release page both do. -->
   <rect x="64" y="64" width="896" height="896" rx="200" ry="200" fill="url(#ground)"/>
   <rect x="65" y="65" width="894" height="894" rx="199" ry="199"
         fill="none" stroke="url(#rim)" stroke-width="2"/>
 
   <!--
-    The chevron, aimed left. Drawn as a stroked polyline with round joins so it keeps its weight
-    when the whole mark is downsampled; a filled arrowhead goes muddy at 32 because its point is
-    thinner than a pixel.
+    The tool. Drawn pointing LEFT along y=512 and rotated as one group, so every part shares an
+    axis by construction and the angle is a single number to change.
   -->
-  <polyline points="708,342 508,512 708,682"
-            fill="none" stroke="url(#ink)" stroke-width="98"
-            stroke-linecap="round" stroke-linejoin="round"/>
+  <g transform="rotate(-38 512 512)">
+    <!-- A contact shadow: the same shapes, offset down and right, at low opacity. Enough to lift
+         the tool off a near-black ground without becoming a glow. -->
+    <g opacity="0.5" transform="translate(12 18)">
+      <path d="M212 492 L136 474 L112 474 L112 552 L136 552 L212 534 Z" fill="#000000"/>
+      <rect x="196" y="491" width="326" height="44" rx="13" fill="#000000"/>
+      <path d="M516 470 C592 440 668 428 742 432 C816 436 866 452 884 476
+               C898 496 898 528 884 548 C866 572 816 588 742 592
+               C668 596 592 584 516 554 Z" fill="#000000"/>
+    </g>
+
+    <!-- Blade. Flat-head: it widens as it leaves the shaft and ends square, which is the shape
+         that stops the tip reading as a nail or a pen. -->
+    <path d="M212 492 L136 474 L112 474 L112 552 L136 552 L212 534 Z" fill="url(#steel)"/>
+
+    <!-- Shaft. -->
+    <rect x="196" y="491" width="326" height="44" rx="13" fill="url(#steel)"/>
+    <!-- The specular stripe. One thin line at the same height as the gradient's brightest band,
+         which is what makes a flat rectangle read as a round bar. -->
+    <rect x="212" y="500" width="296" height="8" rx="4" fill="#ffffff" fill-opacity="0.55"/>
+
+    <!-- Ferrule, sitting over the joint so the shaft appears to enter the handle rather than
+         stop against it. -->
+    <path d="M498 474 C516 474 528 478 532 484 L532 540 C528 546 516 550 498 550 Z"
+          fill="url(#collar)"/>
+    <rect x="498" y="478" width="34" height="7" rx="3" fill="#ffffff" fill-opacity="0.35"/>
+
+    <!-- Handle: one outline. Swells past the ferrule, runs long, flares at the butt. -->
+    <path d="M516 470
+             C592 440 668 428 742 432
+             C816 436 866 452 884 476
+             C898 496 898 528 884 548
+             C866 572 816 588 742 592
+             C668 596 592 584 516 554 Z"
+          fill="url(#wood)"/>
+
+    <!-- The grip flutes. Three, following the handle's own curve, and drawn as darker strokes
+         rather than filled bars so they never look like stripes painted on. -->
+    <g stroke="#a97c30" stroke-opacity="0.42" stroke-width="15" stroke-linecap="round" fill="none">
+      <path d="M622 448 C614 486 614 538 622 576"/>
+      <path d="M706 442 C698 484 698 540 706 582"/>
+      <path d="M790 448 C784 486 784 538 790 576"/>
+    </g>
+
+    <!-- The handle's own highlight: a crescent along the lit edge, fading out before the butt
+         so it reads as a curved surface rather than as an outline. -->
+    <path d="M546 486 C616 458 690 446 756 450 C702 458 640 472 588 496 Z"
+          fill="#ffffff" fill-opacity="0.34"/>
+  </g>
 
   <!--
-    The block cursor, LEFT of the chevron - the position that only makes sense on an RTL line,
-    and the entire point of the mark. Cell-shaped rather than square, so it reads as a terminal
-    cursor and not as a bullet.
+    The prompt, `_<`, in the corner the tool leaves empty.
+
+    Read right to left, which is the whole point: the chevron aims LEFT and the cursor sits to
+    its left, where a cursor sits on a Hebrew line. Every terminal icon in the Dock is a `>` and
+    a block; this is the mirror of that, and the mirror is the product claim - Ghostty has no
+    bidi at all.
+
+    Placed on the counter-diagonal. The tool runs lower-left to upper-right, so the lower-right
+    is the one large area it never crosses, and putting the prompt anywhere else would have it
+    touching the blade or the handle at 32 pixels even though the two look clear at 1024.
+
+    Weights are set for 32 again: the chevron stroke is 44 units (about one and a half device
+    pixels there) and the gap between cursor and chevron is 74, which is a bit over two - the
+    earlier two-object attempt left 44 and the shapes fused into one blob.
+
+    Inset from the plate rather than tucked into the corner. The first placement put the chevron
+    68 units off the bottom and 22 off the right, and at 32 pixels that reads as an element
+    falling out of the icon rather than as one sitting inside it.
   -->
-  <rect x="228" y="436" width="152" height="152" rx="18" ry="18" fill="#f0c674"/>
+  <g opacity="0.92">
+    <rect x="470" y="766" width="120" height="30" rx="15" fill="#f0c674"/>
+    <polyline points="756,688 664,781 756,874" fill="none" stroke="#f2f2f2" stroke-width="44"
+              stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
 </svg>

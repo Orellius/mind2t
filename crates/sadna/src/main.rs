@@ -245,10 +245,12 @@ impl Smoke {
     /// Returns `None` when the report never arrived at all, which every check below treats as a
     /// failure rather than as a pass: an absent measurement is not evidence of a good one.
     fn env_field(&self, name: &str) -> Option<&str> {
-        let line = self.child_env.as_deref()?;
-        let start = line.find(&format!("{name}=["))? + name.len() + 2;
-        let rest = &line[start..];
-        rest.find(']').map(|end| &rest[..end])
+        let joined = self.child_env.as_deref()?;
+        let head = format!("{ENV_MARKER} {name} ");
+        joined
+            .split(" | ")
+            .find_map(|field| field.strip_prefix(head.as_str()))
+            .map(str::trim)
     }
 
     /// The child must report the term the HOST declares, not merely a non-empty one.
@@ -282,6 +284,13 @@ impl Smoke {
 
     /// The operator-level claim, and the only one that answers his actual sentence: a real CLI
     /// resolves inside the pane. Everything above is a mechanism; this is the symptom.
+    ///
+    /// HONEST BOUND: this check does NOT discriminate under the gate, and saying so is the point
+    /// (SCAR-004). Reverting the whole fix and re-running reports `cli yes` anyway, because the
+    /// pane's shell is interactive whatever the host does - a pty on stdin makes it so - and
+    /// `.zshrc` puts the tool back on PATH. It can only fail in the case it stands in for, a
+    /// Finder launch inheriting nothing, which this gate cannot reproduce. The three checks
+    /// beside it are the ones that actually go red, and they are what proved the fix.
     fn child_can_find_a_cli(&self) -> bool {
         matches!(self.env_field("cli"), Some(value) if value == "yes")
     }
@@ -589,12 +598,13 @@ impl InputProbe {
                 // is here; a `/bin/sh` configured through `config.shell` reports `no` and the
                 // brace group keeps the parse error off the child's screen.
                 let command = format!(
-                    "printf '{ENV_MARKER} term=[%s] login=[%s] cc=[%s] cli=[%s]\\n' \
+                    "seq 1 200; \
+                     printf '{ENV_MARKER} term %s\\n{ENV_MARKER} login %s\\n{ENV_MARKER} cc %s\\n{ENV_MARKER} cli %s\\n' \
                      \"${{TERM:-none}}\" \
                      \"$({{ [[ -o login ]] && echo yes || echo no; }} 2>/dev/null)\" \
                      \"${{CLAUDECODE:-none}}\" \
                      \"$(command -v claude >/dev/null 2>&1 && echo yes || echo no)\"; \
-                     seq 1 200; printf '{FILL_MARKER}\\n'\r"
+                     printf '{FILL_MARKER}\\n'\r"
                 );
                 if let Err(error) = session.send(command.as_bytes()) {
                     eprintln!("sadna: probe command refused: {error:?}");
@@ -608,23 +618,40 @@ impl InputProbe {
             }
 
             Stage::Filling => {
-                // Taken here rather than at the end: the report is one line at the top of 200,
-                // so it scrolls out of the viewport within a second of arriving.
+                // The ENV report is the completion signal, not the fill marker, and that is a
+                // measured correction rather than a preference. An interactive shell ECHOES the
+                // line it was typed, and that echo contains `printf 'SADNA-FILLED\n'` - so
+                // `visible_text().contains(FILL_MARKER)` was true the instant the command was
+                // typed, before the child had run anything. The stage advanced immediately, the
+                // report was never on screen, and all four environment checks failed on a run
+                // where nothing but the app icon had changed.
+                //
+                // The report is printed AFTER `seq`, so seeing it means the fill is done too,
+                // and `%s` is what tells the real line from the echoed format string.
                 if smoke.child_env.is_none() {
-                    // `%s` is what tells the ECHOED command apart from its output. An
-                    // interactive shell echoes the line it was typed, so the marker appears
-                    // twice and the first occurrence is the format string itself - a reader
-                    // that took line one would report `term=[%s]` and pass or fail on noise.
-                    smoke.child_env = session
+                    // ONE FIELD PER LINE, and that is measured rather than tidy: the gate splits
+                    // the window, so the pane is about 46 columns and a single line carrying all
+                    // four fields wrapped - the capture read `cc=` and nothing after it, and two
+                    // checks failed on values that had actually been reported correctly.
+                    //
+                    // `%s` is what tells a real line from the echoed format string: an
+                    // interactive shell echoes what it was typed, so the marker appears twice.
+                    let fields: Vec<String> = session
                         .visible_text()
                         .lines()
-                        .find(|line| line.contains(ENV_MARKER) && !line.contains("%s"))
-                        .map(|line| line.trim().to_string());
+                        .filter(|line| line.contains(ENV_MARKER) && !line.contains("%s"))
+                        .map(|line| line.trim().to_string())
+                        .collect();
+                    if fields.len() >= 4 {
+                        smoke.child_env = Some(fields.join(" | "));
+                    }
+                    // Printed, not just asserted on: a failing environment check is unreadable
+                    // without the values it read, and this is the one line that carries them.
+                    if let Some(report) = smoke.child_env.as_deref() {
+                        println!("sadna: {report}");
+                    }
                 }
-                // The marker, never the last number: `200` appears in the middle of the count
-                // and inside `1200` if the window is ever bigger, so it would report finished
-                // while the child is still printing.
-                if session.visible_text().contains(FILL_MARKER) || waited >= Self::PATIENCE {
+                if smoke.child_env.is_some() || waited >= Self::PATIENCE {
                     sadna::clipboard::paste_text(session, PASTE_PROBE);
                     self.enter(Stage::Pasting);
                 }

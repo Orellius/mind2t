@@ -62,14 +62,24 @@ nothing is lost by taking it first.
    triple-click line, rectangular; cmd+C. Prerequisite for search-selection and for `copy-on-select`.
    - **D2a the model: DONE 2026-08-06** `[tested]`, 15 corpus cases against the oracle. Word,
      line and select-all ranges plus the clipboard text. See the repo `CLAUDE.md`.
-   - **D2b the gesture: NOT BUILT.** Click-drag, double and triple click, cmd+C, and painting
-     the highlight. Nothing in the app can select anything yet. Rectangular selection is
-     modelled (`Selection::rectangle`) and not implemented.
+   - **D2b the gesture: DONE 2026-08-06** `[tested]` headlessly, `[untested - needs your eyes]`
+     for every real pointer path. Drag, double click a word, triple click a line, cmd+A,
+     cmd+C. The seam is `Frame::viewport_rows`, which hands `core::selection` the snapshot
+     rows it reads, so the oracle-gated rules are reused rather than re-derived - and because
+     those rows are VIEWPORT rows, the absolute-versus-viewport conversion D2a warned about
+     does not exist on this path at all. Rectangular selection is still modelled
+     (`Selection::rectangle`) and not implemented.
 3. **D3 Tabs.**
 4. **D4 Keybind configuration.** Sadna's chords are hardcoded today.
-5. **D5 Font size chords** - cmd+plus / cmd+minus / cmd+0. The C surface already has
-   `ruuah_host_set_font_size`; the Tauri host does not call it.
-6. **D6 Clickable links.** The engine resolves OSC 8 and the host never asks (`ruuah_host_link_at`).
+5. **D5 Font size chords: DONE 2026-08-06** `[tested]` headlessly. cmd+plus / cmd+minus /
+   cmd+0 through `Session::set_font_size`, which re-derives the grid from the pane's pixel
+   area. Ten percent steps rather than a point, so the step does not depend on the display
+   scale. **All panes move together, and that is a constraint rather than a choice**: the
+   wheel accumulator is shared across panes and is correct only while they agree on a cell
+   height.
+6. **D6 Clickable links: DONE 2026-08-06** `[untested - needs your eyes]`. cmd+click calls
+   `Session::link_at` and hands the target to `/usr/bin/open`. Nothing in the gate can press
+   cmd+click, so this one has no headless evidence at all.
 7. **D7 Kitty keyboard protocol.** Helix, Neovim and Zellij key handling.
 8. **D8 Config live reload.**
 9. **D9 Command palette.**

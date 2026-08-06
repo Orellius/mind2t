@@ -65,6 +65,54 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
+**D2b step 2 (the gesture), D5 and D6 DONE 2026-08-06, main `871db03`.** Sadna can now be
+copied out of, zoomed, and clicked through. Gates: **688 tests / difftest 223/223 / smoke 26
+of 26**. Next by the parity plan: **D1 scrollback search**, which has NO oracle and whose gate
+will be a reference implementation plus mutants - weaker than the corpus, and it has to be
+said out loud every time it is cited.
+
+- **`Frame::viewport_rows` is the seam, and it is the whole design.** It builds
+  `ruuah_vt_snapshot::Row`s from packed cells so `core::selection` - the module gated against
+  libghostty-vt on 15 corpus cases - runs unchanged on what is on screen. The alternative was
+  re-deriving the word rules in the host, which would have been a second copy of a boundary
+  set with no oracle behind it. `crates/frame/tests/selection_rows.rs` runs every probe
+  against BOTH the frame's rows and the core's own and demands they agree, so a bridge that
+  blanked cells or transposed coordinates is caught by disagreement rather than by an
+  assertion someone had to predict.
+- **The coordinate seam D2a called dangerous does not exist on this path.** The probe is fed
+  VIEWPORT rows, so its answer is already viewport-relative and `FrameSelection` needs no
+  conversion. The cost, stated: a selection cannot reach into scrollback the way
+  `Terminal::select` can, because scrollback is not in a frame. cmd+A is therefore
+  select-all-VISIBLE, and the oracle's `All` is not.
+- **`set_selection` forces a full repaint, and that is not incidental.** A selection changes no
+  terminal state, so the frame's generation does not move, so `poll` returns `false` - the
+  highlight would appear only the next time the child happened to write. It also has to be a
+  FULL repaint: a partial one touches only rows the child dirtied, and the row just
+  deselected is not one of them.
+- **cmd+C is conditional on purpose.** With nothing selected it falls through to the child as
+  `^C`. A terminal that swallowed it unconditionally would stop being able to interrupt a
+  running command the day it learned to copy.
+- **Shift takes the pointer back from the child.** With mouse reporting on, `vim` and an agent
+  CLI own every click, so without this there is no way to copy a line off the screen at all.
+  The report is SKIPPED rather than sent-and-also-selected: sending it would have the program
+  act on a click meant for the host.
+- **Font size moves every pane together.** The wheel accumulator is shared and is correct only
+  while panes agree on a cell height; a per-pane font would make a slow trackpad scroll round
+  to zero in one pane and not its neighbour. Steps are multiplicative (ten percent) because
+  this host stores font sizes already scaled, so a raw `+1.0` would move half a point on a 2x
+  display and a whole one on a 1x.
+- **The gate's `exec cat` shapes what the fixture can be.** The mouse stage replaces the shell,
+  so after it there is no shell to run a `printf` and interrupting `cat` ends the session -
+  both measured, in that order. `cat` echoes what it receives, so the selection fixture is
+  sent as plain text. The fixture is `alpha-beta` because `-` is NOT a word boundary in the
+  oracle's rules: a host that re-derived them answers `alpha`, one that selected the row
+  answers the row, one with no selection answers nothing. Three distinguishable wrong answers.
+- **What the gate cannot see, and it is most of the gesture**: the real drag, AppKit's own
+  click counting (and therefore the machine's double-click interval), the pasteboard write,
+  and cmd+click. All of it is live-tap debt in SCAR-014's exact shape - the demo works when
+  the harness drives bytes and dies when a human drives the window.
+
+
 **D2b step 1, the selection is DRAWN, `[tested]` by pixels 2026-08-06.** `Frame` carries a
 `FrameSelection` and the renderer tints it. Gates: **681 tests / difftest 223/223 / smoke 23 of
 23**. The GESTURE half - mouse drag, double and triple click, cmd+C - is **the next step and is

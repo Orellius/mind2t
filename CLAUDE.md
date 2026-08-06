@@ -65,6 +65,38 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
+**D2b step 1, the selection is DRAWN, `[tested]` by pixels 2026-08-06.** `Frame` carries a
+`FrameSelection` and the renderer tints it. Gates: **681 tests / difftest 223/223 / smoke 23 of
+23**. The GESTURE half - mouse drag, double and triple click, cmd+C - is **the next step and is
+not built**; nothing sets `frame.selection` outside a test yet.
+
+- **The blind spot was total, again.** D2a measured the range and the clipboard text against the
+  oracle and put no pixel anywhere. Until `crates/render/tests/selection.rs` existed, a
+  `draw_selection` that returned immediately - or tinted the wrong row, or every row - passed
+  `redraw.rs`, `caret.rs`, `vim.rs` and the whole corpus, because each of them either sets no
+  selection or compares two renders that are wrong the same way. Mutant seen red: the renderer
+  ignoring `frame.selection` reports `[]` where the test demands `[2,3,4,5]`.
+- **Measured positionally, in `caret.rs`'s shape**: paint the same frame twice, with and without
+  a selection, and the columns whose pixels DIFFER are the highlighted columns. That answers
+  "where is it", where a whole-canvas comparison answers "is it the same as some other render",
+  which is the wrong question.
+- **The tint is BLENDED OVER the finished row, not painted as a background**, and that is not
+  cosmetic. Backgrounds are painted per cell interleaved with ink, so a selection painted as one
+  would be erased by the next cell's background and would be invisible wherever the child
+  coloured anything - a prompt, a diff, an `ls`. The cost, stated: the ink under the tint shifts
+  colour slightly, where Ghostty swaps both foreground and background and keeps its contrast
+  exactly. `text_survives_under_the_tint` is the guard that keeps it a highlight and not a
+  redaction.
+- **The selection colour is neutral grey, never a palette entry.** All sixteen are colours a
+  program may paint text in, so tinting with one would make text of that colour vanish into its
+  own highlight.
+- **`FrameSelection` is VIEWPORT-relative; `core::selection` answers in ABSOLUTE rows** counting
+  from the top of scrollback. Whoever sets the field owns the conversion, and getting it wrong
+  paints the highlight one screen away from the pointer. This is the seam the gesture step lands
+  on next.
+- Endpoints keep the gesture's order (a drag upward has `start` after `end`) so the host knows
+  which end the pointer holds; every reader goes through `ordered`.
+
 **The pane's child environment, `[tested]` 2026-08-06. "No CLI can run inside Sadna" was
 real, and it was this host diverging from its own oracle.** `shell_from` built the child as
 `Command::new($SHELL)` with no arguments and no environment, while the C ABI host

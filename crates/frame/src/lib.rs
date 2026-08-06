@@ -28,7 +28,10 @@ pub mod publish;
 pub mod seqlock;
 
 pub use bidi::{BaseDirection, VisualSpan, mirror, visual_spans};
-pub use frame::{Direction, Frame, FrameCursor, FramePlacement, FrameVirtual, Motion, Run, cell_width};
+pub use frame::{
+    Direction, Frame, FrameCursor, FramePlacement, FrameSelection, FrameVirtual, Motion, Run,
+    cell_width,
+};
 pub use packed::{CLUSTER_BYTES, PackedCell, pack_style, unpack_style};
 pub use placeholder::{PLACEHOLDER, VirtualRun, virtual_runs};
 pub use publish::Publisher;

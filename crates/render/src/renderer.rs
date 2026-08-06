@@ -47,6 +47,9 @@ pub struct Renderer<S = Canvas> {
     drawn: u64,
     /// Scaled kitty placements, keyed (image, box) -- see `images.rs`.
     image_cache: crate::images::ScaledCache,
+    /// A full-coverage mask for the selection tint, grown on demand and reused. The alpha is
+    /// uniform, so one buffer serves every span in every frame.
+    selection_mask: Vec<u8>,
 }
 
 impl Renderer<Canvas> {
@@ -91,8 +94,16 @@ impl<S: Surface> Renderer<S> {
             rows,
             drawn: 0,
             image_cache: crate::images::ScaledCache::default(),
+            selection_mask: Vec::new(),
         }
     }
+
+    /// How strongly the selection tint covers what is under it, out of 255.
+    ///
+    /// Set for READABILITY, not for weight: at this coverage the ink under the tint stays
+    /// clearly darker than the tint itself, so selected text is still text. Raising it toward
+    /// opaque is what turns a highlight into a redaction.
+    pub const SELECTION_ALPHA: u8 = 0x54;
 
     /// The pixel cell the grid is laid out on. The host's mouse encoder divides
     /// pointer pixels by this, so it must come from the LIVE renderer -- a zoom
@@ -205,6 +216,45 @@ impl<S: Surface> Renderer<S> {
     /// that outlives the call except the glyph cache, which cannot change what is drawn.
     fn draw_row(&mut self, frame: &Frame, y: u16) {
         self.draw_row_parts(frame, y, Parts::Both, &[]);
+        self.draw_selection(frame, y);
+    }
+
+    /// Tints the selected span of a row, OVER the text.
+    ///
+    /// A translucent overlay rather than a background swap, and the choice is not cosmetic.
+    /// Backgrounds are painted per cell, interleaved with ink, so a selection painted as a
+    /// background would be erased by the next cell's own background and would be invisible
+    /// wherever the child coloured anything - a selected prompt, a selected diff line, a
+    /// selected `ls` listing. Blending over the finished row costs one pass and works against
+    /// every background there is, including an image.
+    ///
+    /// The cost, stated rather than hidden: the ink under the tint shifts colour slightly.
+    /// Ghostty swaps foreground AND background for selected cells and keeps its contrast
+    /// exactly; this keeps the text where it was and accepts a small shift. Revisit if a
+    /// selected line ever reads as unreadable rather than as highlighted.
+    fn draw_selection(&mut self, frame: &Frame, y: u16) {
+        let Some(selection) = frame.selection else {
+            return;
+        };
+        let Some((from, to)) = selection.span_on(y, self.cols) else {
+            return;
+        };
+        let cell = self.fonts.metrics();
+        let width = cell.width * u32::from(to - from + 1);
+        let height = cell.height;
+        // One full-coverage mask, reused for every span in the frame: the alpha is uniform,
+        // so building it per row would allocate once per selected line for no difference.
+        if self.selection_mask.len() < (width * height) as usize {
+            self.selection_mask.resize((width * height) as usize, Self::SELECTION_ALPHA);
+        }
+        self.canvas.blend_mask(
+            i32::from(from) * cell.width as i32,
+            i32::from(y) * cell.height as i32,
+            width,
+            height,
+            &self.selection_mask[..(width * height) as usize],
+            self.palette.selection_background(),
+        );
     }
 
     /// One row, or half of one.

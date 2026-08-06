@@ -129,6 +129,51 @@ pub struct Frame {
     /// Virtual (kitty U=1) placements: an image and the cell grid it is divided into.
     /// They have no position -- the placeholder cells in the grid are the position.
     pub virtuals: Vec<FrameVirtual>,
+    /// The highlighted range, in THIS frame's own row coordinates.
+    ///
+    /// Not published by the pump and not part of terminal state: a selection is the host's,
+    /// made with a mouse, and it survives writes that the grid underneath does not. The host
+    /// sets it on the frame it is about to draw, which is why it is a plain public field
+    /// rather than something the seqlock carries.
+    ///
+    /// Viewport-relative, unlike `ruuah_vt_core::selection`, which answers in absolute rows
+    /// counting from the top of scrollback. Whoever sets this owns the conversion, and getting
+    /// it wrong paints the highlight one screen away from the pointer.
+    pub selection: Option<FrameSelection>,
+}
+
+/// A highlighted range on the visible grid, inclusive at both ends.
+///
+/// Endpoints are stored in the order the gesture produced them - a drag upward has `start`
+/// below `end` - because the host needs to know which end the pointer is holding in order to
+/// extend the right one. `ordered` is what every reader should use instead of assuming.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameSelection {
+    pub start: (u16, u16),
+    pub end: (u16, u16),
+}
+
+impl FrameSelection {
+    /// The endpoints in reading order, as `(start, end)`.
+    pub fn ordered(&self) -> ((u16, u16), (u16, u16)) {
+        let (a, b) = (self.start, self.end);
+        if (b.1, b.0) < (a.1, a.0) { (b, a) } else { (a, b) }
+    }
+
+    /// The inclusive column span this selection covers on row `y`, if any.
+    ///
+    /// A multi-row selection runs to the end of every row it passes through, which is what
+    /// makes it a text selection rather than a rectangle. `cols` bounds the last column
+    /// because the frame, not the selection, knows how wide the grid is.
+    pub fn span_on(&self, y: u16, cols: u16) -> Option<(u16, u16)> {
+        let ((sx, sy), (ex, ey)) = self.ordered();
+        if y < sy || y > ey || cols == 0 {
+            return None;
+        }
+        let from = if y == sy { sx } else { 0 };
+        let to = if y == ey { ex } else { cols - 1 };
+        if from > to { None } else { Some((from, to.min(cols - 1))) }
+    }
 }
 
 /// One kitty placement as it crosses the thread boundary.
@@ -522,6 +567,7 @@ mod tests {
             links: Vec::new(),
             placements: Vec::new(),
             virtuals: Vec::new(),
+            selection: None,
         }
     }
 

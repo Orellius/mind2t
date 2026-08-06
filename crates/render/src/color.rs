@@ -93,6 +93,16 @@ impl Palette {
         }
     }
 
+    /// The tint blended over a selected span.
+    ///
+    /// A neutral light grey rather than a palette entry, and deliberately so: every one of the
+    /// sixteen is a colour a program is entitled to paint text in, so tinting with one would
+    /// make selected text of that colour vanish into its own highlight. Neutral tints every
+    /// hue by the same amount.
+    pub fn selection_background(&self) -> Rgba {
+        [0xc8, 0xcc, 0xd4, 255]
+    }
+
     pub fn indexed(&self, index: u8) -> Rgba {
         self.colors[usize::from(index)]
     }

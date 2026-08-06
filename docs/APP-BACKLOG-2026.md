@@ -252,10 +252,10 @@ need these two side by side" - and then as a deliberate decision, not a drift.
 
 > **REVERSED 2026-08-04 by Orel ("go, take splits too"), deliberately, as the line
 > above required.** The premise changed: this refusal was correct for a single-user
-> terminal, where one thing on screen at a time is the right model. Sadna is a
+> terminal, where one thing on screen at a time is the right model. Mind2t is a
 > fleet controller, which is N-up by definition - you cannot direct four agents you
 > cannot see, and parallel sessions are already how the operator works. Splits are
-> now **Sadna slice B3** (`docs/plans/2026-08-04-bindary.md`): a Rust-side layout
+> now **Mind2t slice B3** (`docs/plans/2026-08-04-bindary.md`): a Rust-side layout
 > tree inside ONE wgpu surface, not per-pane surfaces, so EXACT TILING extends from
 > two regions to a tree without changing its nature. S7 itself stays closed - the
 > work lives under B3, not here.

@@ -14,8 +14,8 @@
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use sadna::canvas::{Canvas, PaneSpec};
-use sadna::layout::{Canvas as Grid, Rect};
+use mind2t::canvas::{Canvas, PaneSpec};
+use mind2t::layout::{Canvas as Grid, Rect};
 use ruuah_vt_render::{GpuContext, Surface, wgpu};
 
 const FONT: f32 = 16.0;
@@ -444,7 +444,7 @@ fn a_multi_row_canvas_refuses_to_split() {
 
     let refused = canvas.split(&context, Command::new("/bin/sh"), FONT);
     assert!(
-        matches!(refused, Err(sadna::canvas::CanvasError::NotSplittable { rows: 2 })),
+        matches!(refused, Err(mind2t::canvas::CanvasError::NotSplittable { rows: 2 })),
         "a two-row canvas split anyway: {refused:?}"
     );
     assert_eq!(canvas.panes().len(), 2, "the refused split changed the canvas");

@@ -1,7 +1,7 @@
-# Daily-driver parity - Sadna against Ghostty
+# Daily-driver parity - Mind2t against Ghostty
 
-**Decided 2026-08-06 (IDT) by Orel: make Sadna the terminal he actually lives in.**
-Slice namespace `D1..D10`, separate from `B1..B9` (Sadna product) and `S1..S9` (app backlog).
+**Decided 2026-08-06 (IDT) by Orel: make Mind2t the terminal he actually lives in.**
+Slice namespace `D1..D10`, separate from `B1..B9` (Mind2t product) and `S1..S9` (app backlog).
 Never mix them.
 
 ## The target, and what it is NOT
@@ -18,13 +18,13 @@ reason the target is stated differently below:
   graphics/keyboard/clipboard/DnD protocols, SSH terminfo propagation, custom GLSL shaders,
   Sparkle auto-update, App Intents, Secure Keyboard Entry
 
-Matching that list is not a slice; it is the whole remaining life of the project, and a Sadna that
+Matching that list is not a slice; it is the whole remaining life of the project, and a Mind2t that
 succeeded at it would be a worse-resourced Ghostty with no reason to exist.
 
 **So the target is: nothing Orel uses in a day is missing.** Measured against the audit's own
 ranking of what a user notices first, that is the ten items below - not two hundred.
 
-## What Sadna ALREADY has from that ranking
+## What Mind2t ALREADY has from that ranking
 
 Not aspirational; these are gated in this repo today.
 
@@ -36,13 +36,13 @@ Not aspirational; these are gated in this repo today.
 - Paged scrollback with reflow
 - Ligatures, font fallback, shaping
 - **Bidi. Ghostty has NONE** - `grep -ri bidi` over its `include/` and `src/terminal/` returns
-  nothing. This is the one thing Sadna does that his current daily driver cannot, and it is the
+  nothing. This is the one thing Mind2t does that his current daily driver cannot, and it is the
   actual reason to switch: 91,707 Unicode conformance cases green, niqqud placed by GPOS.
 
 ## D0 - config, themes, Hebrew-first (DONE 2026-08-06)
 
 The engine's `Config` already existed and the Tauri host had simply never called it. Wired:
-`~/.sadna/config.toml` with a fallback to `~/.ruuah` (his existing theme is found rather than
+`~/.mind2t/config.toml` with a fallback to `~/.ruuah` (his existing theme is found rather than
 silently ignored), theme palette, font family and size, configured shell, `auto_direction` ON by
 default. `Session` now HOLDS its palette, because `resize` rebuilds the renderer and a
 push-once palette silently reverted at the first window drag.
@@ -70,7 +70,7 @@ nothing is lost by taking it first.
      does not exist on this path at all. Rectangular selection is still modelled
      (`Selection::rectangle`) and not implemented.
 3. **D3 Tabs.**
-4. **D4 Keybind configuration.** Sadna's chords are hardcoded today.
+4. **D4 Keybind configuration.** Mind2t's chords are hardcoded today.
 5. **D5 Font size chords: DONE 2026-08-06** `[tested]` headlessly. cmd+plus / cmd+minus /
    cmd+0 through `Session::set_font_size`, which re-derives the grid from the pane's pixel
    area. Ten percent steps rather than a point, so the step does not depend on the display

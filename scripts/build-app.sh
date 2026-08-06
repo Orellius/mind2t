@@ -20,11 +20,11 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="RUUAH VT"
 BUILD="swift/.build/$APP_NAME.app"
-# Sadna's own mark, in this repo (2026-08-06). It used to be Ghostty's icon out of the oracle
+# Mind2t's own mark, in this repo (2026-08-06). It used to be Ghostty's icon out of the oracle
 # checkout, which was borrowed goods AND a build that broke the moment that checkout moved - it
-# was archived the same day. `assets/icon/sadna.svg` is the source; the PNG beside it is committed
+# was archived the same day. `assets/icon/mind2t.svg` is the source; the PNG beside it is committed
 # so a build needs no SVG rasteriser.
-ICON_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/assets/icon/sadna-1024.png"
+ICON_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/assets/icon/mind2t-1024.png"
 
 rm -rf "$BUILD"
 mkdir -p "$BUILD/Contents/MacOS" "$BUILD/Contents/Resources"
@@ -62,7 +62,7 @@ mkdir -p "$BUILD/Contents/Resources/shell/zdotdir"
 cp shell/ruuah-integration.zsh "$BUILD/Contents/Resources/shell/ruuah-integration.zsh"
 cp shell/zdotdir/.zshenv "$BUILD/Contents/Resources/shell/zdotdir/.zshenv"
 
-# Icon: Sadna's own mark. Skipped silently if the artwork is missing -- the app runs without it.
+# Icon: Mind2t's own mark. Skipped silently if the artwork is missing -- the app runs without it.
 if [ -f "$ICON_SRC" ]; then
   ICONSET="swift/.build/RuuahVT.iconset"
   rm -rf "$ICONSET"; mkdir -p "$ICONSET"

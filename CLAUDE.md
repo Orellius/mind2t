@@ -1,27 +1,35 @@
-# CLAUDE.md - sadna (project child config)
+# CLAUDE.md - mind2t (project child config)
 
 > **Parent stack layer:** `../CLAUDE.md` (tools/ 2026 stack, auto-inherited; don't restate it).
-> Chain: `~/.claude/CLAUDE.md` (contract) → `Studio/CLAUDE.md` (index) → `tools/CLAUDE.md` (stack) → **this file (sadna specifics)**.
+> Chain: `~/.claude/CLAUDE.md` (contract) → `Studio/CLAUDE.md` (index) → `tools/CLAUDE.md` (stack) → **this file (mind2t specifics)**.
 > This file = project specifics only. Last update stamp: 2026-08-06 (IDT).
 > Posture: the global proactive co-pilot rule (initiative, three-steps-ahead, extreme ownership) is in force here via `~/.claude/CLAUDE.md`.
 
-## What this is NOW - Sadna (decided 2026-08-04, Orel; renamed 2026-08-06)
+## What this is NOW - Mind2t (decided 2026-08-04, Orel; renamed twice, 2026-08-06)
 
-**Naming: the product was born "Bindary" (2026-08-04) and renamed SADNA (סדנה, workshop) on
-2026-08-06, Orel's pick - his criterion was easy Hebrew pronunciation.** Namespace measured
-that night: GitHub only 0-star student repos, crates.io and npm empty. The plan file keeps its
-historical name (`2026-08-04-bindary.md`); the `B1..B9` slice namespace is unchanged.
+**Naming history, and it is two renames in one day, both Orel's call.** The product was born
+"Bindary" (2026-08-04), became **Sadna** (סדנה, workshop) on 2026-08-06 on a
+pronunciation criterion, and became **MIND2T** the same day - directory, GitHub repo, product
+crate, bundle identifier, config directory, chrome, gate script and the icon's filenames, end
+to end. The plan file keeps its historical name (`2026-08-04-bindary.md`) because it is dated
+provenance; the `B1..B9` slice namespace is unchanged.
+
+The rebrand cost is recorded rather than waved through, because the plan file claimed it was
+zero: the crate is `crates/mind2t` and the binary is `mind2t`, so **`~/.mind2t` is the config
+directory and `~/.ruuah` remains the only fallback** (`~/.sadna` never existed on disk and is
+deliberately not in the chain). A directory rename also invalidates Tauri's generated
+permissions paths under `target/` - see the `cargo clean` gotcha below.
 
 This repo builds **two things, and the names are not interchangeable**:
 
 - **`ruuah-vt`** - the engine. The Rust VT core, pty, renderer and C ABI. Keeps its name
   forever; other people may embed it.
-- **Sadna** - the product built on that engine. An **AGPL, cross-platform agent workbench**:
+- **Mind2t** - the product built on that engine. An **AGPL, cross-platform agent workbench**:
   a fleet of coding-agent CLIs in real terminals, in git worktrees, with sessions that do not
   end because a context governor binds each one to the next.
 
 **Plan of record: `docs/plans/2026-08-04-bindary.md`.** Read it before starting any slice.
-Sadna slices are **`B1..B9`** and are a SEPARATE namespace from the `S1..S9` app slices in
+Mind2t slices are **`B1..B9`** and are a SEPARATE namespace from the `S1..S9` app slices in
 `docs/APP-BACKLOG-2026.md`. Never mix them.
 
 The wedge, in one line: **we own the VT core, the pty and the renderer**, so agent state comes
@@ -65,7 +73,7 @@ Architecture research it came from: `~/Desktop/claude-html/terminal-architecture
 
 ## Status / current slice
 
-**D2b step 2 (the gesture), D5 and D6 DONE 2026-08-06, main `871db03`.** Sadna can now be
+**D2b step 2 (the gesture), D5 and D6 DONE 2026-08-06, main `871db03`.** Mind2t can now be
 copied out of, zoomed, and clicked through. Gates: **688 tests / difftest 223/223 / smoke 26
 of 26**. Next by the parity plan: **D1 scrollback search**, which has NO oracle and whose gate
 will be a reference implementation plus mutants - weaker than the corpus, and it has to be
@@ -145,13 +153,13 @@ not built**; nothing sets `frame.selection` outside a test yet.
 - Endpoints keep the gesture's order (a drag upward has `start` after `end`) so the host knows
   which end the pointer holds; every reader goes through `ordered`.
 
-**The pane's child environment, `[tested]` 2026-08-06. "No CLI can run inside Sadna" was
+**The pane's child environment, `[tested]` 2026-08-06. "No CLI can run inside Mind2t" was
 real, and it was this host diverging from its own oracle.** `shell_from` built the child as
 `Command::new($SHELL)` with no arguments and no environment, while the C ABI host
 (`crates/host/src/lib.rs`) had declared `TERM`, passed `-il` and scrubbed the Claude session
 markers since slice 8. Nothing compared the two. Gate is now **23 invariants**.
 
-- **The gate had to be poisoned before it could measure anything.** `scripts/smoke-sadna.sh`
+- **The gate had to be poisoned before it could measure anything.** `scripts/smoke-mind2t.sh`
   now launches the host through `env PATH=/usr/bin:/bin:/usr/sbin:/sbin TERM=dumb
   CLAUDECODE=smoke-poison ...`, because the run inherits the operator's own terminal: three of
   the four new checks PASSED against a host that declared nothing at all, since the child was
@@ -173,7 +181,7 @@ markers since slice 8. Nothing compared the two. Gate is now **23 invariants**.
   cell. That is what "no CLI can run" looks like from outside the pty.
 - **A terminal window is a session boundary**: `CLAUDECODE` and `CLAUDE_CODE_CHILD_SESSION`
   are scrubbed, so an agent CLI opened in a pane is a fresh session rather than a child of
-  whatever launched Sadna. Found live 2026-07-29, fixed in the C host, never carried here.
+  whatever launched Mind2t. Found live 2026-07-29, fixed in the C host, never carried here.
 - Seen red both ways: reverting `-l`, the `TERM` declaration and the scrub makes the gate print
   `term dumb | login no | cc smoke-poison` and fail three checks; the fix makes it print
   `term xterm-256color | login yes | cc none`. **The gate prints the values it read**, because a
@@ -194,8 +202,8 @@ markers since slice 8. Nothing compared the two. Gate is now **23 invariants**.
      columns** because the window is split. It wrapped; the capture read `cc=` and nothing after
      it. One field per line now.
 
-**The app mark was redrawn, 2026-08-06, and Orel picked it** (`assets/icon/sadna.svg` is the
-source; `sadna-1024.png` and `crates/sadna/icons/icon.png` are generated from it with
+**The app mark was redrawn, 2026-08-06, and Orel picked it** (`assets/icon/mind2t.svg` is the
+source; `mind2t-1024.png` and `crates/mind2t/icons/icon.png` are generated from it with
 `rsvg-convert` - regenerate BOTH after any edit, nothing does it automatically). A
 cabinet-maker's screwdriver on the diagonal, with the RTL prompt `_<` on the counter-diagonal.
 
@@ -268,7 +276,7 @@ is **D2b and is not built**; nothing in the app can select anything yet.
   the formatter emitting a newline across a soft wrap, and the history offset dropped.
 - **Rename fallout the gate caught**: after the directory moved, `cargo test --workspace`
   failed in Tauri's build script on a generated permissions path baked with the OLD absolute
-  directory. 2,819 files under `target/` still held it. `cargo clean -p tauri -p sadna` is the
+  directory. 2,819 files under `target/` still held it. `cargo clean -p tauri -p mind2t` is the
   fix; a plain rebuild is not, and the error names a missing file rather than a stale path.
 
 **B3.6 one window, panes on demand, `[tested]` headlessly 2026-08-06 (`b3-5-divider`).** Orel's
@@ -297,7 +305,7 @@ against the result.
 **B3.5 the pane divider, `[tested]` headlessly 2026-08-06 (`b3-5-divider`).** Two terminals no
 longer read as one surface: the layout reserves a gutter between panes and a solid rule is painted
 into exactly that gap, in the same render pass. Gates: workspace suite green, difftest 207/207,
-`scripts/smoke-sadna.sh` **17 of 17** (the new one is the rule in the live window).
+`scripts/smoke-mind2t.sh` **17 of 17** (the new one is the rule in the live window).
 
 - **The gutter is taken OUT of the panes, never painted over them.** The alternative covers a
   column the child is writing into, and a terminal whose last column sits under a rule looks like
@@ -331,7 +339,7 @@ into exactly that gap, in the same render pass. Gates: workspace suite green, di
   not a verdict. No window has been put on screen (standing order).
 
 **B4.2 an agent launches into a pane and is SEEN from the grid, `[tested]` 2026-08-05
-(`b4-agent-registry`).** `crates/sadna/src/launch.rs`: spawn fitted, observe, retry with a
+(`b4-agent-registry`).** `crates/mind2t/src/launch.rs`: spawn fitted, observe, retry with a
 doubling backoff. **A real Claude Code CLI ran in a pane and its own interface was read back with
 `Session::visible_text()`** - banner, `Sonnet 5 · Claude Max`, and the status line carrying model,
 cwd and git branch, with no regex and no ANSI parsing anywhere. That is the wedge demonstrated
@@ -355,17 +363,17 @@ rather than argued: model, directory, branch and mode are already text on the gr
   the honest fixture.
 
 **B4.1 the agent registry and the auto-approve guard, `[tested]` 2026-08-05
-(`b4-agent-registry`).** `crates/sadna/src/agent.rs`: ten agent CLIs with the fields that
+(`b4-agent-registry`).** `crates/mind2t/src/agent.rs`: ten agent CLIs with the fields that
 actually differ (binary candidates, prompt strategy, spawn grace, resume template), a PATH probe
 with the asymmetric cache (5 min hit / 10 s miss), and the guard that refuses to auto-type an
 approval bypass. Nothing spawns yet - B4.2 puts an agent in a pane and verifies it from the typed
 grid. Five of the ten are installed here: claude, codex, gemini, opencode, grok. Two gotchas
 below carry the findings.
 
-**B3.4 the host is a CANVAS, `[tested]` headlessly 2026-08-05 (`b3-4-host-canvas`).** Sadna's
+**B3.4 the host is a CANVAS, `[tested]` headlessly 2026-08-05 (`b3-4-host-canvas`).** Mind2t's
 window no longer holds one terminal. It holds a `Canvas` - a wizard-shaped grid (hardcoded 1x2
 until B5 declares one), one live session per cell, all of them presented in a single swapchain
-frame by `present_all`. Gates: workspace suite green, `scripts/smoke-sadna.sh` **16 of 16**.
+frame by `present_all`. Gates: workspace suite green, `scripts/smoke-mind2t.sh` **16 of 16**.
 
 - **One GPU context for the whole canvas.** See the gotcha below; a pane that owned its device
   could not be composited at all, and no test that never presents can see it.
@@ -379,7 +387,7 @@ frame by `present_all`. Gates: workspace suite green, `scripts/smoke-sadna.sh` *
   so `WindowTarget`'s own origin stays zero and `present_all` ignores it.
 - What is NOT proven: the window's LOOK. Two shells side by side is `[untested - needs your
   eyes]` - no window has been put on screen (standing order), and the byte-level proof is the
-  offscreen composite in `crates/sadna/tests/canvas.rs`.
+  offscreen composite in `crates/mind2t/tests/canvas.rs`.
 
 **S5.5 workspace sidebar, `[tested]` 2026-08-02 (`s55-workspace-sidebar`).** The tab
 strip's right-hand button was decoration copied 1:1 from the Warp reference; it now
@@ -962,7 +970,7 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
 
 ## Project rules & gotchas
 
-- **A GENERIC BINARY NAME IS NOT A CANDIDATE** (B4.1, 2026-08-05). `crates/sadna/src/agent.rs`
+- **A GENERIC BINARY NAME IS NOT A CANDIDATE** (B4.1, 2026-08-05). `crates/mind2t/src/agent.rs`
   carries the agent-CLI matrix recovered from BridgeSpace. It probes bare **`agent`** first for
   Cursor - and on this machine `agent` is `~/.grok/bin/agent`, so "launch Cursor" starts **Grok**,
   silently, with a working agent in the pane. Found by the probe's very first run against the
@@ -978,11 +986,11 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   a guard that refuses near-misses is one people learn to route around. Both directions are
   tested and both mutants were seen red: substring matching fails the near-miss test, a guard that
   never fires fails the other three.
-- **SADNA'S GATE IS `scripts/smoke-sadna.sh`, AND IT NEEDS NO SCREEN.** Orel's standing order
+- **MIND2T'S GATE IS `scripts/smoke-mind2t.sh`, AND IT NEEDS NO SCREEN.** Orel's standing order
   (2026-08-04) while he works in parallel sessions: no windows on his display, no synthetic
   input. The script runs the real Tauri host with its window ordered out and asserts **sixteen**
   invariants about what AppKit, WebKit, the IPC and the CHILDREN actually did, exit code and all.
-  Run it before committing anything under `crates/sadna`. It ends as soon as it has collected
+  Run it before committing anything under `crates/mind2t`. It ends as soon as it has collected
   everything (about 4s of run time), and burns its 20s ceiling only when something is wrong.
   The last two arrived with the canvas (B3.4) and both were seen red by their own mutant: the
   panes TILE the live window edge to edge (mutant: every rect keeps the full width - both panes
@@ -1000,7 +1008,7 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   4. `tauri::WindowEvent` carries no keyboard variant, so the terminal's keys come from `NSEvent`
      and never from the webview (project law 2).
   The chrome is embedded at COMPILE time from `chrome/dist`, so a stale bundle ships silently;
-  the script rebuilds it first. `chrome/dist` and `crates/sadna/gen` are gitignored, like
+  the script rebuilds it first. `chrome/dist` and `crates/mind2t/gen` are gitignored, like
   `web/dist`.
 - **ONE GPU CONTEXT PER CANVAS, NOT PER SESSION** (B3.4, 2026-08-05). `Session::spawn` builds its
   own `GpuContext`, which is right for the one-terminal hosts and wrong for every pane: a
@@ -1011,7 +1019,7 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   with real children, exact tiling and a green suite while being unable to draw itself. And it
   does not fail as "wrong device": wgpu reports it at `create_bind_group` as a usage-flags
   complaint about the wrong buffer entirely, so the message points away from the cause.
-  `every_pane_reaches_one_frame_at_its_own_rect` (`crates/sadna/tests/canvas.rs`) is the gate,
+  `every_pane_reaches_one_frame_at_its_own_rect` (`crates/mind2t/tests/canvas.rs`) is the gate,
   and the mutant - one context per pane - was seen red while the other two canvas tests stayed
   green.
 - **THE GATE DRIVES THE SESSION, NEVER APPKIT - AND THAT BOUNDARY IS THE HONEST PART** (B2.5).
@@ -1050,7 +1058,7 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   that highlights under the cursor simply never highlights. Set once at launch.
 - **The tao + wry host survives as `cargo run --bin probe`**, on the same rule that keeps the
   Swift host alive: a port with no reference is a rewrite with extra steps. Retire it when the
-  Tauri host reaches parity. It no longer carries its own paste: `sadna::clipboard` is the one
+  Tauri host reaches parity. It no longer carries its own paste: `mind2t::clipboard` is the one
   implementation both hosts call, and the split inside it is deliberate - `paste_text` takes the
   text as an argument so a gate can drive the whole encode-and-send path with a fixture and
   never read, let alone disturb, the operator's real clipboard.
@@ -1060,7 +1068,7 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   Handing the renderer 16.0 on a 2x display rasterizes the whole grid at half resolution: the
   terminal works, the colours are right, the layout is right, and it is simply soft and small -
   nothing errors and no test fails. It has now been written twice, once in the Swift host
-  (slice 8, `backingScaleFactor`) and once in Sadna (B2.3, 2026-08-04), and the second time
+  (slice 8, `backingScaleFactor`) and once in Mind2t (B2.3, 2026-08-04), and the second time
   the operator caught it from the screen before any assertion did.
   Orel's display makes this trap permanent rather than occasional: an LG 2K panel driven in a
   faked Retina mode by his own `Studio/macos/opendisplay`, so `scale_factor` is **always 2.0**
@@ -1247,14 +1255,14 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
 
 ## Repo and git workflow
 
-**`Orellius/sadna`, private, at `~/Desktop/Studio/tools/sadna`.** `origin` only.
+**`Orellius/mind2t`, private, at `~/Desktop/Studio/tools/mind2t`.** `origin` only.
 
 **Renamed from `ruuah-vt` on 2026-08-06 (Orel's call), and the split is deliberate: the
 CONTAINER is named after the product, the CRATES stay named after the engine.** `crates/*` are
 still `ruuah-vt-core`, `ruuah-vt-frame`, `ruuah-vt-host` and so on, because the engine is the
 part somebody else might embed and its name is its identity. GitHub serves a permanent redirect
 from the old URL, so an old clone's `origin` keeps working - do not rely on that, run
-`git remote set-url origin https://github.com/Orellius/sadna.git`.
+`git remote set-url origin https://github.com/Orellius/mind2t.git`.
 
 **There is no `upstream` remote, deliberately.** ruuah-vt is original code with no shared
 history to track, so a second remote would be theatre. The upstream that actually matters is

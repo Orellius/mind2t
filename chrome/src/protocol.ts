@@ -18,13 +18,13 @@ export type SessionState = {
   readonly exited: boolean;
 };
 
-export const SESSION_EVENT = "sadna://session" as const;
+export const SESSION_EVENT = "mind2t://session" as const;
 
 /// Sent once, by the chrome, when its script has actually run.
 ///
 /// The host has no other way to distinguish a page that failed to load from a page that loaded
 /// and said nothing: both are an empty strip. This is the difference.
-export const CHROME_READY = "sadna://chrome-ready" as const;
+export const CHROME_READY = "mind2t://chrome-ready" as const;
 
 /// Narrows an unknown payload to `SessionState`, or returns null.
 ///

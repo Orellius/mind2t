@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Sadna",
+  "productName": "Mind2t",
   "version": "0.1.0",
-  "identifier": "com.orellius.sadna",
+  "identifier": "com.orellius.mind2t",
   "build": {
     "frontendDist": "../../chrome/dist",
     "beforeBuildCommand": "bun run --cwd ../../chrome build"

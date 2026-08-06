@@ -6,4 +6,4 @@
 /web/dist
 /chrome/dist
 # Tauri's generated capability schemas - derived from capabilities/ at build time.
-/crates/sadna/gen
+/crates/mind2t/gen

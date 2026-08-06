@@ -249,7 +249,7 @@ pub fn select_all(rows: &[Row], cols: u16) -> Option<Selection> {
 ///
 /// The three options are not independent taste. `selection.h` names this exact combination as
 /// the one matching Ghostty's own `Screen.selectionString()`, so it is what the operator gets
-/// from cmd+C in the terminal Sadna is replacing.
+/// from cmd+C in the terminal Mind2t is replacing.
 pub fn format(rows: &[Row], cols: u16, selection: &Selection) -> String {
     let (start, end) = ordered(selection);
     let mut out = String::new();

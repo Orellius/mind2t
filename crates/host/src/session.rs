@@ -2,7 +2,7 @@
 //!   embedders that live in this workspace.
 //! Public surface: `Session`, `SessionGeometry`, `SessionError`.
 //! Why this file: `lib.rs` composes the same pieces behind the C ABI, and that surface exists
-//!   for the Swift host and for outside embedders. Sadna is neither - it is a Rust program in
+//!   for the Swift host and for outside embedders. Mind2t is neither - it is a Rust program in
 //!   this workspace, and crossing a foreign-function boundary to reach its own crates would buy
 //!   nothing and cost the type system. So the composition is offered twice, once per audience.
 //! NOT responsible for: policy. It does not decide which shell to run, what the font is called

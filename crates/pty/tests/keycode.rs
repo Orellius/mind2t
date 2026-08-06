@@ -1,7 +1,7 @@
 //! The generated macOS keycode table, checked against its OTHER generated copy.
 //!
 //! `scripts/gen-keymap.ts` writes two files from one source: a Swift dictionary the AppKit host
-//! reads and a Rust table Sadna reads. Two generated copies are safe only while they are
+//! reads and a Rust table Mind2t reads. Two generated copies are safe only while they are
 //! actually regenerated together - the moment someone hand-edits one, or regenerates against a
 //! moved oracle and commits only the file their build touched, the hosts disagree about what a
 //! key IS. The failure is per-key and silent: one key stops working in one app.

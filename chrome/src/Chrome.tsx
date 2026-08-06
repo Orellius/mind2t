@@ -17,7 +17,7 @@ export function Chrome(): React.JSX.Element {
     // The title is a channel that cannot fail for IPC reasons: WebKit exposes it to the host
     // directly, so it separates "the script never ran" from "the script ran and the IPC did not
     // carry its message". Two suspects, one line.
-    document.title = `sadna-chrome-ran ${window.location.href}`;
+    document.title = `mind2t-chrome-ran ${window.location.href}`;
     void import("@tauri-apps/api/event")
       .then((api) => api.emit(CHROME_READY, { href: window.location.href }))
       .catch(() => {});
@@ -31,7 +31,7 @@ export function Chrome(): React.JSX.Element {
     const unlisten = listen((payload) => {
       const next = parseSessionState(payload);
       if (next === null) {
-        console.error("sadna: unparseable session payload", payload);
+        console.error("mind2t: unparseable session payload", payload);
         return;
       }
       if (!cancelled) setSession(next);
@@ -45,7 +45,7 @@ export function Chrome(): React.JSX.Element {
   return (
     <div className="bar">
       <span className="dot" data-exited={String(session?.exited ?? false)} />
-      <span className="brand">SADNA</span>
+      <span className="brand">MIND2T</span>
       <span className="cwd">{session?.cwd || "-"}</span>
       <span className="grid">{session ? `${session.cols}x${session.rows}` : "-"}</span>
     </div>
@@ -62,7 +62,7 @@ function listen(handler: (payload: unknown) => void): Promise<() => void> {
   return import("@tauri-apps/api/event")
     .then((api) => api.listen(SESSION_EVENT, (event) => handler(event.payload)))
     .catch((error: unknown) => {
-      console.warn("sadna: no host events in this context", error);
+      console.warn("mind2t: no host events in this context", error);
       return () => {};
     });
 }

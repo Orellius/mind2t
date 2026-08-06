@@ -71,7 +71,7 @@ pub fn button_from_code(code: u32) -> Option<Button> {
 /// The mouse state a host must carry between events.
 ///
 /// Geometry is SET by the host rather than derived here, because only the host knows its view's
-/// pixel size and the insets around the grid (Sadna reserves a chrome strip; the Swift host
+/// pixel size and the insets around the grid (Mind2t reserves a chrome strip; the Swift host
 /// has its own chrome). Cell metrics are asked of the renderer at encode time instead of being
 /// stored, because zoom rebuilds them.
 #[derive(Debug, Default)]

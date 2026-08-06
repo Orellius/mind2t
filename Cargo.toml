@@ -12,7 +12,7 @@ members = [
     "crates/abi",
     "crates/abi-types",
     "crates/host",
-    "crates/sadna",
+    "crates/mind2t",
 ]
 
 [workspace.package]

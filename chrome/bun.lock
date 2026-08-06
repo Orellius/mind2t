@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "sadna-chrome",
+      "name": "mind2t-chrome",
       "dependencies": {
         "@tauri-apps/api": "^2.11.1",
         "react": "19.2.8",

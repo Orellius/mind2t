@@ -1,6 +1,6 @@
 #!/bin/sh
-# A one-screen tour of what the terminal can do -- run it inside Sadna:
-#   sh ~/Desktop/Studio/tools/sadna/scripts/demo-features.sh
+# A one-screen tour of what the terminal can do -- run it inside Mind2t:
+#   sh ~/Desktop/Studio/tools/mind2t/scripts/demo-features.sh
 # Written 2026-07-30, the night these features landed.
 
 printf '\033[1m RUUAH VT feature tour \033[0m\n\n'
@@ -20,7 +20,7 @@ done
 printf '\033[0m\n\n'
 
 # --- OSC 8 hyperlink: cmd+click the text below ----------------------------------
-printf ' cmd+click: \033]8;;https://github.com/Orellius/sadna\007\033[4:1m\033[58;2;43;217;159mthe Sadna repo\033[0m\033]8;;\007\n\n'
+printf ' cmd+click: \033]8;;https://github.com/Orellius/mind2t\007\033[4:1m\033[58;2;43;217;159mthe Mind2t repo\033[0m\033]8;;\007\n\n'
 
 # --- VS16 emoji presentation + color emoji + Hebrew (bidi) ----------------------
 printf ' emoji: \xf0\x9f\xa7\xa0 \xe2\x9d\xa4\xef\xb8\x8f \xf0\x9f\x8e\xa8   hebrew: '

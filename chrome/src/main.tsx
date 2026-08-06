@@ -7,7 +7,7 @@ const host = document.getElementById("root");
 if (host === null) {
   // Loud rather than silent. A missing root in a webview shows an empty transparent strip, which
   // is indistinguishable from a chrome that rendered correctly and had nothing to say.
-  throw new Error("sadna: #root is missing from the document");
+  throw new Error("mind2t: #root is missing from the document");
 }
 
 createRoot(host).render(

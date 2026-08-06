@@ -1,11 +1,11 @@
 [package]
-name = "sadna"
+name = "mind2t"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish = false
 
-# B2: the cross-platform host that will become Sadna. It starts as a bare tao window so the
+# B2: the cross-platform host that will become Mind2t. It starts as a bare tao window so the
 # one genuinely unproven thing - a native GPU surface living in a window this project does not
 # own - is isolated from everything else. The webview, and then Tauri itself, come after.
 #

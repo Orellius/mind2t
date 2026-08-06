@@ -1,4 +1,4 @@
-//! Purpose: B2.4 - Sadna's Tauri host. A Tauri window whose terminal is a native GPU surface
+//! Purpose: B2.4 - Mind2t's Tauri host. A Tauri window whose terminal is a native GPU surface
 //!   and whose chrome is a React webview docked above it.
 //! Public surface: a binary.
 //! Why this file: Orel chose Tauri + React + TypeScript on 2026-08-04. Everything unusual here
@@ -23,8 +23,8 @@ use std::cell::{Cell, RefCell};
 use std::process::Command;
 use std::rc::Rc;
 
-use sadna::canvas::{Canvas, PaneSpec};
-use sadna::layout::{Canvas as Grid, Rect};
+use mind2t::canvas::{Canvas, PaneSpec};
+use mind2t::layout::{Canvas as Grid, Rect};
 use ruuah_vt_host::session::{MouseAction, MouseMods, Session};
 use ruuah_vt_frame::BaseDirection;
 use ruuah_vt_host::config::Config;
@@ -89,7 +89,7 @@ fn divider_color(background: [u8; 4]) -> [u8; 4] {
     [shift(background[0]), shift(background[1]), shift(background[2]), 255]
 }
 
-const SESSION_EVENT: &str = "sadna://session";
+const SESSION_EVENT: &str = "mind2t://session";
 
 /// Runs the whole host with NOTHING on screen: the window is created hidden, no key monitor is
 /// installed, diagnostics are printed and the process exits on its own.
@@ -100,7 +100,7 @@ const SESSION_EVENT: &str = "sadna://session";
 /// things that make a running window hostile to whoever owns the machine - it cannot take focus
 /// and it cannot swallow a keystroke.
 ///
-/// Enabled with `SADNA_HEADLESS=1`.
+/// Enabled with `MIND2T_HEADLESS=1`.
 ///
 /// A CEILING, not a duration: the run ends the moment it has collected everything it came for,
 /// so a healthy gate is far quicker than this. The number only has to outlast the slowest thing
@@ -115,23 +115,23 @@ const HEADLESS_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
 const CWD_PROBE: &str = "/tmp/ruuah-cwd-probe";
 
 /// What the smoke pastes. No newline: it must sit on the prompt as text, not execute.
-const PASTE_PROBE: &str = "sadna-paste-probe";
+const PASTE_PROBE: &str = "mind2t-paste-probe";
 
 /// What the smoke asks the child to print once its scrollback is filled.
-const FILL_MARKER: &str = "SADNA-FILLED";
+const FILL_MARKER: &str = "MIND2T-FILLED";
 
 /// What the child prints when it has turned mouse reporting on.
-const MOUSE_MARKER: &str = "SADNA-MOUSE";
+const MOUSE_MARKER: &str = "MIND2T-MOUSE";
 
 /// What the child prints to describe the environment the host handed it.
-const ENV_MARKER: &str = "SADNA-ENV";
+const ENV_MARKER: &str = "MIND2T-ENV";
 
 /// The line the selection probes run against, and the word inside it they must find.
 ///
 /// The hyphen is the whole point: `-` is NOT a word boundary in the rules ported from the
 /// oracle, so `alpha-beta` is ONE word. A host that re-derived the rules from anything sensible
 /// splits it at the hyphen, and this fixture is what makes that visible instead of plausible.
-const SELECT_MARKER: &str = "SADNA-SELECT";
+const SELECT_MARKER: &str = "MIND2T-SELECT";
 const SELECT_WORD: &str = "alpha-beta";
 const SELECT_TAIL: &str = "gamma";
 
@@ -174,7 +174,7 @@ const REPROBE: std::time::Duration = std::time::Duration::from_millis(400);
 
 fn headless() -> bool {
     std::env::args().any(|argument| argument == "--smoke")
-        || std::env::var("SADNA_HEADLESS").is_ok_and(|value| value == "1")
+        || std::env::var("MIND2T_HEADLESS").is_ok_and(|value| value == "1")
 }
 
 /// What the smoke run learned, filled in as it happens and judged at the end.
@@ -281,7 +281,7 @@ impl Smoke {
     ///
     /// "Non-empty" was the first version of this check and it passed vacuously: the gate runs
     /// under `cargo run`, so the child inherited the operator's own `TERM` and the assertion
-    /// was measuring the launching shell rather than the host. `smoke-sadna.sh` now poisons
+    /// was measuring the launching shell rather than the host. `smoke-mind2t.sh` now poisons
     /// `TERM=dumb` before launching, which is what makes this discriminating - an inheriting
     /// host reports `dumb` and fails, and a declaring host reports what it declared.
     fn child_has_terminfo(&self) -> bool {
@@ -527,7 +527,7 @@ impl Smoke {
             (
                 self.child_can_find_a_cli(),
                 "a real CLI RESOLVES inside the pane - the operator's sentence was 'no CLI \
-                 can run inside Sadna', and this is that sentence as an assertion rather \
+                 can run inside Mind2t', and this is that sentence as an assertion rather \
                  than as a mechanism",
             ),
             (
@@ -553,7 +553,7 @@ impl Smoke {
 
         let mut passed = true;
         for (held, what) in checks {
-            println!("sadna: [{}] {what}", if held { "PASS" } else { "FAIL" });
+            println!("mind2t: [{}] {what}", if held { "PASS" } else { "FAIL" });
             passed &= held;
         }
         passed
@@ -662,7 +662,7 @@ impl InputProbe {
                      printf '{FILL_MARKER}\\n'\r"
                 );
                 if let Err(error) = session.send(command.as_bytes()) {
-                    eprintln!("sadna: probe command refused: {error:?}");
+                    eprintln!("mind2t: probe command refused: {error:?}");
                 }
                 // The first half of the mouse claim, taken here because it is the only moment
                 // the child provably has NOT asked for reporting. Recorded, never asserted on
@@ -675,7 +675,7 @@ impl InputProbe {
             Stage::Filling => {
                 // The ENV report is the completion signal, not the fill marker, and that is a
                 // measured correction rather than a preference. An interactive shell ECHOES the
-                // line it was typed, and that echo contains `printf 'SADNA-FILLED\n'` - so
+                // line it was typed, and that echo contains `printf 'MIND2T-FILLED\n'` - so
                 // `visible_text().contains(FILL_MARKER)` was true the instant the command was
                 // typed, before the child had run anything. The stage advanced immediately, the
                 // report was never on screen, and all four environment checks failed on a run
@@ -703,11 +703,11 @@ impl InputProbe {
                     // Printed, not just asserted on: a failing environment check is unreadable
                     // without the values it read, and this is the one line that carries them.
                     if let Some(report) = smoke.child_env.as_deref() {
-                        println!("sadna: {report}");
+                        println!("mind2t: {report}");
                     }
                 }
                 if smoke.child_env.is_some() || waited >= Self::PATIENCE {
-                    sadna::clipboard::paste_text(session, PASTE_PROBE);
+                    mind2t::clipboard::paste_text(session, PASTE_PROBE);
                     self.enter(Stage::Pasting);
                 }
             }
@@ -737,7 +737,7 @@ impl InputProbe {
                     "\x15printf '\\033]7;file://localhost{CWD_PROBE}\\a\\033[?1000h\\033[?1006h{MOUSE_MARKER}\\n'; exec cat\r"
                 );
                 if let Err(error) = session.send(command.as_bytes()) {
-                    eprintln!("sadna: cwd probe refused: {error:?}");
+                    eprintln!("mind2t: cwd probe refused: {error:?}");
                 }
                 self.enter(Stage::Reporting);
             }
@@ -800,7 +800,7 @@ impl InputProbe {
                 // because every copy on screen is the same real text.
                 let line = format!("{SELECT_MARKER} {SELECT_WORD} {SELECT_TAIL}\r");
                 if let Err(error) = session.send(line.as_bytes()) {
-                    eprintln!("sadna: select fixture refused: {error:?}");
+                    eprintln!("mind2t: select fixture refused: {error:?}");
                 }
                 self.enter(Stage::Probing);
             }
@@ -812,7 +812,7 @@ impl InputProbe {
                         // selection is broken" are different defects with the same red line, and
                         // without the grid there is nothing to tell them apart.
                         eprintln!(
-                            "sadna: the select fixture never landed. grid says:\n{}",
+                            "mind2t: the select fixture never landed. grid says:\n{}",
                             session.visible_text(),
                         );
                         self.enter(Stage::Zooming);
@@ -868,7 +868,7 @@ impl InputProbe {
                     Ok(Some(geometry)) => geometry.cols,
                     Ok(None) => before.cols,
                     Err(error) => {
-                        eprintln!("sadna: zoom refused: {error:?}");
+                        eprintln!("mind2t: zoom refused: {error:?}");
                         self.enter(Stage::Done);
                         return;
                     }
@@ -877,7 +877,7 @@ impl InputProbe {
                     Ok(Some(geometry)) => geometry.cols,
                     Ok(None) => larger,
                     Err(error) => {
-                        eprintln!("sadna: zoom restore refused: {error:?}");
+                        eprintln!("mind2t: zoom restore refused: {error:?}");
                         self.enter(Stage::Done);
                         return;
                     }
@@ -968,23 +968,23 @@ fn snapshot(canvas: &Canvas) -> Vec<(Rect, (u16, u16))> {
         .collect()
 }
 
-/// Where Sadna reads `config.toml` and `themes/<name>.toml` from.
+/// Where Mind2t reads `config.toml` and `themes/<name>.toml` from.
 ///
-/// `~/.sadna`, falling back to `~/.ruuah` when only the older directory exists. The fallback is
+/// `~/.mind2t`, falling back to `~/.ruuah` when only the older directory exists. The fallback is
 /// not politeness: the engine's config loader has always defaulted to `~/.ruuah`, the `.app`
-/// ships that way, and an operator who already has a theme there would otherwise open Sadna and
+/// ships that way, and an operator who already has a theme there would otherwise open Mind2t and
 /// find a terminal wearing the default scheme with nothing to explain why.
 fn config_dir() -> Option<std::path::PathBuf> {
     let home = std::path::PathBuf::from(std::env::var_os("HOME")?);
-    let sadna = home.join(".sadna");
-    if sadna.join("config.toml").is_file() {
-        return Some(sadna);
+    let mind2t = home.join(".mind2t");
+    if mind2t.join("config.toml").is_file() {
+        return Some(mind2t);
     }
     let ruuah = home.join(".ruuah");
     if ruuah.join("config.toml").is_file() {
         return Some(ruuah);
     }
-    Some(sadna)
+    Some(mind2t)
 }
 
 /// Applies the operator's appearance settings to one pane.
@@ -1044,7 +1044,7 @@ fn shell_from(config: &Config) -> Command {
     // since slice 1.
     command.env("COLORTERM", "truecolor");
     // A terminal window is a SESSION BOUNDARY. Leaving these set makes an agent CLI opened in
-    // a pane believe it is a child of whatever session launched Sadna - seen live 2026-07-29,
+    // a pane believe it is a child of whatever session launched Mind2t - seen live 2026-07-29,
     // fixed in the C host, and never carried across to this one.
     command.env_remove("CLAUDECODE");
     command.env_remove("CLAUDE_CODE_CHILD_SESSION");
@@ -1077,7 +1077,7 @@ fn main() {
     // on one thread with no locks and no `Send` gymnastics around types that must never leave
     // this thread anyway.
     let window = WindowBuilder::new(&app, "main")
-        .title("Sadna")
+        .title("Mind2t")
         .inner_size(900.0, 560.0)
         .visible(!headless())
         .build()
@@ -1094,7 +1094,7 @@ fn main() {
     // thing the loader's strict key checking exists to prevent.
     let config = Config::load(config_dir().as_deref());
     if let Some(error) = &config.error {
-        eprintln!("sadna: config: {error}");
+        eprintln!("mind2t: config: {error}");
     }
     let font_size = if config.font_size > 0.0 { config.font_size } else { FONT_SIZE };
 
@@ -1104,7 +1104,7 @@ fn main() {
     let gpu = match GpuContext::new() {
         Ok(gpu) => gpu,
         Err(error) => {
-            eprintln!("sadna: no GPU: {error}");
+            eprintln!("mind2t: no GPU: {error}");
             std::process::exit(1);
         }
     };
@@ -1122,7 +1122,7 @@ fn main() {
     ) {
         Ok(canvas) => canvas,
         Err(error) => {
-            eprintln!("sadna: no canvas: {error:?}");
+            eprintln!("mind2t: no canvas: {error:?}");
             std::process::exit(1);
         }
     };
@@ -1151,7 +1151,7 @@ fn main() {
     ) {
         Ok(target) => target,
         Err(error) => {
-            eprintln!("sadna: no swapchain: {error}");
+            eprintln!("mind2t: no swapchain: {error}");
             std::process::exit(1);
         }
     };
@@ -1163,11 +1163,11 @@ fn main() {
     for candidate in ["index.html", "/index.html"] {
         match app.asset_resolver().get(candidate.to_string()) {
             Some(asset) => println!(
-                "sadna: asset {candidate:?} -> {} bytes, mime {}",
+                "mind2t: asset {candidate:?} -> {} bytes, mime {}",
                 asset.bytes.len(),
                 asset.mime_type
             ),
-            None => println!("sadna: asset {candidate:?} -> MISSING"),
+            None => println!("mind2t: asset {candidate:?} -> MISSING"),
         }
     }
 
@@ -1180,10 +1180,10 @@ fn main() {
         match "tauri://localhost/index.html".parse() {
             Ok(url) => {
                 if let Err(error) = chrome.navigate(url) {
-                    eprintln!("sadna: the chrome refused to navigate: {error}");
+                    eprintln!("mind2t: the chrome refused to navigate: {error}");
                 }
             }
-            Err(error) => eprintln!("sadna: bad chrome url: {error}"),
+            Err(error) => eprintln!("mind2t: bad chrome url: {error}"),
         }
     }
 
@@ -1191,14 +1191,14 @@ fn main() {
         let geometry = pane.session.geometry();
         let cell = pane.session.cell_metrics();
         println!(
-            "sadna: pane {index} {}x{} cells at {}x{}px, rect {:?}, strip {strip}px, scale {scale}",
+            "mind2t: pane {index} {}x{} cells at {}x{}px, rect {:?}, strip {strip}px, scale {scale}",
             geometry.cols, geometry.rows, cell.width, cell.height, pane.rect
         );
     }
     // Measured, not assumed. Every number here has already been wrong once in this project, and
     // each was found by a print contradicting a screenshot rather than by reading the code.
     println!(
-        "sadna: inner {}x{} outer {:?} area {:?}",
+        "mind2t: inner {}x{} outer {:?} area {:?}",
         physical.width,
         physical.height,
         window.outer_size().ok(),
@@ -1206,12 +1206,12 @@ fn main() {
     );
     if let Some(chrome) = window.get_webview("chrome") {
         println!(
-            "sadna: chrome webview position {:?} size {:?}",
+            "mind2t: chrome webview position {:?} size {:?}",
             chrome.position().ok(),
             chrome.size().ok()
         );
     } else {
-        println!("sadna: NO chrome webview is registered on this window");
+        println!("mind2t: NO chrome webview is registered on this window");
     }
     #[cfg(target_os = "macos")]
     view_tree(&window);
@@ -1257,14 +1257,14 @@ fn main() {
     // Without this the strip shows placeholders forever, and it is not a race that shows up in
     // testing: the host emits on frame one, the chrome's module loads a few hundred milliseconds
     // later, and the state only ever changes again if the window is resized. Measured here as
-    // `text: "SADNA\n-\n-"` while the session was 94x27. The Swift host's panel bridge solved
+    // `text: "MIND2T\n-\n-"` while the session was 94x27. The Swift host's panel bridge solved
     // the identical problem by replaying the latest message per kind; this is the same rule.
     let ready = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let announced_ready = std::sync::Arc::clone(&ready);
     let replay = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let requested = std::sync::Arc::clone(&replay);
-    app.listen("sadna://chrome-ready", move |event| {
-        println!("sadna: chrome reported ready, payload {}", event.payload());
+    app.listen("mind2t://chrome-ready", move |event| {
+        println!("mind2t: chrome reported ready, payload {}", event.payload());
         requested.store(true, std::sync::atomic::Ordering::Relaxed);
         announced_ready.store(true, std::sync::atomic::Ordering::Relaxed);
     });
@@ -1354,7 +1354,7 @@ fn main() {
                 if let Err(error) = target.present_all(&mut panes, &fills, clear) {
                     // Loud and fatal. A present that fails and falls back is how B1's four
                     // defects stayed invisible for a day.
-                    eprintln!("sadna: present failed: {error:?}");
+                    eprintln!("mind2t: present failed: {error:?}");
                     handle.exit(1);
                 }
             }
@@ -1391,10 +1391,10 @@ fn main() {
                         exited,
                     },
                 ) {
-                    eprintln!("sadna: could not reach the chrome: {error}");
+                    eprintln!("mind2t: could not reach the chrome: {error}");
                 } else {
                     println!(
-                        "sadna: told the chrome {}x{} cwd={} exited={exited}",
+                        "mind2t: told the chrome {}x{} cwd={} exited={exited}",
                         geometry.cols,
                         geometry.rows,
                         cwd.as_deref().unwrap_or("-"),
@@ -1483,7 +1483,7 @@ fn main() {
                         && (!headless() || document.contains(CWD_PROBE))
                 })
             };
-            let probing = headless() || std::env::var("SADNA_PROBE").is_ok();
+            let probing = headless() || std::env::var("MIND2T_PROBE").is_ok();
             if probing && settled && !agreed && probed_at.is_none_or(|at| at.elapsed() >= REPROBE)
             {
                 probed_at = Some(std::time::Instant::now());
@@ -1502,7 +1502,7 @@ fn main() {
                     // a covered path (SCAR-014).
                     let (command, font) = (shell_from(&smoke_config), font_size * scale as f32);
                     if let Err(error) = canvas.split(&smoke_gpu, command, font) {
-                        eprintln!("sadna: smoke could not split: {error:?}");
+                        eprintln!("mind2t: smoke could not split: {error:?}");
                     }
                 }
 
@@ -1535,7 +1535,7 @@ fn main() {
             if headless() && !finished && (collected || started.elapsed() >= HEADLESS_BUDGET) {
                 finished = true;
                 println!(
-                    "sadna: headless run complete after {frames} frames in {:?}",
+                    "mind2t: headless run complete after {frames} frames in {:?}",
                     started.elapsed()
                 );
                 #[cfg(target_os = "macos")]
@@ -1548,14 +1548,14 @@ fn main() {
                 // The sequence itself, printed as evidence: a check that reads "did this value
                 // ever appear" is only auditable if the values it saw are on the screen too.
                 println!(
-                    "sadna: directories reported {:?}",
+                    "mind2t: directories reported {:?}",
                     smoke.borrow().cwd_seen
                 );
                 let passed = smoke.borrow().judge(
                     page_finished.load(std::sync::atomic::Ordering::Relaxed),
                     ready.load(std::sync::atomic::Ordering::Relaxed),
                 );
-                println!("sadna: SMOKE {}", if passed { "PASSED" } else { "FAILED" });
+                println!("mind2t: SMOKE {}", if passed { "PASSED" } else { "FAILED" });
                 // The exit CODE is the gate's whole output to a script, and `AppHandle::exit`
                 // does NOT carry it - measured: a FAILED smoke still exited 0, which would have
                 // made this gate decoration the moment anything trusted it. The child is shut
@@ -1590,7 +1590,7 @@ fn main() {
                 // Reported, not fatal: a window dragged smaller than the grid can hold is the
                 // operator asking for something impossible, and the last good tiling stays on
                 // screen until they let go.
-                eprintln!("sadna: canvas resize refused: {error:?}");
+                eprintln!("mind2t: canvas resize refused: {error:?}");
             }
 
             // The webview is a child view with no autoresizing mask; nothing moves it but this.
@@ -1613,8 +1613,8 @@ mod input {
     use std::ptr::NonNull;
     use std::rc::Rc;
 
-    use sadna::canvas::Canvas;
-    use sadna::{clipboard, wheel};
+    use mind2t::canvas::Canvas;
+    use mind2t::{clipboard, wheel};
     use ruuah_vt_render::GpuContext;
     use block2::RcBlock;
     use objc2::rc::Retained;
@@ -1629,7 +1629,7 @@ mod input {
 
     use super::Focus;
 
-    /// Whether to print what each input path saw. `SADNA_TRACE=1`.
+    /// Whether to print what each input path saw. `MIND2T_TRACE=1`.
     ///
     /// Off by default and not a debug leftover: the whole layer is invisible by construction -
     /// a key that does nothing, a click that does nothing and a path that was never reached
@@ -1638,7 +1638,7 @@ mod input {
     fn tracing() -> bool {
         use std::sync::OnceLock;
         static ON: OnceLock<bool> = OnceLock::new();
-        *ON.get_or_init(|| std::env::var("SADNA_TRACE").is_ok_and(|value| value == "1"))
+        *ON.get_or_init(|| std::env::var("MIND2T_TRACE").is_ok_and(|value| value == "1"))
     }
 
     /// Where an event landed, in the space the mouse encoder measures in.
@@ -1746,14 +1746,14 @@ mod input {
             Ok(reported) => {
                 if tracing() && (reported || action != MouseAction::Motion) {
                     println!(
-                        "sadna: TRACE mouse {action:?} code={code} pane={index} at \
+                        "mind2t: TRACE mouse {action:?} code={code} pane={index} at \
                          ({x:.0},{y:.0})px mode={mode:?} reported={reported}"
                     );
                 }
                 reported
             }
             Err(error) => {
-                eprintln!("sadna: mouse report refused: {error:?}");
+                eprintln!("mind2t: mouse report refused: {error:?}");
                 // A refusal is not the child claiming the pointer. Answering `true` here would
                 // make a broken pty silently disable selection as well.
                 false
@@ -1805,12 +1805,12 @@ mod input {
             match pane.session.set_font_size(size, width, height) {
                 Ok(Some(geometry)) if tracing() => {
                     println!(
-                        "sadna: TRACE font {size:.1}px in {width}x{height}px -> {}x{} cells",
+                        "mind2t: TRACE font {size:.1}px in {width}x{height}px -> {}x{} cells",
                         geometry.cols, geometry.rows,
                     );
                 }
                 Ok(_) => {}
-                Err(error) => eprintln!("sadna: font resize refused: {error:?}"),
+                Err(error) => eprintln!("mind2t: font resize refused: {error:?}"),
             }
         }
     }
@@ -1825,10 +1825,10 @@ mod input {
         match std::process::Command::new("/usr/bin/open").arg(link).spawn() {
             Ok(_) => {
                 if tracing() {
-                    println!("sadna: TRACE opening link {link:?}");
+                    println!("mind2t: TRACE opening link {link:?}");
                 }
             }
-            Err(error) => eprintln!("sadna: cannot open {link:?}: {error:?}"),
+            Err(error) => eprintln!("mind2t: cannot open {link:?}: {error:?}"),
         }
     }
 
@@ -1917,13 +1917,13 @@ mod input {
                     // being ignored.
                     let Some((x, y, over_strip, _)) = surface_point(event, mtm, bar_height) else {
                         if tracing() {
-                            println!("sadna: TRACE mouse down with NO window on the event");
+                            println!("mind2t: TRACE mouse down with NO window on the event");
                         }
                         return pass;
                     };
                     if tracing() {
                         println!(
-                            "sadna: TRACE mouse down at ({x:.0},{y:.0})px over_strip={over_strip}"
+                            "mind2t: TRACE mouse down at ({x:.0},{y:.0})px over_strip={over_strip}"
                         );
                     }
                     let under = (!over_strip)
@@ -1996,7 +1996,7 @@ mod input {
                                 }
                                 if tracing() {
                                     println!(
-                                        "sadna: TRACE select clicks={} pane={index} -> {:?}",
+                                        "mind2t: TRACE select clicks={} pane={index} -> {:?}",
                                         event.clickCount(),
                                         pane.session.selection(),
                                     );
@@ -2127,7 +2127,7 @@ mod input {
                     match pane.session.wheel(local_x, local_y, rows, mods_of(event)) {
                         Ok(true) => {}
                         Ok(false) => pane.session.scroll(rows),
-                        Err(error) => eprintln!("sadna: wheel refused: {error:?}"),
+                        Err(error) => eprintln!("mind2t: wheel refused: {error:?}"),
                     }
                     std::ptr::null_mut()
                 }
@@ -2158,7 +2158,7 @@ mod input {
                         );
                         if tracing() {
                             println!(
-                                "sadna: TRACE cmd chord keycode={} key={chord:?} plain={plain} pane={index}",
+                                "mind2t: TRACE cmd chord keycode={} key={chord:?} plain={plain} pane={index}",
                                 event.keyCode(),
                             );
                         }
@@ -2183,11 +2183,11 @@ mod input {
                                     // does and what makes the chord usable twice in a row.
                                     focus.set(Focus::Pane(index));
                                     if tracing() {
-                                        println!("sadna: TRACE split into pane {index}");
+                                        println!("mind2t: TRACE split into pane {index}");
                                     }
                                 }
                                 Err(error) => {
-                                    eprintln!("sadna: cannot split: {error:?}");
+                                    eprintln!("mind2t: cannot split: {error:?}");
                                 }
                             }
                             return std::ptr::null_mut();
@@ -2200,7 +2200,7 @@ mod input {
                         if chord == Key::C && plain {
                             let copied = copy_selection(&canvas, index);
                             if tracing() {
-                                println!("sadna: TRACE cmd+C pane={index} copied={copied}");
+                                println!("mind2t: TRACE cmd+C pane={index} copied={copied}");
                             }
                             if copied {
                                 return std::ptr::null_mut();
@@ -2235,14 +2235,14 @@ mod input {
                             };
                             if tracing() {
                                 println!(
-                                    "sadna: TRACE clipboard holds {:?} chars, bracketed={}",
+                                    "mind2t: TRACE clipboard holds {:?} chars, bracketed={}",
                                     text.as_ref().map(|value| value.chars().count()),
                                     pane.session.bracketed_paste(),
                                 );
                             }
                             match text {
                                 Some(text) => clipboard::paste_text(&pane.session, &text),
-                                None => eprintln!("sadna: the clipboard holds no text"),
+                                None => eprintln!("mind2t: the clipboard holds no text"),
                             }
                             return std::ptr::null_mut();
                         }
@@ -2301,7 +2301,7 @@ mod input {
                         return pass;
                     }
                     if let Err(error) = pane.session.send(&bytes) {
-                        eprintln!("sadna: send failed: {error:?}");
+                        eprintln!("mind2t: send failed: {error:?}");
                     }
                     std::ptr::null_mut()
                 }
@@ -2367,12 +2367,12 @@ fn view_tree(window: &tauri::Window) -> Vec<String> {
 
     let mut layers = Vec::new();
     let Ok(handle) = window.ns_window() else {
-        println!("sadna: no ns_window to inspect");
+        println!("mind2t: no ns_window to inspect");
         return layers;
     };
     let ns_window: *mut AnyObject = handle.cast();
     if ns_window.is_null() {
-        println!("sadna: ns_window is null");
+        println!("mind2t: ns_window is null");
         return layers;
     }
 
@@ -2381,12 +2381,12 @@ fn view_tree(window: &tauri::Window) -> Vec<String> {
     unsafe {
         let content: Option<Retained<NSView>> = objc2::msg_send![ns_window, contentView];
         let Some(content) = content else {
-            println!("sadna: window has no contentView");
+            println!("mind2t: window has no contentView");
             return layers;
         };
         let frame = content.frame();
         println!(
-            "sadna: contentView {}x{}",
+            "mind2t: contentView {}x{}",
             frame.size.width, frame.size.height
         );
         // Z-ORDER, measured instead of looked at. A layer's position in its superlayer's
@@ -2397,7 +2397,7 @@ fn view_tree(window: &tauri::Window) -> Vec<String> {
         if let Some(layer) = layer {
             let class: Retained<objc2_foundation::NSString> =
                 objc2::msg_send![&*layer, description];
-            println!("sadna: contentView.layer {}", class.to_string());
+            println!("mind2t: contentView.layer {}", class.to_string());
             let sublayers: Option<Retained<objc2_foundation::NSArray>> =
                 objc2::msg_send![&*layer, sublayers];
             match sublayers {
@@ -2408,11 +2408,11 @@ fn view_tree(window: &tauri::Window) -> Vec<String> {
                             objc2::msg_send![&*sublayers, objectAtIndex: index];
                         let name: Retained<objc2_foundation::NSString> =
                             objc2::msg_send![&*sublayer, className];
-                        println!("sadna:   layer[{index}] {} (later = on top)", name.to_string());
+                        println!("mind2t:   layer[{index}] {} (later = on top)", name.to_string());
                         layers.push(name.to_string());
                     }
                 }
-                None => println!("sadna: contentView.layer has no sublayers"),
+                None => println!("mind2t: contentView.layer has no sublayers"),
             }
         }
 
@@ -2420,7 +2420,7 @@ fn view_tree(window: &tauri::Window) -> Vec<String> {
             let frame = view.frame();
             let class = view.class().name().to_string_lossy().into_owned();
             println!(
-                "sadna:   subview[{index}] {class} at ({}, {}) {}x{} hidden={}",
+                "mind2t:   subview[{index}] {class} at ({}, {}) {}x{} hidden={}",
                 frame.origin.x,
                 frame.origin.y,
                 frame.size.width,
@@ -2467,9 +2467,9 @@ fn titlebar_inset(window: &tauri::Window) -> f64 {
         // inset of 0 and a correct inset both satisfy "origin clears the strip".
         // Printed only when something is measuring: the derived number was wrong once and the
         // gate could not see it, so the raw inputs stay available - but not on every launch.
-        if headless() || std::env::var("SADNA_PROBE").is_ok() {
+        if headless() || std::env::var("MIND2T_PROBE").is_ok() {
             println!(
-                "sadna: window frame h={} contentView h={} contentLayoutRect h={} inset={inset}",
+                "mind2t: window frame h={} contentView h={} contentLayoutRect h={} inset={inset}",
                 frame.size.height,
                 content.frame().size.height,
                 layout.size.height,
@@ -2492,7 +2492,7 @@ fn attach_chrome(
     finished: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Option<String> {
     let Ok(physical) = window.inner_size() else {
-        eprintln!("sadna: no window size, no chrome");
+        eprintln!("mind2t: no window size, no chrome");
         return None;
     };
     let scale = window.scale_factor().unwrap_or(1.0);
@@ -2508,7 +2508,7 @@ fn attach_chrome(
             .background_color(tauri::webview::Color(0x10, 0x10, 0x16, 0xff))
             .on_page_load(move |webview, payload| {
                 println!(
-                    "sadna: chrome page {:?} url={}",
+                    "mind2t: chrome page {:?} url={}",
                     payload.event(),
                     webview.url().map(|url| url.to_string()).unwrap_or_default()
                 );
@@ -2521,11 +2521,11 @@ fn attach_chrome(
     ) {
         Ok(chrome) => {
             let url = chrome.url().map(|url| url.to_string()).ok();
-            println!("sadna: chrome attached, url={url:?} size={:?}", chrome.size().ok());
+            println!("mind2t: chrome attached, url={url:?} size={:?}", chrome.size().ok());
             url
         }
         Err(error) => {
-            eprintln!("sadna: the chrome webview refused to attach: {error}");
+            eprintln!("mind2t: the chrome webview refused to attach: {error}");
             None
         }
     }
@@ -2570,12 +2570,12 @@ fn probe_document(window: &tauri::Window, smoke: std::rc::Rc<std::cell::RefCell<
                 if !value.is_null() {
                     let text: Retained<NSString> = objc2::msg_send![value, description];
                     let text = text.to_string();
-                    println!("sadna: document says {text}");
+                    println!("mind2t: document says {text}");
                     record.borrow_mut().document = Some(text);
                 }
                 if !error.is_null() {
                     let text: Retained<NSString> = objc2::msg_send![error, description];
-                    println!("sadna: document probe failed: {}", text.to_string());
+                    println!("mind2t: document probe failed: {}", text.to_string());
                 }
             });
             let _: () = objc2::msg_send![&**view, evaluateJavaScript: &*script, completionHandler: &*handler];
@@ -2629,7 +2629,7 @@ fn webview_state(window: &tauri::Window) {
             let title: Option<Retained<NSString>> = objc2::msg_send![&**view, title];
             let title = title.map(|value| value.to_string()).unwrap_or_default();
             println!(
-                "sadna: WKWebView url={described} progress={progress} loading={loading} title={title:?}"
+                "mind2t: WKWebView url={described} progress={progress} loading={loading} title={title:?}"
             );
         }
     }

@@ -16,4 +16,4 @@ cd "$root"
 
 # The bare separator matters: everything after it goes to the TEST harness, not to cargo. Without
 # it cargo reads the ignore flag as its own and refuses.
-exec cargo test -p sadna --lib launch::tests::a_real_agent -- --ignored --nocapture "$@"
+exec cargo test -p mind2t --lib launch::tests::a_real_agent -- --ignored --nocapture "$@"

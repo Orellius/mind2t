@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# The Sadna host gate: builds the chrome, then runs the REAL Tauri host with its window ordered
+# The Mind2t host gate: builds the chrome, then runs the REAL Tauri host with its window ordered
 # out and asserts sixteen invariants about what AppKit, WebKit, the IPC and the children did.
 #
 # Nothing appears on screen and no keystroke is captured, which is what makes it runnable while
 # the operator is working. Exit status is the verdict; the run prints one PASS or FAIL line per
 # invariant, each naming the defect it exists to catch.
 #
-# Seen failing: remove crates/sadna/capabilities/chrome.json and it reports six FAIL lines and
+# Seen failing: remove crates/mind2t/capabilities/chrome.json and it reports six FAIL lines and
 # exits 1. A gate never seen red is not evidence.
 set -euo pipefail
 
@@ -30,11 +30,11 @@ bun run --cwd chrome build >/dev/null
 # forgets to scrub them reports them straight back.
 #
 # The build happens before the poison because cargo itself needs the real PATH.
-cargo build -q -p sadna --bin sadna
+cargo build -q -p mind2t --bin mind2t
 
 exec env \
     PATH=/usr/bin:/bin:/usr/sbin:/sbin \
     TERM=dumb \
     CLAUDECODE=smoke-poison \
     CLAUDE_CODE_CHILD_SESSION=smoke-poison \
-    ./target/debug/sadna --smoke
+    ./target/debug/mind2t --smoke

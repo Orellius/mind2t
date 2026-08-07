@@ -194,22 +194,36 @@ Arabic sitting off the grid; `a_monospaced_arabic_face_outranks_the_proportional
 ordering that fixes the second half, and checks that the monospaced face is the one which
 actually answers rather than merely the one listed first.
 
-### What is not done
+**Arabic letters take their contextual forms.** A contiguous run of cells in one cursive script
+is shaped as a run, so each letter resolves to its initial, medial, final or isolated glyph, and
+every glyph is then positioned in its own cell: shape for form, position for grid. Measured at
+32px, beh alone is glyph 867 and the same letter inside a word resolves to 870 / 869 / 868.
 
-**Arabic letters render in their isolated forms rather than joined**, and the reason is a bug
-here rather than a law of terminal grids. Shaping is gated on a cluster having more than one
-codepoint, so a lone Arabic letter never reaches the shaper and gets its nominal glyph, which is
-the isolated form. The joining lookups are never run.
-
-Arabic joining is overwhelmingly a one-to-one substitution, so the correct forms fit a grid
-exactly; the machinery to shape a run already exists and is currently hardcoded to Latin. The
-diagnosis, the fix, the harness that would catch it and the mutants that would prove it are in
-[`docs/plans/2026-08-07-arabic-joining.md`](docs/plans/2026-08-07-arabic-joining.md). What will
-remain afterwards is cosmetic: joining strokes drawn at cell boundaries do not always meet
-exactly, which is a real grid limit and a much smaller one.
+Until 2026-08-08 this rendered as isolated forms, and the note here blamed terminal grids. That
+was wrong. Shaping was gated on a cluster having more than one codepoint, so a lone Arabic letter
+never reached the shaper at all and got the charmap's nominal glyph, which is the isolated form -
+a bug in this renderer, not a property every terminal shares. The diagnosis is kept in
+[`docs/plans/2026-08-07-arabic-joining.md`](docs/plans/2026-08-07-arabic-joining.md).
 
 Hebrew coverage is pinned across the classes that appear in real text rather than one letter:
 base letters, final forms, niqqud, the dagesh GSUB composes into its base, and punctuation.
+
+### What is not done
+
+**The mandatory lam-alef ligature is refused rather than approximated.** Two characters collapse
+into one glyph, which does not fit a cell grid, so the run shaper returns nothing and those cells
+fall back to the isolated forms drawn before. Wrong in a known way beats overlapping a cell.
+
+**Joining strokes do not always meet**, because each glyph is positioned in its own cell rather
+than at the previous glyph's advance. The letters are in their correct joined forms, which is the
+part that makes Arabic readable. That is the real grid limit, and it is much smaller than the one
+this section used to claim.
+
+**Arabic glyphs overhang their cell**, because the faces that ship with macOS are proportional -
+beh advances 22.4px against a 19px cell. Whether the overhang survives depends on paint order, so
+in a right-to-left run an empty space beside a letter carries its neighbour's ink: measured
+2026-08-08, 50 pixels of it. Recorded in
+[`docs/BACKLOG-2026.md`](docs/BACKLOG-2026.md); installing Kawkab Mono avoids it entirely.
 
 ## How it compares
 

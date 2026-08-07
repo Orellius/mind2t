@@ -17,7 +17,7 @@ use crate::atlas::Atlas;
 use crate::canvas::Canvas;
 use crate::color::{Palette, Rgba};
 use crate::font::FontStack;
-use crate::shape::{PositionedGlyph, Shaper, needs_shaping};
+use crate::shape::{CellGlyph, PositionedGlyph, Shaper, needs_shaping};
 use crate::surface::Surface;
 
 /// Paints frames into a surface.
@@ -298,6 +298,14 @@ impl<S: Surface> Renderer<S> {
             } else {
                 Vec::new()
             };
+            // Joining pass: the same mechanism for cursive scripts. It cannot collide with
+            // the ligature plan -- that one takes printable ASCII only, and no joining script
+            // is ASCII -- so the two never claim the same cell.
+            let joins = if self.shaping && drawn.ink && parts.ink() {
+                self.joining_plan(&run)
+            } else {
+                Vec::new()
+            };
             for (index, glyph_cell) in run.cells.iter().enumerate() {
                 let column = run.column_of(index);
                 let width = cell_width(*glyph_cell);
@@ -321,10 +329,15 @@ impl<S: Surface> Renderer<S> {
                 if !parts.ink() {
                     continue;
                 }
-                let ligated = plans
+                let covers_index =
+                    |start: &usize, count: &usize| index >= *start && index < start + count;
+                let planned = plans
                     .iter()
-                    .any(|(start, count, _)| index >= *start && index < start + count);
-                if drawn.ink && !ligated {
+                    .any(|(start, count, _)| covers_index(start, count))
+                    || joins
+                        .iter()
+                        .any(|(start, count, _)| covers_index(start, count));
+                if drawn.ink && !planned {
                     let mirrored = run.direction == ruuah_vt_frame::Direction::RightToLeft;
                     self.draw_cell(*glyph_cell, left, top, width, drawn.foreground, mirrored);
                 }
@@ -347,11 +360,100 @@ impl<S: Surface> Renderer<S> {
                     }
                 }
             }
+            // Joined ink. Every glyph is placed in its OWN cell's column, which is what keeps
+            // a proportional Arabic face on the grid, and the column comes from
+            // `Run::column_of` so a right-to-left run needs no arithmetic of its own here.
+            for (start, _, glyphs) in joins.iter().filter(|_| parts.ink()) {
+                let baseline = top + cell.baseline;
+                for placed in glyphs {
+                    let column = run.column_of(start + usize::from(placed.cell));
+                    let origin = i32::from(column) * cell.width as i32;
+                    let Some(glyph) = self.atlas.glyph(&self.fonts, placed.glyph.key) else {
+                        continue;
+                    };
+                    if let crate::atlas::GlyphData::Mask(coverage) = &glyph.data {
+                        let x = origin + placed.glyph.x.round() as i32 + glyph.left;
+                        let y = baseline - placed.glyph.y.round() as i32 - glyph.top;
+                        let (width, height) = (glyph.width, glyph.height);
+                        self.canvas
+                            .blend_mask(x, y, width, height, coverage, drawn.foreground);
+                    }
+                }
+            }
         }
 
         if parts.ink() {
             self.draw_cursor(frame, y);
         }
+    }
+
+    /// Plans cursive-joining segments for one run: maximal stretches of single-width cells in
+    /// one joining script that resolve to one font, shaped together so each letter takes its
+    /// contextual form.
+    ///
+    /// The three boundary conditions are each load-bearing rather than defensive:
+    ///
+    /// - **One script.** swash gates the joining state machine on the script handed to the
+    ///   builder, so a segment holding two of them would shape one of them wrongly.
+    /// - **One font.** `add_str` shapes against a single face, and a glyph id means nothing
+    ///   outside the font it came from -- the reason the atlas keys on (font, glyph). Arabic
+    ///   here can resolve to Kawkab Mono, SF Arabic or Geeza Pro depending on what is
+    ///   installed, so this is a real boundary and not a theoretical one.
+    /// - **Width 1.** A wide cell occupies two columns, and one glyph per cell stops being a
+    ///   true statement about the grid.
+    ///
+    /// A segment of one cell is skipped: a letter with no neighbours keeps the nominal glyph,
+    /// which is exactly what the per-cell path already draws.
+    fn joining_plan(
+        &mut self,
+        run: &ruuah_vt_frame::Run<'_>,
+    ) -> Vec<(usize, usize, Vec<CellGlyph>)> {
+        let mut plans = Vec::new();
+        let cells = run.cells;
+        let rtl = run.direction == ruuah_vt_frame::Direction::RightToLeft;
+        let mut index = 0usize;
+        while index < cells.len() {
+            let mut text = String::new();
+            let mut starts: Vec<usize> = Vec::new();
+            let mut script = None;
+            let mut face = None;
+            let mut end = index;
+            while end < cells.len() {
+                let cell = cells[end];
+                if cell_width(cell) != 1 || !cell.has_text() {
+                    break;
+                }
+                let mut scratch = [0u8; ruuah_vt_frame::CLUSTER_BYTES];
+                let cluster = cell.cluster(&mut scratch);
+                let Some(first) = cluster.chars().next() else {
+                    break;
+                };
+                let Some(this) = crate::shape::joining_script(first) else {
+                    break;
+                };
+                let Some(resolved) = self.fonts.resolve(first) else {
+                    break;
+                };
+                if *script.get_or_insert(this) != this
+                    || *face.get_or_insert(resolved.font) != resolved.font
+                {
+                    break;
+                }
+                starts.push(text.len());
+                text.push_str(cluster);
+                end += 1;
+            }
+            if end - index >= 2 {
+                if let Some(glyphs) =
+                    self.shaper
+                        .shape_joined_run(&mut self.fonts, &text, &starts, rtl)
+                {
+                    plans.push((index, end - index, glyphs.to_vec()));
+                }
+            }
+            index = end.max(index + 1);
+        }
+        plans
     }
 
     /// Plans ligature segments for one run: maximal stretches of single-codepoint

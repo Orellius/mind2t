@@ -184,6 +184,31 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
     simply dropped), so it is left as a one-line follow-up instead of being
     smuggled into this slice.
 
+## P2 - a proportional Arabic face overhangs its cell (found 2026-08-08)
+
+Found while gating Arabic joining, and it is a SEPARATE defect that predates it:
+the Arabic faces shipping with macOS are proportional, so beh advances 22.4px
+against a 19px cell and a glyph drawn at its cell's origin spills right.
+
+Whether the spill survives is decided by paint order, which makes it direction
+dependent. A run is painted in LOGICAL order, which on a right-to-left row runs
+right to left on screen, so each letter's overhang lands on a cell that has
+already been painted and is never cleared. Measured: `"\u{0628} \u{0628}"` at
+32px puts **50 inked pixels into the empty space between the two letters**, and
+`"\u{05D0} \u{05D0}"` puts none, because Hebrew's faces here are monospaced.
+
+Not fixed with joining, because the honest fixes are all bigger than the bug:
+scale the run horizontally to the cell pitch (changes letter shapes), clip each
+glyph to its cell (cuts the strokes that make cursive readable), or require a
+monospaced face. Installing **Kawkab Mono** avoids it entirely and the font
+stack already prefers it - see `a_monospaced_arabic_face_outranks_the_
+proportional_ones`.
+
+The tests in `crates/render/tests/arabic.rs` are written around it rather than
+against it: form is asserted on glyph ids, and pixel comparisons are only made
+between cells that are equally contaminated or equally clean. That is stated in
+the file so a later reader does not mistake the omission for an oversight.
+
 ## Deliberately NOT on the list
 
 - **Bidi in the core** - renderer-layer forever (measured ABI + oracle reasons,

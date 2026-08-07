@@ -19,7 +19,7 @@
 //! -- therefore produces byte-identical output to the per-cell path, and Arabic joining
 //! remains out (segments are ASCII by construction).
 
-use swash::shape::ShapeContext;
+use swash::shape::{Direction, ShapeContext};
 use swash::text::{Codepoint, Script};
 
 use crate::atlas::GlyphKey;
@@ -34,11 +34,25 @@ pub struct PositionedGlyph {
     pub y: f32,
 }
 
+/// A glyph, and which cell of a shaped run it belongs to.
+///
+/// The whole point of the joined-run path: shape for FORM across the run, position for GRID
+/// per cell. `cell` indexes the run's cells in the run's own logical order, so the caller
+/// still asks `Run::column_of` where to draw it and right-to-left needs no special case here.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CellGlyph {
+    pub cell: u16,
+    pub glyph: PositionedGlyph,
+}
+
 /// Shapes clusters, reusing its internal caches across calls.
 pub struct Shaper {
     context: ShapeContext,
     /// Scratch, so shaping a cell costs no allocation after the first.
     glyphs: Vec<PositionedGlyph>,
+    /// Scratch for the joined-run path, kept separate so a run plan and a cell's glyphs can
+    /// both be alive without one clearing the other.
+    cells: Vec<CellGlyph>,
 }
 
 impl Shaper {
@@ -46,6 +60,7 @@ impl Shaper {
         Shaper {
             context: ShapeContext::new(),
             glyphs: Vec::with_capacity(8),
+            cells: Vec::with_capacity(16),
         }
     }
 
@@ -160,6 +175,120 @@ impl Shaper {
         (&self.glyphs, substituted || count < chars)
     }
 
+    /// Shapes a run of cells in one cursive-joining script, returning one entry per SOURCE
+    /// CELL rather than a single laid-out string.
+    ///
+    /// This is the whole Arabic fix and it is a plumbing fix, not a new capability. `shape`
+    /// already selects the script from the text and so already applies the joining lookups --
+    /// it was simply never called with more than one cell, because `needs_shaping` asks
+    /// whether a CLUSTER has a second codepoint and a lone Arabic letter has not. So every
+    /// Arabic letter took `place_at_origin`, which maps the character through the charmap, and
+    /// the charmap's answer is the ISOLATED form. Measured 2026-08-08 at 32px: beh alone is
+    /// glyph 867, and the same letter inside a word resolves to 870 / 869 / 868.
+    ///
+    /// Two things separate this from `shape_run`, which was written for Latin ligatures:
+    ///
+    /// 1. The script comes from the text. `shape_run` hardcodes `Script::Latin`, and swash
+    ///    gates the joining state machine on `script.is_joined()`, so an Arabic run shaped as
+    ///    Latin gets no `init`/`medi`/`fina` at all.
+    /// 2. The pen does not walk by the font's advance. The Arabic faces on this machine are
+    ///    proportional -- beh advances 22.4px against a 19px cell -- so a run laid out by its
+    ///    own advances drifts off the grid within a few letters. Each glyph is positioned in
+    ///    its own cell instead: shape for form, position for grid.
+    ///
+    /// `starts` gives the byte offset at which each cell's cluster begins in `text`.
+    /// `rtl` is the run's resolved direction, which the caller already knows from the UBA and
+    /// which is a better answer than guessing it from the script.
+    ///
+    /// Returns `None` whenever the shaping did not stay one cluster per cell. That is the
+    /// mandatory lam-alef ligature, where two characters collapse into one glyph and genuinely
+    /// do not fit a cell grid, and it is deliberately a REFUSAL rather than an approximation:
+    /// the caller falls back to the per-cell path and draws what it drew before, which is
+    /// wrong in a known way instead of overlapping or dropping a cell.
+    pub fn shape_joined_run(
+        &mut self,
+        fonts: &mut FontStack,
+        text: &str,
+        starts: &[usize],
+        rtl: bool,
+    ) -> Option<&[CellGlyph]> {
+        self.cells.clear();
+        if starts.len() < 2 {
+            // A lone letter has no neighbours, so its contextual form IS the nominal glyph.
+            // Refusing here keeps the fast path fast and makes "alone renders unchanged" true
+            // by construction rather than by coincidence.
+            return None;
+        }
+        let first = text.chars().next()?;
+        let script = first.script();
+        if !script.is_joined() {
+            return None;
+        }
+        let resolved = fonts.resolve(first)?;
+        let font = fonts.face(resolved.font)?;
+
+        let mut shaper = self
+            .context
+            .builder(font)
+            .script(script)
+            .direction(if rtl {
+                Direction::RightToLeft
+            } else {
+                Direction::LeftToRight
+            })
+            .size(fonts.size())
+            .build();
+        shaper.add_str(text);
+
+        let out = &mut self.cells;
+        // swash does NOT reverse right-to-left runs (documented, and the reason the reordering
+        // stays in `frame::bidi`), so clusters arrive in the same logical order as the cells.
+        let mut next = 0usize;
+        let mut broken = false;
+        shaper.shape_with(|cluster| {
+            if broken {
+                return;
+            }
+            let Some(&cell_start) = starts.get(next) else {
+                broken = true;
+                return;
+            };
+            let cell_end = starts.get(next + 1).copied().unwrap_or(text.len());
+            // The cluster has to begin exactly where this cell does and end inside it. A
+            // cluster that swallows the next cell's bytes is a collapsing ligature.
+            if cluster.source.start as usize != cell_start
+                || cluster.source.end as usize > cell_end
+                || cluster.glyphs.is_empty()
+            {
+                broken = true;
+                return;
+            }
+            // The pen restarts at every cell. Inside a cell it still walks, so a base plus its
+            // marks position against each other exactly as the single-cell path does.
+            let mut pen = 0.0f32;
+            for glyph in cluster.glyphs {
+                out.push(CellGlyph {
+                    cell: next as u16,
+                    glyph: PositionedGlyph {
+                        key: GlyphKey {
+                            font: resolved.font,
+                            glyph: glyph.id,
+                        },
+                        x: pen + glyph.x,
+                        y: glyph.y,
+                    },
+                });
+                pen += glyph.advance;
+            }
+            next += 1;
+        });
+
+        if broken || next != starts.len() {
+            return None;
+        }
+        Some(&self.cells)
+    }
+
     /// One glyph per character, all at the pen origin.
     ///
     /// Exactly right for a single-codepoint cluster, which is nearly every cell on screen, so
@@ -202,6 +331,16 @@ pub fn needs_shaping(cluster: &str) -> bool {
 /// The script a cluster belongs to, for callers that want to reason about it.
 pub fn script_of(cluster: &str) -> Option<Script> {
     cluster.chars().next().map(|c| c.script())
+}
+
+/// The script of `c` when it is one that joins cursively, otherwise `None`.
+///
+/// The segmenter's boundary test. Latin, Hebrew and every CJK script answer `None` and take
+/// the path they always did, which is what keeps this change away from the overwhelming
+/// majority of cells on screen.
+pub fn joining_script(c: char) -> Option<Script> {
+    let script = c.script();
+    script.is_joined().then_some(script)
 }
 
 #[cfg(test)]

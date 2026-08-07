@@ -44,7 +44,7 @@ pub use font::{CellMetrics, FontError, FontStack, Resolved};
 pub use gpu::{GpuContext, GpuError, GpuSurface};
 pub use present::{Blitter, Fill, PresentError, WindowTarget};
 pub use renderer::Renderer;
-pub use shape::{PositionedGlyph, Shaper, needs_shaping};
+pub use shape::{CellGlyph, PositionedGlyph, Shaper, joining_script, needs_shaping};
 pub use surface::{Surface, TruncatingSurface};
 
 /// The wgpu this crate is built against, re-exported.

@@ -53,6 +53,25 @@ licences and one addition of our own.
 **No Ghostty code ships here.** The app binary contains zero of its symbols and links zero of
 its libraries, which is checkable with `nm` and `otool`.
 
+The history carries no personal data either, and that is checkable rather than asserted. Every
+commit is authored by one GitHub noreply identity, no commit message names an account, and the
+only address anywhere in the log is the reserved example domain:
+
+```sh
+git log --all --format='%an <%ae>' | sort -u                          # one noreply identity
+git log --all --format='%b %s' | grep -oiE '[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}' | sort -u
+```
+
+Absolute paths do appear, and all of them are synthetic test fixtures such as `/Users/orel/src`,
+which exist because OSC 7 reports a `file://` URI and the corpus has to pin what the parser does
+with one. Home-relative paths appear too, and they are this program's own: `~/.mind2t/config.toml`
+and the `~/.ruuah` fallback it still reads.
+
+The commits were rewritten once, on 2026-08-07, to remove an email address and two paths into a
+private machine before the repository was made public. Nothing else moved: the tree hash at HEAD
+is byte-identical either side of that rewrite, and all 305 commits and 28 tags survived with
+their messages, dates and ordering intact.
+
 ## How it is checked, and against what
 
 Ghostty did not disappear from the project. It became the instrument.
@@ -100,6 +119,90 @@ version and watched go red. That is not a slogan; it is what found:
 The screenshots above were taken with `cargo run -p ruuah-vt-render --example screenshot`, which
 runs a command in a real pty and renders the result with this terminal's own CPU backend. A
 picture of some other terminal agreeing with our numbers would not be the claim being made.
+
+## Bidirectional text
+
+This is the feature the renderer was shaped around, and the one thing here that no other
+terminal does.
+
+![bidirectional text, rendered by this terminal](docs/images/bidi-proof-20260807.png)
+
+<p align="center"><em>Rendered by this terminal, not mocked up.</em></p>
+
+Every line in that image is a rule that a plausible implementation gets wrong:
+
+- **The number does not flip.** `גיל 42 שנה` becomes `הנש 42 ליג`. An implementation that reverses the run wholesale gives you `24`, and it looks entirely reasonable until somebody reads a port number backwards.
+- **Word order reverses, the words do not.**
+- **Code keeps its direction** while the string inside it reorders.
+- **Brackets mirror** inside an RTL run.
+- **Box drawing bounds the segment**, so a framed table keeps its frame where the program drew it. Whole-line reordering across a table moves the frame relative to the text it encloses.
+- **Niqqud are placed by the font's own GPOS tables**, one cell each, rather than at default bearings.
+
+### The proof
+
+The oracle is Unicode itself, not an opinion. `crates/frame/tests/bidi_conformance.rs` runs our
+own layout against the Unicode Character Database:
+
+| suite | result |
+|---|---|
+| `BidiCharacterTest.txt` | **91,707 applied, 91,707 passed, 0 excluded** |
+
+Every case in the file is applied; none is skipped by the segment rule. 2,162 of the first 4,000
+require real reordering, so the comparison provably distinguishes visual from logical rather than
+passing on text that happens to be direction-neutral. The test also refuses a truncated suite, so
+a vendoring accident fails loudly instead of quietly measuring less.
+
+`BidiTest.txt` is vendored alongside it by `scripts/fetch-ucd.sh` and is **not yet run**; the
+reference-vs-property form it uses needs its own harness. Stated rather than counted, because a
+number nothing computes is not evidence.
+
+The suite caught a genuine bug on its first run: the
+fast path that skipped the algorithm for plain text ignored the base direction, and under an RTL
+base even a row of neutrals resolves to level 1 and reverses.
+
+### Where it lives, and why that is the whole design
+
+**Bidi is in the renderer and never in the core.** Reordering in the core would break cursor
+addressing, because a cursor-addressed TUI has no mapping for where its cursor went after a
+reorder. It would also make every RTL line diverge from the differential oracle by construction,
+deleting the only correctness signal this project has. Slice 5.5 landed reordering with the
+corpus untouched at 78/78, which is that separation demonstrated rather than asserted.
+
+### What is not done
+
+**Only Hebrew renders today.** The algorithm is script agnostic and the conformance numbers
+above cover every bidi script, but the font stack is `Menlo -> Miriam Mono CLM -> Arial Hebrew`,
+and none of those carry Arabic. Arabic and Persian currently draw as blank cells. Adding a face
+to the stack is the fix, and it is not done.
+
+Arabic contextual joining also cannot cross cell boundaries, which is a property of terminal
+grids rather than of this implementation, and every terminal shares it.
+
+## How it compares
+
+Bidi is where the difference is, and it is not close. Sources are each project's own material,
+checked 2026-08-07.
+
+| | bidi in the terminal | owns its VT core | checked against a reference |
+|---|---|---|---|
+| **Mind2t** | **yes**, UBA in the renderer, 91,707 Unicode conformance cases | yes | yes, 223 corpus cases |
+| kitty | **no**, by its own documentation | yes | no published gate |
+| Ghostty | no bidi surface in its C ABI | yes | it *is* the reference here |
+| WezTerm, Alacritty, iTerm2 | not claimed by this project; check their docs | yes | no published gate |
+| Warp | not claimed by this project | yes | no published gate |
+| Agent tools on `xterm.js` or `tmux` | inherits whatever it rents | **no** | no |
+
+[kitty's own documentation](https://sw.kovidgoyal.net/kitty/conf/) states it does not support
+bidi, and names the consequence precisely: in the Hebrew word `ירושלים`, selecting the character
+that *appears* on screen to be `ם` puts `י` into the selection buffer. Its suggested workaround is
+GNU FriBidi outside the terminal, with kitty forced to treat all text as left to right.
+
+That failure is exactly what this project avoids by keeping the logical order in the core and the
+visual order in the renderer: selection is answered from the logical model, so the character you
+select is the character you get.
+
+The rows marked "not claimed" are honest gaps rather than findings. I measured kitty and Ghostty;
+I have not audited the others, and I would rather leave a cell empty than fill it from memory.
 
 ## Architecture
 

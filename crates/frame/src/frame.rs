@@ -171,8 +171,13 @@ impl FrameSelection {
             return None;
         }
         let from = if y == sy { sx } else { 0 };
-        let to = if y == ey { ex } else { cols - 1 };
-        if from > to { None } else { Some((from, to.min(cols - 1))) }
+        // Clamp BEFORE comparing. The guard used to sit above this line, which meant it
+        // approved a pair the clamp then inverted: a selection made at 80 columns, read
+        // back after the pane was split down to 20, produced `to` behind `from` and the
+        // renderer's `to - from + 1` underflowed. A check placed before the thing it
+        // guards does not guard it.
+        let to = if y == ey { ex } else { cols - 1 }.min(cols - 1);
+        if from > to { None } else { Some((from, to)) }
     }
 }
 
@@ -855,5 +860,46 @@ mod tests {
         assert!(frame.row_is_stale(0, 8));
         assert_eq!(frame.stale_rows(8).count(), 1);
         assert_eq!(frame.stale_rows(9).count(), 0);
+    }
+
+    /// A span never comes back inverted, however narrow the grid has become.
+    ///
+    /// This is the caller's whole contract: `renderer::draw_selection` computes
+    /// `to - from + 1` on unsigned columns, so an inverted span is not a wrong highlight,
+    /// it is a panic. Found in a live window, by splitting a pane until it was narrower
+    /// than a selection made before the split.
+    ///
+    /// The defect was the order of two lines rather than either line's logic: the
+    /// `from > to` guard sat BEFORE `to` was clamped to the grid, so it approved a pair
+    /// that the clamp then inverted. A check placed before the thing it guards does not
+    /// guard it.
+    #[test]
+    fn a_selection_wider_than_the_grid_never_returns_an_inverted_span() {
+        // Made when the pane was 80 wide, on a single row.
+        let selection = FrameSelection { start: (40, 0), end: (50, 0) };
+
+        // The pane is split, and split, and split. Every width has to stay sane.
+        for cols in 1..=80u16 {
+            match selection.span_on(0, cols) {
+                Some((from, to)) => {
+                    assert!(from <= to, "inverted span ({from}, {to}) at cols={cols}");
+                    assert!(to < cols, "span ({from}, {to}) runs past cols={cols}");
+                }
+                // Correct once the grid is narrower than where the selection starts:
+                // none of it is on screen any more.
+                None => assert!(cols <= 40, "dropped a visible span at cols={cols}"),
+            }
+        }
+    }
+
+    /// The neighbouring input the guard must NOT catch: a grid still wide enough for the
+    /// selection answers with the full span, so the fix above cannot be "return None always".
+    #[test]
+    fn a_grid_still_wide_enough_keeps_the_whole_span() {
+        let selection = FrameSelection { start: (40, 0), end: (50, 0) };
+        assert_eq!(selection.span_on(0, 80), Some((40, 50)));
+        assert_eq!(selection.span_on(0, 51), Some((40, 50)));
+        // Exactly one column of it survives.
+        assert_eq!(selection.span_on(0, 41), Some((40, 40)));
     }
 }

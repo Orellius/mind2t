@@ -1,13 +1,16 @@
-# CLAUDE.md - mind2t (project child config)
+# CLAUDE.md - mind2t
 
-> **Parent stack layer:** `../CLAUDE.md` (tools/ 2026 stack, auto-inherited; don't restate it).
-> Chain: `~/.claude/CLAUDE.md` (contract) → `Studio/CLAUDE.md` (index) → `tools/CLAUDE.md` (stack) → **this file (mind2t specifics)**.
-> This file = project specifics only. Last update stamp: 2026-08-06 (IDT).
-> Posture: the global proactive co-pilot rule (initiative, three-steps-ahead, extreme ownership) is in force here via `~/.claude/CLAUDE.md`.
+> Context for coding agents working in this repository, and a working log for humans.
+> Last update stamp: 2026-08-07.
+>
+> This file records WHY things are the way they are: the rules that were measured rather than
+> chosen, the traps that cost a day, and the blind spots each slice's harness had before it was
+> extended. `README.md` is what the project is; `CONTRIBUTING.md` is how to work on it; this is
+> the reasoning underneath both. Where the three disagree, the code and the gates win.
 
-## What this is NOW - Mind2t (decided 2026-08-04, Orel; renamed twice, 2026-08-06)
+## What this is NOW - Mind2t (decided 2026-08-04; renamed twice, 2026-08-06)
 
-**Naming history, and it is two renames in one day, both Orel's call.** The product was born
+**Naming history, and it is two renames in one day.** The product was born
 "Bindary" (2026-08-04), became **Sadna** (סדנה, workshop) on 2026-08-06 on a
 pronunciation criterion, and became **MIND2T** the same day - directory, GitHub repo, product
 crate, bundle identifier, config directory, chrome, gate script and the icon's filenames, end
@@ -34,8 +37,8 @@ Mind2t slices are **`B1..B9`** and are a SEPARATE namespace from the `S1..S9` ap
 
 The wedge, in one line: **we own the VT core, the pty and the renderer**, so agent state comes
 from a typed grid (`Session.rowText(row, semantic:)`) instead of regexing ANSI out of a byte
-stream. BridgeSpace rents xterm.js, Termic rents xterm.js, Claude Squad rents tmux. Evidence:
-`~/Desktop/Studio/docs/research/bridgespace-teardown/`.
+stream. BridgeSpace rents xterm.js, Termic rents xterm.js, Claude Squad rents tmux. That
+comparison came from a teardown of each of them, kept outside this repository.
 
 Three laws added by this decision:
 1. **The Swift host is the ORACLE, not the corpse.** Do not delete it. Port the Tauri host to
@@ -68,7 +71,8 @@ grid mutations out. No PTY, no GPU, no clock, no I/O. Everything else hangs off 
 because it is what makes headless CI and differential testing possible at all. Ghostty
 enforces the same split physically (`src/terminal/` knows nothing about `src/renderer/`).
 
-Plan of record: `~/.claude/plans/2026-07-28-rust-terminal-core.md`.
+Original plan of record: a slice-by-slice build order for the terminal core, dated 2026-07-28
+and kept outside this repository. The slices it named are the ones the tags follow.
 Architecture research it came from: `~/Desktop/claude-html/terminal-architecture-20260728-0132.html`.
 
 ## Status / current slice
@@ -117,7 +121,7 @@ said out loud every time it is cited.
   answers the row, one with no selection answers nothing. Three distinguishable wrong answers.
 - **What the gate cannot see, and it is most of the gesture**: the real drag, AppKit's own
   click counting (and therefore the machine's double-click interval), the pasteboard write,
-  and cmd+click. All of it is live-tap debt in SCAR-014's exact shape - the demo works when
+  and cmd+click. All of it is live-tap debt in the live-tap rule's exact shape - the demo works when
   the harness drives bytes and dies when a human drives the window.
 
 
@@ -189,7 +193,7 @@ markers since slice 8. Nothing compared the two. Gate is now **23 invariants**.
 - **The CLI check does NOT discriminate under the gate, and the code says so.** It reports `cli
   yes` even against the fully reverted host, because the pane's shell is interactive whatever
   the host does and `.zshrc` puts the tool back on `PATH`. It can only fail in the Finder case
-  it stands in for. The three beside it are what actually proved the fix (SCAR-004: a check that
+  it stands in for. The three beside it are what actually proved the fix (a check that
   cannot be seen to fail is not evidence).
 - **Two harness bugs, both found by the gate failing on a run where only the app icon had
   changed** - and both would have made it lie rather than error:
@@ -202,7 +206,7 @@ markers since slice 8. Nothing compared the two. Gate is now **23 invariants**.
      columns** because the window is split. It wrapped; the capture read `cc=` and nothing after
      it. One field per line now.
 
-**The app mark was redrawn, 2026-08-06, and Orel picked it** (`assets/icon/mind2t.svg` is the
+**The app mark was redrawn, 2026-08-06** (`assets/icon/mind2t.svg` is the
 source; `mind2t-1024.png` and `crates/mind2t/icons/icon.png` are generated from it with
 `rsvg-convert` - regenerate BOTH after any edit, nothing does it automatically). A
 cabinet-maker's screwdriver on the diagonal, with the RTL prompt `_<` on the counter-diagonal.
@@ -294,7 +298,7 @@ is **D2b and is not built**; nothing in the app can select anything yet.
   - The errors name a MISSING FILE, never a stale path, so nothing in the message points at the
     rename. If a gate fails right after the directory moves, clean before diagnosing.
 
-**B3.6 one window, panes on demand, `[tested]` headlessly 2026-08-06 (`b3-5-divider`).** Orel's
+**B3.6 one window, panes on demand, `[tested]` headlessly 2026-08-06 (`b3-5-divider`).** The
 call: the window opens with ONE pane like any other terminal, and **cmd+D splits it to the right**,
 as Ghostty does. The pre-split 1x2 canvas was B3.4 scaffolding and read as a window already in use.
 Gate is now **19 invariants** - it opens with one pane, splits, and every geometry check runs
@@ -312,7 +316,7 @@ against the result.
   rather than approximated until a split tree exists; pinned by a test.
 - **The gate drives `Canvas::split`, never a synthesized cmd+D** - a real chord would type into
   whatever the operator is doing. The chord itself (event mask, keycode match) is **live-tap debt**,
-  the same boundary as every other AppKit path here (SCAR-014). It is matched on the KEYCODE, so
+  the same boundary as every other AppKit path here (the live-tap rule). It is matched on the KEYCODE, so
   the Hebrew layout cannot kill it.
 - Mutant seen red: a split that adds a pane without resizing the existing one - "pane 0 still
   claims 180 columns after a split - it is drawing under its neighbour".
@@ -367,7 +371,7 @@ rather than argued: model, directory, branch and mode are already text on the gr
   output closes the microsecond race between a write and the exit behind it.
 - **The retry loop is counted, not claimed.** Every attempt records its verdict and the wait
   before it; the test asserts the backoffs doubled AND that the wall clock really elapsed, since a
-  loop that ran once ends identically to one that ran three times (SCAR-004).
+  loop that ran once ends identically to one that ran three times.
 - **A refusal never retries.** An approval bypass fails once, immediately. Three attempts would
   read as flakiness rather than as policy.
 - **The real-agent test is `#[ignore]`d on purpose**, so the suite never starts authenticated
@@ -461,7 +465,7 @@ review card (changed files, unified diff with both line-number gutters) over the
 active session's repository, opened with cmd+shift+D or the palette's "Review
 Changes". **Off unless `panels = true` in `config.toml`.**
 
-The architectural line, and the reason this is not a Tauri rewrite. Orel asked
+The architectural line, and the reason this is not a Tauri rewrite. The question was asked
 about wrapping RUUAH the way `simion/termic` wraps a terminal (Tauri 2 + React 19
 + **xterm.js**, AGPL-3.0). xterm.js carries its OWN VT parser and screen model
 and consumes bytes rather than grids, so putting it in front of this core runs
@@ -503,7 +507,7 @@ Two defects the harness caught on first contact, both of the silent kind:
 
 Gates: **604 tests / difftest 207/207 / esctest 373 pinned / exports 14 + 52 /
 Swift smoke / panel bridge smoke + control**. The panel's LOOK is
-`[untested - needs your eyes]` (SCAR-014: aesthetics are Orel's verdict).
+`[untested - needs your eyes]` (aesthetics are the maintainer's verdict, never a test's).
 
 
 **cwd-keyed ghost history, 2026-07-31 (`s4-cwd-history`).** History entries carry the
@@ -989,8 +993,8 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   carries the agent-CLI matrix recovered from BridgeSpace. It probes bare **`agent`** first for
   Cursor - and on this machine `agent` is `~/.grok/bin/agent`, so "launch Cursor" starts **Grok**,
   silently, with a working agent in the pane. Found by the probe's very first run against the
-  shell's own `command -v`, which is why availability is MEASURED rather than trusted (SCAR-003 -
-  the registry is a claim about the world, and the world disagrees). `no_two_agents_can_resolve_to
+  shell's own `command -v`, which is why availability is MEASURED rather than trusted: the
+  registry is a claim about the world, and the world disagrees. `no_two_agents_can_resolve_to
   _the_same_binary` now refuses a name claimed twice and a name generic enough to belong to
   somebody else. A false negative (agent reported missing) is always preferable to a false
   positive (the wrong vendor's agent running your prompt).
@@ -1001,7 +1005,7 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   a guard that refuses near-misses is one people learn to route around. Both directions are
   tested and both mutants were seen red: substring matching fails the near-miss test, a guard that
   never fires fails the other three.
-- **MIND2T'S GATE IS `scripts/smoke-mind2t.sh`, AND IT NEEDS NO SCREEN.** Orel's standing order
+- **MIND2T'S GATE IS `scripts/smoke-mind2t.sh`, AND IT NEEDS NO SCREEN.** A standing order
   (2026-08-04) while he works in parallel sessions: no windows on his display, no synthetic
   input. The script runs the real Tauri host with its window ordered out and asserts **sixteen**
   invariants about what AppKit, WebKit, the IPC and the CHILDREN actually did, exit code and all.
@@ -1043,7 +1047,7 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   synthesizing a cmd+V or a wheel event would put input into whatever the operator is doing on
   this machine. What that leaves untested is the AppKit half - the monitor's event mask, the
   keycode match for the chord, the pointer-versus-strip test - and it is a live tap, not a
-  covered path. Say "tested through the session" and name the seam (SCAR-014).
+  covered path. Say "tested through the session" and name the seam (the live-tap rule).
 - **A GATE THAT WAITS ON A SHELL MUST HOLD THE SHELL STILL.** Two measurements, both of which
   turned a correct implementation red first:
   1. **zsh re-reports its own directory from `precmd`**, so a synthetic OSC 7 report is replaced
@@ -1085,17 +1089,17 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   nothing errors and no test fails. It has now been written twice, once in the Swift host
   (slice 8, `backingScaleFactor`) and once in Mind2t (B2.3, 2026-08-04), and the second time
   the operator caught it from the screen before any assertion did.
-  Orel's display makes this trap permanent rather than occasional: an LG 2K panel driven in a
-  faked Retina mode by his own `Studio/macos/opendisplay`, so `scale_factor` is **always 2.0**
-  and a scale bug is always a half-size grid. Full measurement in `~/.claude/DEFAULT_MODE_NETWORK.md` §I.7.
+  The development display makes this trap permanent rather than occasional: a 2K panel driven
+  in a forced HiDPI mode, so `scale_factor` is **always 2.0** and a scale bug is always a
+  half-size grid rather than an intermittent one.
   The window resize path has the matching gap: the font is built once at launch, so dragging to
   a display with a different scale does not re-rasterize. Named, not fixed (B2.4).
 
-- **The oracle checkout moved (2026-08-06, Orel's call): `../ruuah` no longer exists.** RUUAH
-  was archived to `~/Archive/studio-parked-20260806/tools-ruuah` and `Orellius/ruuah` on GitHub
-  is archived read-only. The built oracle in `vendor/` keeps every gate working; a REBUILD
-  (`scripts/build-oracle.sh`, `scripts/build-app.sh` icon) needs
-  `RUUAH_VT_ORACLE_SRC=~/Archive/studio-parked-20260806/tools-ruuah`.
+- **There is no default oracle checkout any more.** `scripts/build-oracle.sh` used to default
+  to `../ruuah`; that checkout was archived on 2026-08-06 and the default is now wrong. The
+  already-built oracle in `vendor/` keeps every gate working, so this only bites on a REBUILD
+  (`scripts/build-oracle.sh`, and the icon step of `scripts/build-app.sh`), which needs
+  `RUUAH_VT_ORACLE_SRC` pointed at a Ghostty checkout.
 - **The oracle checkout is read-only, including build artifacts.** Never run `zig build` in it
   with default paths - that writes `zig-out/` and `.zig-cache/`. `scripts/build-oracle.sh`
   redirects both `--prefix` and `--cache-dir` here and then *verifies* the checkout is still
@@ -1190,10 +1194,10 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
   `../ruuah/include/` has **zero** bidi/RTL surface, so reordering in the core breaks ABI
   compatibility - the project's whole thesis - and makes every RTL line diverge from the
   oracle *by construction*, deleting the only correctness signal there is. Ghostty's own
-  bidi-adjacent code sits in the font shaper, not the VT core. Scar
-  `~/.claude/scars/2026-06-11-bidi-terminal-deadend.md` and memory
-  `feedback-no-bidi-in-terminals`: emulator bidi structurally cannot serve a cursor-addressed
-  TUI, because the cursor has no mapping after reorder. **"Support most languages" is not
+  bidi-adjacent code sits in the font shaper, not the VT core. This was learned the expensive
+  way on an earlier project (2026-06-11) before it was written down here: emulator bidi
+  structurally cannot serve a cursor-addressed TUI, because the cursor has no mapping after
+  reorder. **"Support most languages" is not
   bidi** - it is grapheme clusters plus correct width tables, both of which are slice 1.
 - **Darwin refuses `TIOCSWINSZ` on the pty MASTER.** Measured 2026-07-28 on macOS 25.5, and
   confirmed with raw `libc::ioctl` as well as through rustix, so it is a kernel rule and not
@@ -1270,9 +1274,9 @@ Bidi lives in the renderer if it lives anywhere, and never in the core (see belo
 
 ## Repo and git workflow
 
-**`Orellius/mind2t`, private, at `~/Desktop/Studio/tools/mind2t`.** `origin` only.
+**`Orellius/mind2t`.** `origin` only.
 
-**Renamed from `ruuah-vt` on 2026-08-06 (Orel's call), and the split is deliberate: the
+**Renamed from `ruuah-vt` on 2026-08-06, and the split is deliberate: the
 CONTAINER is named after the product, the CRATES stay named after the engine.** `crates/*` are
 still `ruuah-vt-core`, `ruuah-vt-frame`, `ruuah-vt-host` and so on, because the engine is the
 part somebody else might embed and its name is its identity. GitHub serves a permanent redirect
@@ -1287,17 +1291,13 @@ current oracle was built from, `scripts/build-oracle.sh` rewrites it and **annou
 oracle moved**. Commit `oracle.lock` whenever it changes - without it, a corpus case flipping
 overnight is indistinguishable from a regression you caused.
 
-- **PR WORKFLOW LAW (Orel's order, 2026-07-30): work lands through pull requests.** One
-  branch per slice or fix, pushed to origin, `gh pr create`, gates green in the PR,
-  merged `--no-ff` (via `gh pr merge --merge`). No direct pushes to `main`. GUI-facing
-  changes carry a live-tap result or an explicit untested note in the PR body (SCAR-014).
-  **AUTO-MERGE AMENDMENT (Orel, 2026-07-30 ~17:0x): when EVERY gate is green (full
-  workspace suite on exit codes, difftest, export counts, smoke, live taps where the
-  slice is GUI-facing), Claude merges the PR and rebuilds+reinstalls the app without
-  waiting. A red or skipped gate, a named-divergence question, or anything touching
-  the security posture still waits for Orel.**
-- **RELEASE LAW (Orel's order, 2026-08-01; the floor is `~/.claude/MOTOR_CORTEX_EXECUTION.md`
-  section 3b).** Every rebuild+reinstall of the app after merges is a RELEASE: annotated tag
+- **Work lands on `main`, one commit per verified seam.** From 2026-07-30 to 2026-08-06 this
+  ran as a pull-request workflow, one branch per slice merged `--no-ff`, which is why the
+  history before that date reads as one first-parent line per slice. The branches were all
+  merged and have since been deleted. Outside contributions still arrive as pull requests;
+  see `CONTRIBUTING.md` for what one has to carry.
+- **RELEASE LAW (2026-08-01).** Every rebuild and reinstall of the app after merges is a
+  RELEASE, and a merge on its own never is: annotated tag
   `vX.Y.Z` on main in the same session (message = what shipped + gate numbers, the old
   slice-tag shape; minor bump per rebuild batch, never per PR), then
   `gh release create <tag> --verify-tag --generate-notes` attaching
@@ -1324,7 +1324,7 @@ Dependencies stay deliberately few: `vte`, `unicode-width`, `thiserror`, `serde`
 `rustix` (slice 5 step 3), `swash` (step 4, font parsing + rasterization + the shaper 5.5 will
 need) and `wezterm-bidi` (5.5, chosen by conformance measurement). **`wgpu` is the one large
 exception** (slice 7): measured at +123 packages against +9 for a Mac-only `objc2-metal`
-backend, taking the tree from 80 to 181. Orel chose it over the Metal route with those numbers
+backend, taking the tree from 80 to 181. The Metal route was rejected with those numbers
 in hand, for portability the roadmap does not yet want but may. `portable-pty` was evaluated for the pty host and rejected - on
 macOS it costs thirteen crates including `serial2`, a serial-port library, and a second
 `thiserror` major version alongside the workspace's. `rustix` costs three and the pty dance is

@@ -187,7 +187,7 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
 ## Deliberately NOT on the list
 
 - **Bidi in the core** - renderer-layer forever (measured ABI + oracle reasons,
-  see CLAUDE.md). Auto base direction shipped 2026-07-29 at the frame layer.
+  see the bidi module). Auto base direction shipped 2026-07-29 at the frame layer.
 - **Tabs / splits / config files** - that is RUUAH-the-app's territory, not the
   VT core's proof-of-consumability host.
 - **GPU present path** (the buffer is blitted via CoreGraphics): measure first;

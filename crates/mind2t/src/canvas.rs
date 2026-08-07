@@ -37,10 +37,35 @@ impl PaneSpec {
     }
 }
 
+/// The narrowest pane a SPLIT will create, in columns.
+///
+/// `fit` refuses only at zero columns, which is the difference between a pane and no pane. It
+/// is not the difference between a pane and a usable one, so cmd+D kept succeeding all the way
+/// down to a single column: the operator's report was "there is no limit until app crashes".
+/// Twenty is where a shell prompt plus a short command still fits on one line.
+///
+/// This bounds SPLITTING only, never `resize`. A split is the operator asking for a new pane
+/// and being told no costs them nothing; a resize is the operator dragging the window, where
+/// refusing would leave the window one size and the canvas another. A drag degrades, a split
+/// declines.
+pub const MIN_SPLIT_COLS: u16 = 20;
+
+/// The shortest pane a split will leave behind. A horizontal split does not change height, so
+/// this only fires when the window is already too short to be worth dividing.
+pub const MIN_SPLIT_ROWS: u16 = 5;
+
 #[derive(Debug)]
 pub enum CanvasError {
     /// The area cannot hold the requested grid at the current font size.
     TooSmall { rows: u16, cols: u16 },
+    /// The split would fit, and would leave a pane too small to work in.
+    ///
+    /// Distinct from `TooSmall` on purpose: that one means the geometry is impossible, this one
+    /// means it is possible and refused. The caller can say so differently, and a test can tell
+    /// "the limit held" from "the arithmetic collapsed".
+    TooNarrow { cols: u16, rows: u16 },
+    /// The pane index handed to `close` does not exist.
+    NoSuchPane { index: usize, panes: usize },
     Session(SessionError),
     /// A split was asked of a canvas with more than one row.
     ///
@@ -185,6 +210,19 @@ impl Canvas {
             session.shutdown();
             return Err(CanvasError::TooSmall { rows: grown.rows, cols: grown.cols });
         }
+
+        // The USABILITY floor, above the possibility floor checked immediately above. Measured
+        // against the same `fit`, over the same every-rect set, and evaluated BEFORE anything
+        // mutates - so a refused split leaves the canvas exactly as the operator had it, which
+        // is the whole reason the new session is spawned and measured before the old panes move.
+        if let Some(cramped) = rects
+            .iter()
+            .map(|rect| fit(*rect, metrics))
+            .find(|g| g.cols < MIN_SPLIT_COLS || g.rows < MIN_SPLIT_ROWS)
+        {
+            session.shutdown();
+            return Err(CanvasError::TooNarrow { cols: cramped.cols, rows: cramped.rows });
+        }
         session.set_mouse_geometry(last.width, last.height, 0, 0, 0, 0);
 
         self.grid = grown;
@@ -193,6 +231,58 @@ impl Canvas {
         // disagree about how a pane is moved: one path updates rects, ptys and mouse geometry.
         self.resize(self.area)?;
         Ok(self.panes.len() - 1)
+    }
+
+    /// Closes one pane and gives its width back to the survivors. Returns how many remain.
+    ///
+    /// This is pane lifecycle, and its absence was a defect the operator hit immediately: typing
+    /// `exit` ended the child and the pane stayed on screen holding its last frame, because
+    /// nothing owned removal and the host only asked whether ALL panes had exited.
+    ///
+    /// The re-tile is the half that is easy to omit and is the half that shows. Dropping the pane
+    /// without shrinking the grid leaves the survivors at their old width with a dead strip beside
+    /// them, which does not read as a closed pane - it reads as a renderer that stopped painting.
+    /// It goes through `resize` for the same reason `split` does: one path updates rects, ptys and
+    /// mouse geometry, so a close and a window drag cannot disagree about where a pane is.
+    ///
+    /// The child is shut down rather than dropped, so it reaches its own teardown instead of
+    /// being reaped by a destructor at some later point.
+    ///
+    /// Single-row canvases only, for the same structural reason `split` is: removing a column
+    /// from a two-row grid removes TWO panes.
+    pub fn close(&mut self, index: usize) -> Result<usize, CanvasError> {
+        if index >= self.panes.len() {
+            return Err(CanvasError::NoSuchPane { index, panes: self.panes.len() });
+        }
+        if self.grid.rows > 1 {
+            return Err(CanvasError::NotSplittable { rows: self.grid.rows });
+        }
+
+        let mut pane = self.panes.remove(index);
+        pane.session.shutdown();
+
+        self.grid = Grid { cols: self.grid.cols.saturating_sub(1), ..self.grid };
+        if self.panes.is_empty() {
+            return Ok(0);
+        }
+        self.resize(self.area)?;
+        Ok(self.panes.len())
+    }
+
+    /// The panes whose child has exited, newest index first.
+    ///
+    /// Reverse order because the caller closes them by index and closing shifts everything after
+    /// it down: walking forward would make the second close address the wrong pane. Returning the
+    /// order that is safe to consume is cheaper than documenting a trap for every caller.
+    pub fn exited_panes(&mut self) -> Vec<usize> {
+        let mut done: Vec<usize> = self
+            .panes
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(index, pane)| pane.session.exited().then_some(index))
+            .collect();
+        done.reverse();
+        done
     }
 
     pub fn panes(&self) -> &[Pane] {

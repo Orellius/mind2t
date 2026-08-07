@@ -26,7 +26,7 @@ anywhere.
 
 Everything else here exists to make that grid trustworthy.
 
-![the feature tour, rendered live](docs/images/feature-tour-20260730.png)
+![the feature tour, rendered live](assets/feature-tour.png)
 
 ## Status
 

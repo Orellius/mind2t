@@ -298,7 +298,7 @@ impl Session {
     /// decoder in this workspace. The core stores the report raw (as the oracle does), the C
     /// path decodes it in `ruuah_cwd_path`, and a Rust host that percent-decoded a `file://`
     /// URI for itself would be the second implementation of a rule that has already been wrong
-    /// once (`path` is a special variable in zsh - see the project CLAUDE.md).
+    /// once (`path` is a special variable in zsh, tied to $PATH as an array).
     pub fn take_events(&mut self) -> Vec<Event> {
         let events = self.host.take_events();
         for event in &events {

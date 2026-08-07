@@ -37,7 +37,7 @@ use tauri::{Emitter, Listener, LogicalPosition, LogicalSize, Manager, RunEvent, 
 const BAR_HEIGHT: f64 = 36.0;
 
 /// Logical point size. The session is built at `FONT_SIZE * scale` so one buffer pixel is one
-/// DEVICE pixel - see the project CLAUDE.md; this repo has learned it twice already.
+/// DEVICE pixel. This repo has learned it twice already: a renderer handed point sizes on a 2x display rasterizes the whole grid at half resolution, and nothing errors.
 const FONT_SIZE: f32 = 16.0;
 
 /// The canvas the host opens with: ONE pane, like any other terminal (Orel, 2026-08-06).
@@ -1359,17 +1359,43 @@ fn main() {
                 }
             }
 
+            // A child that has gone takes its pane with it, and the survivors get the width back.
+            //
+            // This used to be a single `all()` and nothing else: a pane whose shell had exited
+            // sat there holding its last frame, and the window only closed once EVERY pane was
+            // dead. Typing `exit` therefore did nothing visible, which is what the operator
+            // reported. Closing per pane keeps the property that motivated `all()` - one shell
+            // ending must not take the agents beside it down - while making the single-pane case
+            // behave like every other terminal.
+            //
+            // Indices arrive newest-first from `exited_panes`, because closing one shifts every
+            // later pane down and a forward walk would close the wrong neighbour.
+            for index in canvas.exited_panes() {
+                match canvas.close(index) {
+                    Ok(remaining) => println!("mind2t: pane {index} closed, {remaining} left"),
+                    // Never fatal. A canvas that cannot re-tile after a close still has live
+                    // children in it, and killing the window would take them with it.
+                    Err(error) => eprintln!("mind2t: could not close pane {index}: {error:?}"),
+                }
+            }
+
+            // The last pane closing closes the window. Asked of the canvas rather than tracked
+            // separately, so there is one answer to "is anything still running here".
+            if canvas.panes().is_empty() {
+                handle.exit(0);
+                return;
+            }
+
             // The chrome is told only when something it displays actually changed. Emitting every
             // frame would push 120 events a second through the IPC boundary to redraw the same
             // three strings.
             let active = active_pane(&focus, canvas.panes().len());
             let geometry = canvas.panes()[active].session.geometry();
-            // ALL of them, not any: one shell exiting must not take the window with it and kill
-            // the agents beside it. A dead pane keeps its last frame until B4 owns pane lifecycle.
-            let exited = canvas
-                .panes_mut()
-                .iter_mut()
-                .all(|pane| pane.session.exited());
+            // Nothing is dead by the time this is read - anything that had exited was closed
+            // above - so the chrome's flag is now only ever false. It stays on the wire because
+            // removing it is an IPC contract change, and it is the seam a future detached-pane
+            // state would use.
+            let exited = false;
             let cwd = canvas.panes()[active].session.cwd().map(str::to_string);
             let state = (geometry.cols, geometry.rows, exited, cwd.clone());
             if replay.swap(false, std::sync::atomic::Ordering::Relaxed) {
@@ -1402,9 +1428,9 @@ fn main() {
                 }
             }
 
-            if exited {
-                handle.exit(0);
-            }
+            // The window closes when the canvas empties, which is decided above, before the
+            // chrome is told anything. There is deliberately no second exit test here: two places
+            // deciding when to quit is how one of them ends up wrong.
 
             // Headless runs are bounded from the INSIDE (SCAR-016): the process reaches its own
             // exit and its destructors run, rather than being killed by a timeout that would

@@ -13,7 +13,7 @@
 //!   one that refuses everything, or from one that never fires.
 //!
 //! Provenance: the matrix is `ct` in BridgeSpace 3.4.17's MainApp chunk, carved 2026-08-05 and
-//! written up in `~/Desktop/Studio/docs/research/bridgespace-teardown/05-agent-cli-registry.md`.
+//! written up in a teardown of the competing tools, kept outside this repository.
 //! It is a compatibility fact about other people's software, not their code, and it is re-checked
 //! against reality by `Probe` rather than trusted (SCAR-003).
 

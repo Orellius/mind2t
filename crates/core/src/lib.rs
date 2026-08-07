@@ -10,7 +10,7 @@
 //! records each remaining gap as a case expected to differ.
 //!
 //! Bidi is **not** a core concern and never becomes one -- it is a slice 5 renderer item.
-//! See `CLAUDE.md`: the C ABI has no bidi surface, so reordering here would break drop-in
+//! The C ABI has no bidi surface, so reordering here would break drop-in
 //! compatibility and make every RTL line diverge from the oracle by construction.
 
 pub mod cell;

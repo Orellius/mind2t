@@ -1,6 +1,6 @@
 #!/bin/sh
 # A one-screen tour of what the terminal can do -- run it inside Mind2t:
-#   sh ~/Desktop/Studio/tools/mind2t/scripts/demo-features.sh
+#   sh scripts/demo-features.sh
 # Written 2026-07-30, the night these features landed.
 
 printf '\033[1m RUUAH VT feature tour \033[0m\n\n'

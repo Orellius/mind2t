@@ -517,3 +517,120 @@ fn a_resize_reaches_the_children() {
         canvas.panes()[0].session.visible_text()
     );
 }
+
+/// Splitting stops before it makes a pane nobody can use.
+///
+/// The operator's report: "cmd+D separate but there is no limit until app crashes". `fit`
+/// refused only at ZERO columns, so cmd+D kept succeeding all the way down to a single-column
+/// pane. That is not a smaller terminal, it is an unusable one, and it is also where the
+/// geometry defects live - the crash that prompted this was a selection made before a split
+/// outliving the pane it was made in and underflowing the renderer.
+///
+/// Measured through the canvas rather than by counting key presses, because the floor has to
+/// hold whatever the window size and font happen to be.
+#[test]
+fn splitting_stops_before_a_pane_becomes_unusable() {
+    let context = gpu();
+    // Deliberately modest, so the floor is reached in a handful of splits rather than dozens.
+    let area = Rect { x: 0, y: 0, width: 900, height: 600 };
+    let mut canvas = Canvas::spawn(
+        &context,
+        Grid { rows: 1, cols: 1, gutter: GUTTER },
+        area,
+        &[PaneSpec::shell()],
+        FONT,
+        shell,
+    )
+    .expect("a canvas");
+
+    let mut refused = None;
+    for attempt in 0..40 {
+        let panes_before = canvas.panes().len();
+        let cols_before: Vec<u16> =
+            canvas.panes().iter().map(|p| p.session.geometry().cols).collect();
+
+        match canvas.split(&context, shell(&PaneSpec::shell()), FONT) {
+            Ok(_) => {
+                // Every pane that survives a split is still usable. This is the assertion the
+                // old code could not satisfy, and it fails on the FIRST split that goes too far
+                // rather than at whatever depth the app happened to die.
+                for (index, pane) in canvas.panes().iter().enumerate() {
+                    let geometry = pane.session.geometry();
+                    assert!(
+                        geometry.cols >= mind2t::canvas::MIN_SPLIT_COLS,
+                        "split {attempt} left pane {index} at {} columns, below the {} floor",
+                        geometry.cols,
+                        mind2t::canvas::MIN_SPLIT_COLS
+                    );
+                }
+            }
+            Err(error) => {
+                // A REFUSED split changes nothing. The canvas the operator had is the canvas
+                // they keep, panes and pty geometry alike.
+                assert_eq!(
+                    canvas.panes().len(),
+                    panes_before,
+                    "a refused split still added a pane"
+                );
+                let cols_after: Vec<u16> =
+                    canvas.panes().iter().map(|p| p.session.geometry().cols).collect();
+                assert_eq!(cols_before, cols_after, "a refused split still resized the panes");
+                refused = Some(error);
+                break;
+            }
+        }
+    }
+
+    let refused = refused.expect("splitting never refused - there is still no limit");
+    assert!(
+        matches!(refused, mind2t::canvas::CanvasError::TooNarrow { .. }),
+        "splitting refused for the wrong reason: {refused:?}"
+    );
+    canvas.shutdown();
+}
+
+/// A pane whose child has gone can be closed, and the survivors get the space back.
+///
+/// The operator's report: "when you type exit on the terminal itself it does not close the pane
+/// nor the window". `exit` ended the child and the pane stayed, holding its last frame forever,
+/// because nothing owned pane lifecycle: the host only checked whether ALL panes had exited.
+///
+/// The half that is easy to get wrong is not the removal, it is the re-tiling: a close that
+/// drops the pane without giving its width back leaves the survivors drawing at their old size
+/// with a dead strip beside them, which looks exactly like a rendering bug.
+#[test]
+fn closing_a_pane_gives_its_width_back_to_the_survivors() {
+    let context = gpu();
+    let area = Rect { x: 0, y: 0, width: 1800, height: 900 };
+    let mut canvas = Canvas::spawn(
+        &context,
+        Grid { rows: 1, cols: 1, gutter: GUTTER },
+        area,
+        &[PaneSpec::shell()],
+        FONT,
+        shell,
+    )
+    .expect("a canvas");
+    let alone = canvas.panes()[0].session.geometry().cols;
+
+    canvas
+        .split(&context, shell(&PaneSpec::shell()), FONT)
+        .expect("a split");
+    let shared = canvas.panes()[0].session.geometry().cols;
+    assert!(shared < alone, "the split did not narrow the first pane");
+
+    let remaining = canvas.close(1).expect("closing the second pane");
+    assert_eq!(remaining, 1, "close did not report the surviving pane count");
+    assert_eq!(canvas.panes().len(), 1, "the pane was not removed");
+    assert_eq!(
+        canvas.panes()[0].session.geometry().cols,
+        alone,
+        "the survivor kept its narrowed width - it is drawing beside a dead strip"
+    );
+
+    // And the last one closing empties the canvas, which is what tells the host to close the
+    // window. Reported as a count rather than as a flag so the host has one thing to check.
+    assert_eq!(canvas.close(0).expect("closing the last pane"), 0);
+    assert!(canvas.panes().is_empty(), "the canvas kept a pane it was told to close");
+    canvas.shutdown();
+}

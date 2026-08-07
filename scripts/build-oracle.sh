@@ -73,9 +73,10 @@ if [[ -f "$lock" ]]; then
   fi
 fi
 
-# The lock file is committed, so the checkout path is recorded home-relative: an absolute
-# one publishes the machine's account name to everyone who clones the repository.
-source_recorded="${ruuah/#$HOME/~}"
+# The lock file is committed, and the checkout path is nobody else's business: even a
+# home-relative one publishes the directory layout of one particular machine, and the
+# load-bearing fields here are the commit and the describe string, never the path.
+source_recorded="a local Ghostty checkout"
 
 cat > "$lock" <<LOCK
 # Which libghostty-vt the differential oracle was built from. Written by

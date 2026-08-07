@@ -9,7 +9,7 @@ Never mix them.
 Orel's words were "99.9% at the same level, no fluff no bullshit". The measured answer, and the
 reason the target is stated differently below:
 
-**Ghostty's surface, counted from the archived checkout on 2026-08-06** (`~/Archive/studio-parked-20260806/tools-ruuah`, Ghostty 1.3.2-dev):
+**Ghostty's surface, counted from the archived checkout on 2026-08-06** (an archived Ghostty 1.3.2-dev checkout):
 
 - **205 top-level config keys** (`src/config/Config.zig`, 10,934 lines)
 - **84 keybind actions** (`src/input/Binding.zig`, 4,887 lines)
@@ -61,7 +61,7 @@ nothing is lost by taking it first.
 2. **D2 Selection and copy.** Click-drag, double-click word (with a word-chars notion),
    triple-click line, rectangular; cmd+C. Prerequisite for search-selection and for `copy-on-select`.
    - **D2a the model: DONE 2026-08-06** `[tested]`, 15 corpus cases against the oracle. Word,
-     line and select-all ranges plus the clipboard text. See the repo `CLAUDE.md`.
+     line and select-all ranges plus the clipboard text. See `crates/core/src/selection.rs`.
    - **D2b the gesture: DONE 2026-08-06** `[tested]` headlessly, `[untested - needs your eyes]`
      for every real pointer path. Drag, double click a word, triple click a line, cmd+A,
      cmd+C. The seam is `Frame::viewport_rows`, which hands `core::selection` the snapshot

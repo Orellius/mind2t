@@ -103,8 +103,20 @@ fn observe(reader: &FrameReader, synchronized: bool, stop: &AtomicBool) -> Tally
     let mut frame = Frame::new();
     let mut tally = Tally::default();
     let deadline = Instant::now() + RUN_FOR;
+    // Liveness, and it is deliberately NOT part of the invariant. `accepted > 0` says the
+    // consistency check was actually exercised rather than skipped away, and on a two-core
+    // shared runner with the writer publishing flat out the reader can lose the whole 400ms
+    // window without landing a single read -- which failed CI on 2026-08-07 with "every read
+    // was skipped", a complaint about the machine wearing the words of a complaint about the
+    // code. So the window is EXTENDED while nothing has been accepted, up to a hard ceiling,
+    // and the assertion still fires if the reader genuinely never lands one. The workload is
+    // untouched: same writer, same race, same check. Only the control is excluded, because it
+    // never tallies an accepted read and would run to the ceiling every time.
+    let ceiling = Instant::now() + RUN_FOR * 25;
 
-    while Instant::now() < deadline {
+    while Instant::now() < deadline
+        || (synchronized && tally.accepted == 0 && Instant::now() < ceiling)
+    {
         if synchronized {
             match reader.read_into(&mut frame) {
                 ReadOutcome::Fresh(_) => tally.accepted += 1,

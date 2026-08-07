@@ -63,9 +63,25 @@ pub struct Options {
     /// Enables screen-inspection reports in the core (DECRQCRA, WINOPS size). Off by
     /// default -- the OSC 52-read security posture; the esctest harness is the caller.
     pub reports: bool,
+    /// How long a synchronized-output batch (mode 2026) may stay open before the pump
+    /// publishes anyway. The anti-stuck bound, never a rendering knob: a child that opens
+    /// the gate and walks away must not freeze the display.
+    ///
+    /// Configurable because two DIFFERENT claims were being measured against one constant,
+    /// and CI proved that a test which needs the gate to hold and a test which needs the
+    /// budget to fire cannot share a number. `a_synchronized_batch_never_shows_half_drawn`
+    /// splits its batch across two pty reads 60ms apart, which left a 2.5x margin against
+    /// the 150ms default; on a shared GitHub runner that margin was crossed and the budget
+    /// correctly force-published a half-drawn frame, failing a test about the GATE for a
+    /// reason that had nothing to do with the gate. Each test now sets the budget its own
+    /// claim needs, so neither is measuring the clock.
+    pub sync_budget: std::time::Duration,
 }
 
 impl Options {
+    /// The shipped anti-stuck bound for a synchronized-output batch.
+    pub const SYNC_BUDGET: std::time::Duration = std::time::Duration::from_millis(150);
+
     pub fn new(cols: u16, rows: u16) -> Options {
         Options {
             size: Geometry { cols, rows },
@@ -76,6 +92,9 @@ impl Options {
             },
             scrollback: 10_000,
             reports: false,
+            // 150ms is the ecosystem's working norm for the gate, and it is the shipped
+            // behaviour: nothing in the product passes anything else.
+            sync_budget: Options::SYNC_BUDGET,
         }
     }
 }
@@ -426,8 +445,8 @@ fn pump(
     // do not publish, so a renderer never shows a half-drawn batch. The budget is the
     // anti-stuck bound -- a child that never closes its batch (crashed mid-escape, or
     // simply hostile) gets force-published at this cadence rather than freezing the
-    // display. 150ms is the ecosystem's working norm for the gate.
-    const SYNC_BUDGET: std::time::Duration = std::time::Duration::from_millis(150);
+    // display. Default and shipped value: `Options::SYNC_BUDGET`.
+    let sync_budget = options.sync_budget;
     let mut sync_since: Option<std::time::Instant> = None;
 
     // The viewport: how many rows the published view is scrolled up into history. Lives
@@ -479,7 +498,7 @@ fn pump(
                 // A held batch whose budget ran out publishes even though the child went
                 // quiet -- the quiet child is exactly the stuck case the budget exists for.
                 if let Some(since) = sync_since {
-                    if since.elapsed() >= SYNC_BUDGET {
+                    if since.elapsed() >= sync_budget {
                         sync_since = Some(std::time::Instant::now());
                         publisher
                             .publish_scrolled(&mut terminal, offset as u32)
@@ -559,7 +578,7 @@ fn pump(
                 // frozen by a child that forgets to close.
                 let publish_now = if terminal.synchronized_output() {
                     let since = *sync_since.get_or_insert_with(std::time::Instant::now);
-                    since.elapsed() >= SYNC_BUDGET
+                    since.elapsed() >= sync_budget
                 } else {
                     sync_since = None;
                     true

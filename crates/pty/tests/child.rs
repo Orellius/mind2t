@@ -305,9 +305,21 @@ fn a_synchronized_batch_never_shows_half_drawn() {
     // ungated pump publishes the partial "hid" frame in between (the mutant with the
     // gate removed was seen to fail exactly there). Gated, the first frame that shows
     // any of the batch shows all of it.
+    //
+    // **The budget is raised out of the way, and that is the whole point of the option.**
+    // With the shipped 150ms this test had a 2.5x margin against its own 60ms gap, which
+    // is not a margin at all on a machine somebody else is sharing: GitHub's macOS runner
+    // crossed it on 2026-08-08, the budget correctly force-published the half-drawn frame,
+    // and a test about the GATE went red for a reason that had nothing to do with the gate
+    // and could not be reproduced in 25 consecutive local runs. A test whose verdict
+    // depends on how loaded the machine is does not report on the code. The budget's own
+    // behaviour is asserted by the test below, which sets its own value for the same
+    // reason: two claims, two numbers, neither of them the clock.
+    let mut options = Options::new(40, 6);
+    options.sync_budget = std::time::Duration::from_secs(30);
     let (host, reader) = Host::spawn(
         sh("printf 'ready\\n'; printf '\\033[?2026hhid'; sleep 0.06; printf 'den\\033[?2026l'; sleep 5"),
-        Options::new(40, 6),
+        options,
     )
     .expect("spawn");
 
@@ -326,11 +338,17 @@ fn a_batch_the_child_never_closes_is_forced_out_by_the_budget() {
     // The anti-stuck bound: a child that opens 2026 and walks away cannot freeze the
     // display. The forced frame carries the mode bit, which is how a reader can tell
     // it is looking at a budget-expired batch rather than a closed one.
-    let (host, reader) = Host::spawn(
-        sh("printf '\\033[?2026hstuck'; sleep 10"),
-        Options::new(40, 6),
-    )
-    .expect("spawn");
+    //
+    // A SHORT budget, deliberately, and it makes this test stronger rather than merely
+    // faster. The child never closes the batch at all, so the only thing that can publish
+    // `stuck` is the budget expiring -- with 20ms the assertion lands well inside
+    // `wait_for`'s patience even on a loaded runner, where the shipped 150ms sat close
+    // enough to it that a slow machine could time out and blame the budget for the
+    // scheduler. The value is the one thing under test here, so it belongs in the test.
+    let mut options = Options::new(40, 6);
+    options.sync_budget = std::time::Duration::from_millis(20);
+    let (host, reader) = Host::spawn(sh("printf '\\033[?2026hstuck'; sleep 10"), options)
+        .expect("spawn");
 
     let frame = wait_for(&reader, |frame| text(frame).contains("stuck"));
     assert!(

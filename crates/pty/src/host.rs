@@ -393,14 +393,52 @@ impl Host {
         self.child.try_wait()
     }
 
-    /// Stops the pump and reaps the child. Idempotent; `Drop` calls it.
+    /// Kills the child, reaps it, and stops the pump. Idempotent; `Drop` calls it.
+    ///
+    /// **The order is the whole fix, and it was wrong until 2026-08-08.** This used to stop and
+    /// JOIN the pump first and kill the child afterwards, which deadlocks: the pump is the only
+    /// reader of the pty master, and a child exiting with a controlling terminal blocks in the
+    /// kernel until its tty output queue drains. Stop reading, and a child with anything still
+    /// queued can never finish exiting, so `wait` never returns. Measured by the discriminating
+    /// pair that names the cause exactly: 120 spawn-and-shutdown rounds with a SILENT child pass
+    /// in 0.74s, and the same loop with a child that prints one line before going quiet hangs
+    /// within 40. The stuck child shows up in `ps` as state `?Es` - trying to exit - while the
+    /// parent sits in `__wait4`. **The reader must outlive the child.**
+    ///
+    /// The reap is also BOUNDED, which is a separate guarantee and the more important one: a
+    /// shutdown that can block forever is a defect whatever the ordering, because it takes the
+    /// caller's thread with it. This one hung a test suite for seven and a half hours before it
+    /// was found, holding pty children the whole time. If the child somehow does not die inside
+    /// the grace period, it is abandoned rather than waited on - a leaked process is recoverable
+    /// and a wedged UI thread is not.
     pub fn shutdown(&mut self) {
+        // Kill FIRST and leave the pump running: it keeps draining the master while the child
+        // works through its own exit path.
+        let _ = self.child.kill();
+        self.reap_within(SHUTDOWN_GRACE);
+
         self.stop.store(true, Ordering::Relaxed);
         if let Some(pump) = self.pump.take() {
             let _ = pump.join();
         }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+    }
+
+    /// Waits for the child to be reaped, giving up after `grace`.
+    ///
+    /// `Child::wait` has no timeout, so this polls. The sleep is short enough that an ordinary
+    /// shutdown costs one interval and long enough that a slow exit is not a spin.
+    fn reap_within(&mut self, grace: std::time::Duration) {
+        let deadline = std::time::Instant::now() + grace;
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(_)) | Err(_) => return,
+                Ok(None) => {}
+            }
+            if std::time::Instant::now() >= deadline {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
     }
 }
 
@@ -413,6 +451,13 @@ impl Drop for Host {
 fn errno_to_io(errno: Errno) -> io::Error {
     io::Error::from_raw_os_error(errno.raw_os_error())
 }
+
+/// How long `shutdown` will wait for a killed child to be reaped before abandoning it.
+///
+/// Generous, because the ordinary case returns on the first poll and this bound exists only for
+/// the pathological one: a child that cannot finish exiting. Abandoning it leaks a process that
+/// the OS reparents; blocking on it leaks the caller's thread, which is worse.
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// How long the pump waits for output before looking at its own mailbox.
 ///

@@ -300,6 +300,40 @@ fn a_scrolled_view_stays_pinned_to_its_content_while_the_child_prints() {
 }
 
 #[test]
+fn shutting_down_a_child_that_has_spoken_does_not_deadlock() {
+    // The defect this pins hung a test suite for seven and a half hours before anyone noticed,
+    // because it presents as a HANG rather than as a failure: cargo simply never returns, and
+    // the orphan keeps holding pty children while every later run competes with it.
+    //
+    // The cause is an ordering one. `shutdown` used to stop and join the pump -- the only reader
+    // of the pty master -- and kill the child afterwards. A child exiting with a controlling
+    // terminal blocks in the kernel until its tty output queue drains, so with the reader gone,
+    // a child with anything still queued can never finish exiting and `wait` never returns.
+    //
+    // The discriminating measurement that named it: this same loop with a SILENT child passes
+    // in 0.74s, and with a child that prints one line first it hangs within 40 rounds. So the
+    // fixture speaks and then goes quiet, which is what a real shell does at a prompt, and it is
+    // the case the old order could not survive.
+    //
+    // **This test can go red rather than hang**, and that is deliberate: `shutdown` is now
+    // bounded, so a regression costs the grace period per round instead of the machine. Sixteen
+    // rounds against a two-second bound cannot finish inside this deadline if the reap is
+    // failing, and cannot come close to it when the reap works.
+    let started = std::time::Instant::now();
+    for round in 0..16 {
+        let (mut host, _reader) = Host::spawn(sh("stty size; exec cat"), Options::new(80, 24))
+            .expect("spawn");
+        host.shutdown();
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "shutdown is not reaping: {round} rounds took {:?}, which means a killed child is \
+             being abandoned to the grace period rather than dying",
+            started.elapsed()
+        );
+    }
+}
+
+#[test]
 fn a_synchronized_batch_never_shows_half_drawn() {
     // The batch is split across two writes 60ms apart -- separate pty reads, so an
     // ungated pump publishes the partial "hid" frame in between (the mutant with the

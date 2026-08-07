@@ -1,0 +1,128 @@
+name: Rust
+
+# What this can and cannot check, stated up front so a green tick is not read as more than it is.
+#
+# The full gate for this project is five suites, and three of them need hardware or a build that
+# a hosted runner does not have:
+#
+#   * the differential corpus links the REAL libghostty-vt, which means a Ghostty checkout and
+#     Zig 0.16.0 exactly. `crates/ghostty` and `crates/difftest` are the only crates that need
+#     it, and they are excluded here rather than faked.
+#   * `scripts/smoke-mind2t.sh` drives AppKit, WebKit and the Tauri IPC in a real window.
+#   * the GPU backend needs a device wgpu will accept.
+#
+# So CI runs the part that is pure: the parser, the grid, the frame handoff, and the Unicode
+# bidi conformance suite. That last one is the crown jewel and it is fully portable, which is
+# the happy accident of keeping bidi out of the core.
+#
+# Everything else stays a local gate, and README says so.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # No `-D warnings`. The vendored vte fork emits an `unexpected cfg condition value` from
+  # upstream's own feature gating, and denying warnings globally would fail the build for
+  # somebody else's code and pressure us into patching a fork we want to keep re-vendorable.
+  # Measured before this file was committed, rather than discovered by a red first run.
+
+jobs:
+  core:
+    name: core logic (portable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+          rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The bidi conformance suite reads the Unicode Character Database, which is vendored on
+      # demand rather than committed. `ucd.lock` pins the revision, so a conformance failure
+      # after a Unicode update is distinguishable from a regression somebody caused.
+      - name: Vendor the Unicode bidi suite
+        run: ./scripts/fetch-ucd.sh
+
+      # Named packages, never `--workspace`: the workspace pulls in the two crates that link
+      # libghostty-vt, and those cannot build here. A green tick on a build that silently
+      # skipped the oracle would be worse than no tick.
+      - name: Test the oracle-free crates
+        run: >
+          cargo test
+          -p ruuah-vt-core
+          -p ruuah-vt-snapshot
+          -p vte
+          -p ruuah-vt-frame
+
+      - name: Clippy
+        run: >
+          cargo clippy
+          -p ruuah-vt-core
+          -p ruuah-vt-snapshot
+          -p ruuah-vt-frame
+          --all-targets
+
+  macos:
+    name: pty and renderer (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Vendor the Unicode bidi suite
+        run: ./scripts/fetch-ucd.sh
+
+      # The pty crate is the only I/O in the project and its behaviour is genuinely
+      # platform-specific: Darwin refuses TIOCSWINSZ on the pty master and returns ENOTTY,
+      # while Linux accepts it. That divergence is exactly why this job is not merged into
+      # the portable one.
+      - name: Test the pty host
+        run: cargo test -p ruuah-vt-pty
+
+      # The renderer resolves fonts from the system, so it needs a macOS image. GPU-backed
+      # tests are excluded: a hosted runner has no device wgpu will accept, and a test that
+      # silently falls back to a software path is measuring something else.
+      - name: Build the renderer and its example
+        run: |
+          cargo build -p ruuah-vt-render
+          cargo build -p ruuah-vt-render --example screenshot
+
+  documentation:
+    name: docs and links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Every image the README points at has to exist. A broken hero image on the front page
+      # is the first thing a visitor sees, and it has been broken once already by a file move.
+      - name: Every referenced image resolves
+        run: |
+          missing=0
+          for p in $(grep -ohE '(docs/images|assets)/[A-Za-z0-9._/-]+\.png' README.md | sort -u); do
+            if [ -f "$p" ]; then echo "ok      $p"; else echo "MISSING $p"; missing=1; fi
+          done
+          exit $missing
+
+      # A house style rule, checked mechanically because that is the only way a style rule
+      # survives contact with a hurry.
+      - name: No em dashes or en dashes
+        run: |
+          if grep -rlP '[\x{2014}\x{2013}]' --include='*.md' . ; then
+            echo "em dash or en dash found in the files above; use a plain hyphen"
+            exit 1
+          fi
+          echo "clean"

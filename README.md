@@ -170,13 +170,24 @@ corpus untouched at 78/78, which is that separation demonstrated rather than ass
 
 ### What is not done
 
-**Only Hebrew renders today.** The algorithm is script agnostic and the conformance numbers
-above cover every bidi script, but the font stack is `Menlo -> Miriam Mono CLM -> Arial Hebrew`,
-and none of those carry Arabic. Arabic and Persian currently draw as blank cells. Adding a face
-to the stack is the fix, and it is not done.
+**Hebrew is finished. Arabic and Persian render, and do not yet sit well.**
 
-Arabic contextual joining also cannot cross cell boundaries, which is a property of terminal
-grids rather than of this implementation, and every terminal shares it.
+Until 2026-08-07 the font stack was `Menlo -> Miriam Mono CLM -> Arial Hebrew`, none of which
+carries the Arabic block, so every Arabic and Persian codepoint drew as a **blank cell** while
+the bidi algorithm reordered them perfectly. Correct algorithm, empty row, no error anywhere.
+It was found by rendering the sheet above across three scripts and looking at it, not by a test,
+and `arabic_and_persian_resolve_somewhere_in_the_stack` is that omission turned into one.
+
+SF Arabic and Geeza Pro now backstop the stack, so the glyphs appear. Both are **proportional**,
+exactly like the Arial Hebrew resort above them, so Arabic sits unevenly in a fixed grid and
+looks cramped next to Latin. That is visible in the image and it is the honest state: strictly
+better than blank, not yet good. A monospace Arabic face in the stack is the fix.
+
+Arabic contextual joining also cannot cross a cell boundary. That is a property of terminal grids
+rather than of this implementation, and every terminal shares it.
+
+Hebrew coverage is pinned across the classes that actually appear in text, not just one letter:
+base letters, final forms, niqqud, the dagesh that GSUB composes into its base, and punctuation.
 
 ## How it compares
 
@@ -185,7 +196,7 @@ checked 2026-08-07.
 
 | | bidi in the terminal | owns its VT core | checked against a reference |
 |---|---|---|---|
-| **Mind2t** | **yes**, UBA in the renderer, 91,707 Unicode conformance cases | yes | yes, 223 corpus cases |
+| **Mind2t** | **yes**, UBA in the renderer, 91,707 Unicode conformance cases, Hebrew and Arabic scripts drawn | yes | yes, 223 corpus cases |
 | kitty | **no**, by its own documentation | yes | no published gate |
 | Ghostty | no bidi surface in its C ABI | yes | it *is* the reference here |
 | WezTerm, Alacritty, iTerm2 | not claimed by this project; check their docs | yes | no published gate |

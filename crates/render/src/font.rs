@@ -208,6 +208,23 @@ impl FontStack {
             ("/System/Library/Fonts/Menlo.ttc".to_string(), 0),
             (format!("{home}/Library/Fonts/MiriamMonoCLM-Book.ttf"), 0),
             ("/System/Library/Fonts/ArialHB.ttc".to_string(), 0),
+            // Arabic and Persian (2026-08-07). The stack above carries NONE of the Arabic
+            // block, so every Arabic and Persian codepoint resolved to nothing and drew as a
+            // blank cell -- while the bidi implementation reordered them perfectly, passing
+            // 91,707 Unicode conformance cases against text the screen never showed. That is
+            // the worst shape this class of defect takes: correct algorithm, empty row, no
+            // error anywhere. Found by rendering a three-script proof sheet and looking at it.
+            //
+            // SF Arabic leads because it ships on current macOS and carries the Persian
+            // letters an Arabic-only face omits (peh U+067E, gaf U+06AF). Geeza Pro backs it
+            // for older machines. Both are PROPORTIONAL, exactly like Arial Hebrew above, so
+            // Arabic sits unevenly in a fixed grid -- which is the same trade this stack
+            // already accepts there, and strictly better than a blank cell.
+            //
+            // Contextual joining still cannot cross a cell boundary. That is a property of
+            // terminal grids rather than of this stack, and every terminal shares it.
+            ("/System/Library/Fonts/SFArabic.ttf".to_string(), 0),
+            ("/System/Library/Fonts/GeezaPro.ttc".to_string(), 0),
             // Braille patterns (U+2800..U+28FF): none of the fonts above carry them, so
             // dot art and braille spinners rendered as NOTHING until 2026-07-29, when the
             // RUUAH splash's ghost simply failed to appear. Apple Braille ships on every
@@ -365,6 +382,64 @@ mod tests {
             stack.resolve('\u{1F9E0}').is_some(),
             "U+1F9E0 resolves to no glyph in any stack font"
         );
+    }
+
+    /// Arabic and Persian resolve to a real glyph, in every script the bidi algorithm handles.
+    ///
+    /// The stack was `Menlo -> Miriam Mono CLM -> Arial Hebrew` and not one of them carries
+    /// Arabic, so every Arabic and Persian codepoint resolved to nothing and drew as a blank
+    /// cell. The bidi implementation was reordering them correctly the whole time, which is the
+    /// worst shape this defect could take: the algorithm passes 91,707 Unicode conformance
+    /// cases, the screen shows an empty row, and nothing anywhere reports an error.
+    ///
+    /// Found on 2026-08-07 by rendering a three-script proof sheet and looking at it, not by a
+    /// test. This is that omission turned into one.
+    #[test]
+    fn arabic_and_persian_resolve_somewhere_in_the_stack() {
+        let mut stack = FontStack::system(16.0).expect("system fonts");
+        // Arabic letter beh, and the Persian-specific peh and gaf, which a font may omit even
+        // when it carries Arabic proper. Persian is the case a naive Arabic-only face misses.
+        for (c, what) in [
+            ('\u{0628}', "Arabic beh U+0628"),
+            ('\u{067E}', "Persian peh U+067E"),
+            ('\u{06AF}', "Persian gaf U+06AF"),
+        ] {
+            let resolved = stack.resolve(c);
+            assert!(
+                resolved.is_some(),
+                "{what} resolves to no glyph in any stack font, so it draws as a blank cell"
+            );
+            // Resolution to .notdef is the failure that LOOKS like success: a hit whose glyph
+            // is 0 paints a hollow box, or on some faces nothing at all.
+            assert_ne!(resolved.unwrap().glyph, 0, "{what} resolved to .notdef");
+        }
+    }
+
+    /// Hebrew draws a real glyph for every class this terminal actually renders.
+    ///
+    /// `hebrew_falls_through_past_the_primary_font` proves ONE letter reaches a non-primary
+    /// font. That is a statement about the stack's shape, not about Hebrew being drawable: it
+    /// says nothing about final forms, about the niqqud that GPOS positions, or about the
+    /// punctuation a real line contains. A face carrying only the 22 base letters would pass it.
+    #[test]
+    fn hebrew_resolves_across_letters_finals_niqqud_and_punctuation() {
+        let mut stack = FontStack::system(16.0).expect("system fonts");
+        for (c, what) in [
+            ('\u{05D0}', "aleph, a base letter"),
+            ('\u{05EA}', "tav, the last base letter"),
+            ('\u{05DD}', "final mem, a positional form"),
+            ('\u{05E3}', "final pe"),
+            ('\u{05B8}', "qamats, a niqqud mark"),
+            ('\u{05B4}', "hiriq, a niqqud mark"),
+            ('\u{05BC}', "dagesh, which GSUB composes into the base"),
+            ('\u{05C1}', "shin dot"),
+            ('\u{05F3}', "geresh, Hebrew punctuation"),
+        ] {
+            let resolved = stack
+                .resolve(c)
+                .unwrap_or_else(|| panic!("{what} resolves to no glyph in any stack font"));
+            assert_ne!(resolved.glyph, 0, "{what} resolved to .notdef");
+        }
     }
 
     #[test]

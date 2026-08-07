@@ -19,6 +19,7 @@ members = [
 edition = "2024"
 rust-version = "1.85"
 publish = false
+license = "AGPL-3.0-only"
 
 [workspace.dependencies]
 ruuah-vt-snapshot = { path = "crates/snapshot" }

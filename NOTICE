@@ -1,0 +1,59 @@
+Mind2t
+Copyright (c) 2026 Orellius
+
+This program is free software: you can redistribute it and/or modify it under the terms of
+the GNU Affero General Public License, version 3, as published by the Free Software
+Foundation. See LICENSE for the full text.
+
+--------------------------------------------------------------------------------
+Third-party material in this repository
+--------------------------------------------------------------------------------
+
+crates/vte
+    A fork of the `vte` parser from the Alacritty project, vendored in-tree with one
+    addition (APC dispatch). Licensed MIT OR Apache-2.0; both license texts are kept
+    alongside the source at crates/vte/LICENSE-MIT and crates/vte/LICENSE-APACHE.
+    Upstream: https://github.com/alacritty/vte
+
+--------------------------------------------------------------------------------
+Material used at build or test time, and NOT distributed with this program
+--------------------------------------------------------------------------------
+
+Ghostty / libghostty-vt (MIT)
+    The differential test harness builds and links the real libghostty-vt and compares
+    this project's terminal grid against it, case by case. It is depended on by exactly
+    one crate, `difftest`, and it is not part of the shipped artifact: the app binary
+    contains zero Ghostty symbols and links zero Ghostty libraries.
+
+    No Ghostty source is copied into this repository. Parts of the terminal core's
+    BEHAVIOUR were derived by reading Ghostty's source to establish why the reference
+    library does what it does. Black-box probing establishes what differs; the source
+    explains why. That is derivation of behaviour from a published reference, not
+    transcription of it, and agreement is measured through the ABI boundary rather than
+    assumed from shared code.
+
+    https://ghostty.org
+
+esctest2 (GPL-2.0)
+    A terminal conformance suite, vendored on demand by scripts/fetch-esctest.sh and run
+    against this project's own pty at test time only. Pinned in esctest.lock. Not
+    distributed with this program.
+    https://github.com/ThomasDickey/esctest2
+
+Unicode Character Database (Unicode License)
+    BidiTest.txt and BidiCharacterTest.txt, vendored on demand by scripts/fetch-ucd.sh and
+    used as the conformance oracle for bidirectional reordering. Pinned in ucd.lock. Not
+    distributed with this program.
+    https://www.unicode.org/Public/UCD/
+
+--------------------------------------------------------------------------------
+Fonts
+--------------------------------------------------------------------------------
+
+Miriam Mono CLM (GPL-2.0), by Maxim Iorsh, from the Culmus project, is the Hebrew face this
+project's font stack expects to find installed on the system. It is not bundled here and is
+not distributed with this program.
+https://culmus.sourceforge.io
+
+Rust crate dependencies carry their own licenses; see Cargo.lock and `cargo tree` for the
+resolved set.

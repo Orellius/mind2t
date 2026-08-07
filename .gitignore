@@ -10,3 +10,11 @@ node_modules/
 /chrome/dist
 # Tauri's generated capability schemas - derived from capabilities/ at build time.
 /crates/mind2t/gen
+
+# Editor and OS droppings. A vim swap file was committed once and carried the machine's
+# account name and hostname in its header, which is not something a public repository
+# should be publishing on the author's behalf.
+*.swp
+*.swo
+*~
+.DS_Store

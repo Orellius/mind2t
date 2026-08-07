@@ -1,0 +1,66 @@
+name: Bug report
+description: Something the terminal gets wrong
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If the bug is exploitable, do not file it here. Open a
+        [private security advisory](https://github.com/Orellius/mind2t/security/advisories/new)
+        instead.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: >
+        The smallest thing that triggers it. For a rendering or escape-sequence bug, the
+        exact byte stream is worth more than a description of it: a `printf` line, a shell
+        snippet, or the program that produced the output.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: v0.16.0, or the output of `git rev-parse --short HEAD`
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS and hardware
+      placeholder: macOS 15.5, M4 Max
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant config
+      description: The parts of `~/.mind2t/config.toml` that matter, if any.
+      render: toml
+
+  - type: dropdown
+    id: comparison
+    attributes:
+      label: Does another terminal do it differently?
+      description: >
+        Optional, but it is the single most useful thing you can add. This project is gated
+        on agreeing with a reference implementation, so "Ghostty does X here" turns a report
+        into a corpus case.
+      options:
+        - I did not check
+        - Yes, another terminal behaves differently
+        - No, other terminals do the same thing

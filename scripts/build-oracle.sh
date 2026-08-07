@@ -73,13 +73,17 @@ if [[ -f "$lock" ]]; then
   fi
 fi
 
+# The lock file is committed, so the checkout path is recorded home-relative: an absolute
+# one publishes the machine's account name to everyone who clones the repository.
+source_recorded="${ruuah/#$HOME/~}"
+
 cat > "$lock" <<LOCK
 # Which libghostty-vt the differential oracle was built from. Written by
 # scripts/build-oracle.sh; commit this file when it changes.
 #
 # ruuah-vt has no git upstream. This is the upstream that matters: the oracle is the
 # reference implementation, and when it moves the corpus can move with it.
-source = "$ruuah"
+source = "$source_recorded"
 commit = "$commit"
 describe = "$describe"
 zig = "$REQUIRED_ZIG"

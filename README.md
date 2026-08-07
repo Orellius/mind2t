@@ -1,253 +1,199 @@
 <p align="center">
-  <img src="assets/icon/mind2t-1024.png" width="140" alt="Mind2t" />
+  <img src="assets/icon/mind2t-1024.png" width="128" alt="Mind2t" />
 </p>
 
 <h1 align="center">Mind2t</h1>
 
 <p align="center">
-  An agent workbench and a daily-driver terminal, on a terminal engine written from scratch in Rust and gated on a differential oracle.
+  A terminal you can put agents in, on an engine written from scratch in Rust and gated
+  against a real reference implementation.
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg"></a>
+  <img alt="Rust 1.93+" src="https://img.shields.io/badge/rust-1.93%2B-orange.svg">
+  <img alt="macOS arm64" src="https://img.shields.io/badge/platform-macOS%20arm64-lightgrey.svg">
 </p>
 
 ---
 
-**Mind2t is a terminal you can put agents in.** Coding-agent CLIs running in real terminals
-inside git worktrees, on an engine written from scratch (`crates/`) - Hebrew-first,
-GPU-rendered, built to be someone's daily driver rather than a demo. It is that person's
-daily driver already.
+Mind2t runs coding-agent CLIs in real terminal panes, inside git worktrees. The engine
+underneath it is not rented: the VT core, the pty and the renderer are all in this repository,
+so an agent's state is read from a **typed grid** rather than regexed out of an ANSI byte
+stream. A Claude Code CLI has been launched into a pane and its banner, model, working
+directory and git branch read straight back off that grid, with no regex and no ANSI parsing
+anywhere.
 
-The wedge is ownership. We own the VT core, the pty and the renderer, so an agent's state is
-read from a **typed grid** - `Session::rowText(row, semantic:)` - instead of being regexed out
-of an ANSI byte stream. A real Claude Code CLI has been launched into a pane and its banner,
-model, working directory and git branch read straight back off the grid, with no regex and no
-ANSI parsing anywhere. Everything else in this repository exists to make that grid trustworthy.
-
-The engine is a pure, deterministic state machine: bytes in, grid mutations out, with no PTY,
-no GPU, no clock and no I/O inside it. That constraint is what makes the whole thing testable,
-and it is the only architectural rule the project actually enforces.
+Everything else here exists to make that grid trustworthy.
 
 ![the feature tour, rendered live](docs/images/feature-tour-20260730.png)
 
-<p align="center"><em>The engine's feature tour, rendered live in the Swift reference host.</em></p>
+## Status
 
-## Three names, and they are not interchangeable
+Working and in daily use on macOS, Apple Silicon. Pre-1.0, no stability promises, and the
+product host is still being ported to parity against the Swift reference host in `swift/`,
+which is where some features listed below currently live. Other platforms are not built or
+tested yet; the core, frame, render and difftest crates are portable and that work is welcome.
 
-- **Mind2t** is the PRODUCT: the cross-platform app (`crates/mind2t`, Tauri 2 + a native GPU
-  surface). Born `Bindary`, briefly `Sadna`, renamed to Mind2t on 2026-08-06.
-- **`ruuah-vt`** is the ENGINE, and it keeps its name forever: the VT core, pty, CPU and GPU
-  renderers, and the C ABI. It is the part somebody else could embed, so its name is its
-  identity. The container carries the product's name; the crates carry the engine's.
-- **RUUAH VT** (`swift/`) is the ORACLE HOST, not the corpse. The Tauri host is being ported to
-  parity against it, the same way the GPU backend is trusted because a CPU reference can
-  disagree with it. It is kept deliberately, and it is where several features listed below
-  still live.
+## Why build the engine
 
-## About the `-vt`, and about Ghostty
+Two reasons, and neither is speed. Rust and Zig are peers here and there is no performance win
+waiting.
 
-The `-vt` is the older half of the story: the engine was started as a drop-in for the C ABI
-Ghostty publishes as `libghostty-vt`, meant to sit behind somebody else's GUI. It grew its own
-window, renderer, panes and agent launcher, and stopped being a component.
+**Agents you can see.** Every comparable tool rents xterm.js or tmux, so agent state arrives
+as bytes on a JS thread and has to be parsed back out. Ours arrives as cells.
 
-Two things are worth stating precisely, because "built on Ghostty" would be wrong in both
-directions:
+**Hebrew, done properly.** Reordering, mirrored brackets and GPOS-placed niqqud are not a
+plugin here. They are why the renderer is shaped the way it is, and why bidi lives in the
+renderer and never in the core, where reordering would break cursor addressing.
 
-- **No Ghostty code ships here.** The app binary contains zero Ghostty symbols and links zero
-  Ghostty libraries - measurable with `nm` and `otool` on the installed app. Nothing in this
-  repository is copied from it; the parser is a vendored [vte](https://github.com/alacritty/vte)
-  fork, and everything above it was written for this project.
-- **Ghostty is the oracle, and that is load-bearing.** At *test* time the real `libghostty-vt`
-  is built and linked by the differential harness, and the corpus compares our grid against its
-  grid, case by case. It is depended on by exactly one crate - `difftest`. That is not a
-  courtesy citation: it is the reason any correctness claim here means anything.
+## Correctness
 
-So the ABI promise is still real and still tested - you *can* link `libruuah-vt.a` where
-`libghostty-vt` was expected - but read the `-vt` as heritage, not as scope, and read Ghostty as
-the measuring instrument, not the foundation.
+The differential harness was written before a single line of terminal logic, and it is the
+reason any claim in this README means anything.
 
-## Why this exists
+At test time the real `libghostty-vt` is built and linked, and `corpus/cases.toml` compares
+our grid against its grid case by case. Some cases are pinned to *disagree*, because a harness
+that cannot detect disagreement proves nothing. `oracle.lock` pins the exact reference commit,
+so a verdict flipping overnight is distinguishable from a regression.
 
-Writing a terminal from scratch is only worth doing if you can prove it is right, so this
-project is built the other way round from usual: the **differential harness came first**, before
-a single line of terminal logic. Every slice since is measured against a real reference
-implementation rather than against an opinion of what terminals do - including the corpus
-verdicts pinned to *disagree*, because a harness that cannot detect disagreement proves nothing.
-The CPU and GPU renderers are bit-identical by specification, not merely close.
+| gate | what it proves |
+|---|---|
+| `cargo test --workspace` | 688 tests: units, pixels, concurrency, C-surface round trips |
+| `ruuah-vt-difftest` | 223 corpus cases, every verdict met, including the 17 pinned to disagree |
+| `esctest2` | 391 pinned passes of 568, both directions: a regression fails, so does an unpromoted pass |
+| `scripts/smoke-mind2t.sh` | 26 host invariants about what AppKit, WebKit, the IPC and the child processes actually did, with no screen required |
+| export check | 14 + 56 C symbols present in the shipped archives |
 
-And the reason to want your own engine at all, twice over. **Hebrew, end to end, done properly** -
-reordering, mirrored brackets and GPOS-placed niqqud are not a plugin here; they are why the
-renderer is shaped the way it is. And **agents you can actually see**: every competitor rents
-xterm.js or tmux, which means their agent state arrives as bytes on a JS thread. Ours arrives as
-cells.
+Plus a headless Swift smoke test and, for anything whose contract ends at the GUI, a live tap
+driving synthesized input into a real window.
+
+Every one of those gates has been run against a deliberate mutant and watched go red. A test
+that has never been red is not evidence.
+
+## Architecture
+
+Three rules, and they are enforced by crate boundaries rather than by convention.
+
+1. **The core is a pure, deterministic state machine.** Bytes in, grid mutations out. No pty,
+   no GPU, no clock, no I/O. That is what makes headless CI and differential testing possible
+   at all. I/O lives in exactly one crate and it is not the core.
+2. **No terminal bytes in the webview.** Not pixels, not keystrokes, not frames. The chrome
+   strip is a browser engine drawing documents. Renting xterm.js would mean running a second
+   VT parser in front of ours, which would make every test here measure code nothing calls.
+3. **One wgpu surface for all panes.** Pane count is a Rust-side fact. If the webview needs to
+   know it, the design is wrong.
 
 ## Features
 
 **Terminal core**
-- Full VT parsing on a vendored [vte](https://github.com/alacritty/vte) (one addition: APC dispatch)
-- True color; styled underlines - single/double/curly/dotted/dashed, SGR 58 underline color
-- OSC 8 hyperlinks; the stamps survive scroll and resize
-- OSC 52 clipboard write, OSC 9 / OSC 777 notifications, bell
-- OSC 7 working directory, stored exactly as reported - including the two rules the reference
-  implementation's *source* gets wrong, found by binary search against the real library
-- OSC 133 semantic regions - prompt, input, output - the rails everything else rides
-- DSR / DA / DECRQM query replies through the pty (programs that probe get real answers)
-- Synchronized output (mode 2026) with an anti-stuck budget, so a wedged frame cannot freeze
-  the display
-- Bracketed paste (mode 2004) with the oracle-measured encoding
-- **Selection as a query, not as state** - word, line and select-all ranges plus the clipboard
-  text they format to, agreeing with the oracle on all 15 corpus cases that ask. The word rules
-  are ported from the reference's *code*, not its doc comment, which is wrong: `.`, `/`, `-` and
-  `_` are not boundaries, so a path, a filename and a flag select whole
-- **Kitty graphics** - direct transmission, RGB/RGBA/PNG, chunked, queries answered, z-ordering,
-  and **unicode placeholders**: the cells *are* the image, so it scrolls, reflows and erases with
-  the text instead of chasing it
-- **Sixel**, decoded into the same image pipeline - and advertised in DA1, which is a deliberate
-  divergence: the oracle omits attribute 4 because it has no decoder, and we do
+
+- Full VT parsing on a vendored [vte](https://github.com/alacritty/vte) fork (one addition: APC dispatch)
+- True color; styled underlines, single / double / curly / dotted / dashed, with SGR 58 underline color
+- OSC 8 hyperlinks whose stamps survive scroll and resize; OSC 52 clipboard write; OSC 9 and OSC 777 notifications; bell
+- OSC 7 working directory, stored exactly as reported, including two rules the reference implementation's own source gets wrong
+- OSC 133 semantic regions (prompt, input, output), the rails everything else rides
+- DSR / DA / DECRQM query replies through the pty, so programs that probe get real answers
+- Synchronized output (mode 2026) with an anti-stuck budget, so a wedged frame cannot freeze the display
+- Bracketed paste (mode 2004) with the reference-measured encoding
+- Selection as a query rather than as state: word, line and select-all ranges plus the clipboard text they format to. The word rules are ported from the reference's code, not its doc comment, which is wrong, so `.`, `/`, `-` and `_` are not boundaries and a path, a filename and a flag select whole
+- Kitty graphics: direct transmission, RGB / RGBA / PNG, chunked, queries answered, z-ordering, and unicode placeholders where the cells *are* the image, so it scrolls, reflows and erases with the text
+- Sixel, decoded into the same image pipeline, and advertised in DA1
 - Grapheme clusters from day one; wide glyphs and spacer tails; VS16 emoji presentation
 - Paged scrollback with an exact row budget
 
 **Rendering**
-- Glyph atlas, damage-driven redraw; a CPU reference backend and a wgpu compute backend,
-  byte-equal to each other
-- Color emoji (sbix), synthesized block mosaics, per-glyph font fallback measured on this machine
-- **Bidi done right**: UBA reordering in the renderer (91,707/91,707 BidiCharacterTest), mirrored
-  brackets in RTL runs, niqqud placed by GPOS shaping - and never in the core, where reordering
-  would break cursor addressing
-- Font ligatures behind a substitution guard: a non-ligating font renders byte-identically with
-  the feature on or off
-- Selection drawn as a tint **blended over the finished row**, never as a cell background - a
-  background is erased by the next cell's, so a selection painted that way is invisible over
-  anything the child coloured
+
+- Glyph atlas with damage-driven redraw; a CPU reference backend and a wgpu compute backend, byte-equal to each other by specification
+- Color emoji (sbix), synthesized block mosaics, per-glyph font fallback
+- Bidi in the renderer: UBA reordering at 91,707 of 91,707 BidiCharacterTest cases, mirrored brackets in RTL runs, niqqud placed by GPOS shaping
+- Font ligatures behind a substitution guard, so a non-ligating font renders byte-identically with the feature on or off
+- Selection drawn as a tint blended over the finished row rather than as a cell background, which would be erased by the next cell's
 
 **Input**
-- **Kitty keyboard protocol** - the full flag stack, CSI-u encoding, `modifyOtherKeys`; the
-  encoder is byte-compared against the oracle's own across 135,216 cases, zero divergent
-- **SGR mouse** (1000/1002/1003/1006) plus alternate scroll, against a ~65k-case differential
-  matrix; the wheel routes by mode - report, arrow keys, or viewport
-- Chords match *physical* keys, so a Hebrew layout keeps every one of them
 
-**Mind2t, the product host** (`crates/mind2t`)
-- One window that opens with **one pane**, split to the right with cmd+D; a real gutter is
-  reserved between panes and a rule is drawn into it, in the same render pass
-- **One wgpu surface for the whole canvas.** Pane count is a Rust-side fact; a composited frame
-  is one render pass, so a pane that owned its own GPU context could not be composited at all
-- Click-drag, double-click and triple-click selection, cmd+A, cmd+C - conditional on purpose, so
-  with nothing selected it still falls through to the child as `^C` and can interrupt a command.
-  Shift takes the pointer back from a child that has captured the mouse
+- Kitty keyboard protocol: the full flag stack, CSI-u encoding, `modifyOtherKeys`, byte-compared against the reference encoder across 135,216 cases with zero divergent
+- SGR mouse (1000 / 1002 / 1003 / 1006) plus alternate scroll, against a ~65k-case differential matrix; the wheel routes by mode to report, arrow keys, or viewport
+- Chords match physical keys, so a Hebrew layout keeps every one of them
+
+**The product host** (`crates/mind2t`)
+
+- One window opening with one pane, split right with cmd+D, with a real gutter reserved between panes and a rule drawn into it in the same render pass
+- Click-drag, double-click and triple-click selection, cmd+A, cmd+C. cmd+C is conditional on purpose: with nothing selected it falls through to the child as `^C` and can still interrupt a command. Shift takes the pointer back from a child that has captured the mouse
 - cmd+V bracketed paste, cmd+= / cmd+- / cmd+0 live zoom across every pane, cmd+click hyperlinks
-- **Agent launcher**: ten agent CLIs with the fields that actually differ, a PATH probe that
-  MEASURES availability rather than trusting a table, spawn-observe-retry with counted backoff,
-  and a guard that REFUSES an auto-approve bypass rather than stripping it and proceeding
-- `~/.mind2t/config.toml` (falling back to `~/.ruuah`): font size, family, ligatures, shell,
-  themes, auto-direction, and `reports` - screen-inspection replies (DECRQCRA, WINOPS 18), **off
-  by default**, because they let a program read back what is on your screen
+- Agent launcher: ten agent CLIs with the fields that actually differ, a PATH probe that measures availability rather than trusting a table, spawn-observe-retry with counted backoff, and a guard that refuses an auto-approve bypass rather than stripping it
+- `~/.mind2t/config.toml`: font size, family, ligatures, shell, themes, auto-direction, and `reports`, which is off by default because it lets a program read back what is on your screen
 
-**The Swift reference host** (`swift/`, RUUAH VT.app) - the parity target the port is measured
-against, and where these still live today
-- Top tab bar with live program titles and work-state dots driven by OSC 9;4 progress - explicit
-  signals only, never idle-guessing
-- **Scrollback viewport** - wheel and cmd+PageUp/Home/End, pinned to content while a program
-  prints, snapping back the moment you type
-- **cmd+K command palette** with TOML workflows: placeholders discovered from the command text,
-  filled one at a time, and *pasted* rather than executed
-- **Autosuggestions** - fish-style ghost text keyed by working directory: a command you ran
-  *here* outranks a newer one you ran elsewhere, falling back to the newest anywhere so the ghost
-  never vanishes just because you changed directory
-- OSC 133 blocks with a gutter - copy command, copy output, run again - built to survive
-  prompt-rewriting themes (starship's transient prompt included)
-- **Git-worktree workspaces** and a WKWebView diff-review panel over the active session's repo
+**The Swift reference host** (`swift/`), the parity target the port is measured against
 
-## The three architectural rules
-
-1. **The core is a pure, deterministic state machine.** Everything else hangs off that, because
-   it is what makes headless CI and differential testing possible at all. I/O lives in exactly
-   one crate, and it is not the core. Every serious terminal ends up drawing this line
-   somewhere; here it is drawn at a crate boundary the compiler enforces.
-2. **No terminal bytes in the webview** - not pixels, not keystrokes, not frames, ever. The
-   chrome strip is a browser engine drawing *documents*. Renting xterm.js would mean running a
-   second VT parser in front of ours, which would make every test in this repository measure
-   code nothing calls.
-3. **One wgpu surface for all panes.** Pane count is a Rust-side fact; if the webview needs to
-   know it, the design is wrong.
-
-## How it is tested
-
-Five independent gates, all on exit codes:
-
-| gate | what it proves |
-|---|---|
-| `cargo test --workspace` | **688 tests** - units, pixels, concurrency, C-surface round trips |
-| `ruuah-vt-difftest` | **223 corpus cases**, every verdict met - including the 17 pinned to *disagree* |
-| `esctest2` | **391 pinned passes** of 568, both directions: a regression fails, and so does an unpromoted pass |
-| `scripts/smoke-mind2t.sh` | **26 invariants** about what AppKit, WebKit, the IPC and the child processes actually did - and it needs no screen |
-| export check | **14 + 56** C symbols present in the shipped archives |
-
-Plus a headless Swift smoke test, a headless history smoke test, and - for anything whose
-contract ends at the GUI - a live tap driving synthesized input into a real window.
-
-The rule behind all of it: **a test must be seen to fail.** Every gate above has been run
-against a deliberate mutant and watched go red. A guard is never proven by the absence of what
-it suppresses.
+- Top tab bar with live program titles and work-state dots driven by OSC 9;4 progress, explicit signals only
+- Scrollback viewport: wheel and cmd+PageUp / Home / End, pinned to content while a program prints, snapping back the moment you type
+- cmd+K command palette with TOML workflows: placeholders discovered from the command text, filled one at a time, and pasted rather than executed
+- Autosuggestions, fish-style ghost text keyed by working directory: a command you ran *here* outranks a newer one you ran elsewhere
+- OSC 133 blocks with a gutter (copy command, copy output, run again), built to survive prompt-rewriting themes
+- Git-worktree workspaces and a WKWebView diff-review panel over the active session's repository
 
 ## Building
 
+Requires Rust 1.93 or newer. macOS on Apple Silicon.
+
 ```sh
-cargo test --workspace              # the gate: every test green
-cargo run -p ruuah-vt-difftest      # the corpus, measured against libghostty-vt
-cargo run -q -p mind2t --bin mind2t # Mind2t itself
-./scripts/smoke-mind2t.sh           # the host gate: no window, no synthesized input
-./scripts/build-lib.sh              # libruuah-vt.a       (the drop-in ABI)
-./scripts/build-host.sh             # libruuah-vt-host.a  (ABI + embedder surface)
-./scripts/build-swift.sh            # the Swift reference host + headless smoke test
-./scripts/build-app.sh              # assemble + sign + install RUUAH VT.app
-sh scripts/demo-features.sh         # the one-screen feature tour, inside the terminal
+git clone https://github.com/Orellius/mind2t.git
+cd mind2t
+cargo run -q -p mind2t --bin mind2t     # run it
 ```
 
-The differential harness needs a Ghostty checkout as its oracle. The default `../ruuah` was
-archived on 2026-08-06, so a rebuild needs `RUUAH_VT_ORACLE_SRC` pointed at wherever that
-checkout now lives; the already-built oracle in `vendor/` keeps every gate working meanwhile.
-`oracle.lock` pins the exact commit the corpus verdicts were measured against, so an upstream
-behavior change is distinguishable from a regression. `scripts/fetch-esctest.sh` vendors the
-esctest2 suite, pinned in `esctest.lock`.
+The rest:
+
+```sh
+cargo test --workspace                  # the gate: every test green
+cargo run -p ruuah-vt-difftest          # the corpus, measured against libghostty-vt
+./scripts/smoke-mind2t.sh               # host gate: no window, no synthesized input
+./scripts/build-lib.sh                  # libruuah-vt.a       (the drop-in ABI)
+./scripts/build-host.sh                 # libruuah-vt-host.a  (ABI plus embedder surface)
+./scripts/build-swift.sh                # the Swift reference host and its headless smoke test
+./scripts/build-app.sh                  # assemble, sign and install the app
+sh scripts/demo-features.sh             # the one-screen feature tour, inside the terminal
+```
+
+Running the differential harness additionally needs a Ghostty checkout to build its oracle
+from, pointed at by `RUUAH_VT_ORACLE_SRC`. See [CONTRIBUTING.md](CONTRIBUTING.md) for that and
+for the rest of the development setup.
+
+## The names
+
+- **Mind2t** is the product: the app in `crates/mind2t`.
+- **`ruuah-vt`** is the engine, and it keeps its name. The VT core, pty, renderers and C ABI
+  are the part somebody else could embed, so the crates carry the engine's name while the
+  repository carries the product's.
+- The `-vt` is heritage. The engine started as a drop-in for the C ABI Ghostty publishes as
+  `libghostty-vt`, meant to sit behind somebody else's GUI, then grew its own window,
+  renderer, panes and agent launcher. The ABI promise is still real and still tested: you can
+  link `libruuah-vt.a` where `libghostty-vt` was expected.
 
 ## Contributing
 
-Work lands on `main`, one commit per verified seam:
+Read [CONTRIBUTING.md](CONTRIBUTING.md) first. The short version: extend the harness before
+you change behaviour, and a new test must be seen to fail.
 
-1. **Extend the harness before the change.** Every slice so far had a blind spot the existing
-   tests could not see; the first question is always "can the harness see this?" Ten for ten, and
-   several of those blind spots were total - a wrong implementation would have scored a perfect
-   match on the entire corpus.
-2. A new test must be *seen to fail* - against the pre-fix code or a deliberate mutant. A test
-   that has never been red is not evidence, and a guard is not proven by the absence of what it
-   suppresses: make it fire, then feed it the neighbouring input it must NOT catch and watch it
-   stay quiet.
-3. Gates before anything lands: `cargo test --workspace` green, difftest meeting every corpus
-   expectation, `scripts/smoke-mind2t.sh` passing. GUI-facing behavior (clicks, chords, drag,
-   resize) needs a live tap or an explicit `untested` note - the demo that works when a harness
-   drives bytes routinely dies when a human drives the window.
-4. A corpus case pinned `expect = "diff"` is a to-do, not a pass. Implementing that behavior makes
-   the case *fail*; promoting it to `match` is the evidence the change worked.
-5. Read the oracle's source before inferring its behaviour. Probing establishes WHAT differs; the
-   source explains WHY, and several rules here were only ever settled that way.
+Security reports go through a [private advisory](https://github.com/Orellius/mind2t/security/advisories/new),
+not a public issue. [SECURITY.md](SECURITY.md) documents what a remote byte stream is and is
+not allowed to make this terminal do.
 
 ## License
 
-[AGPL-3.0](LICENSE). The vendored `crates/vte` fork remains MIT/Apache-2.0 (both license texts
-kept in-tree).
+[AGPL-3.0-only](LICENSE). The vendored `crates/vte` fork remains MIT OR Apache-2.0, with both
+license texts kept in-tree.
 
-**No Ghostty source is copied into this repository.** What is true, and worth saying plainly
-rather than leaving to a reader to discover: parts of the VT core's *behaviour* were derived by
-reading Ghostty's source to find out why the real library does what it does. Black-box probing
-establishes WHAT differs; the source explains WHY, and several rules here were only settled that
-way. That is derivation of behaviour from a published MIT-licensed reference, not transcription
-of it, and the distinction is the whole reason the differential harness exists: agreement is
-*measured through the ABI boundary*, never assumed from a shared line of code.
+**No Ghostty source is copied into this repository.** Ghostty is the measuring instrument, not
+the foundation: it is linked by exactly one crate at test time, and the shipped binary
+contains zero of its symbols. [NOTICE](NOTICE) states the position in full, including which
+parts of the core's behaviour were derived by reading the reference's source and why that is
+derivation rather than transcription.
 
 ## Acknowledgments
 
-- [Ghostty](https://ghostty.org) (MIT) - the reference implementation this engine is measured
-  against at test time, and the origin of the ABI. None of its code ships here.
-- [vte](https://github.com/alacritty/vte) - the parser this project vendors and extends.
-- [esctest2](https://github.com/ThomasDickey/esctest2) (GPL-2.0, test-time only) - the
-  conformance suite run against our own pty.
-- [Culmus](https://culmus.sourceforge.io) - Miriam Mono CLM, the only monospace font we found
-  that does Hebrew niqqud correctly.
+- [Ghostty](https://ghostty.org) (MIT), the reference implementation this engine is measured against at test time, and the origin of the ABI.
+- [vte](https://github.com/alacritty/vte), the parser this project vendors and extends.
+- [esctest2](https://github.com/ThomasDickey/esctest2) (GPL-2.0, test time only), the conformance suite run against our own pty.
+- [Culmus](https://culmus.sourceforge.io), for Miriam Mono CLM, the only monospace font we found that does Hebrew niqqud correctly.

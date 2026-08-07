@@ -199,6 +199,19 @@ is shaped as a run, so each letter resolves to its initial, medial, final or iso
 every glyph is then positioned in its own cell: shape for form, position for grid. Measured at
 32px, beh alone is glyph 867 and the same letter inside a word resolves to 870 / 869 / 868.
 
+Before, every letter drawn in its isolated form:
+
+![Arabic drawn unjoined](docs/images/arabic-joining-before-20260808.png)
+
+After, the same bytes through the same renderer, one variable changed:
+
+![Arabic drawn with contextual forms](docs/images/arabic-joining-after-20260808.png)
+
+Both are this terminal's own CPU backend, which is byte-identical to the GPU one by
+specification, captured with `cargo run -p ruuah-vt-render --example screenshot` and therefore
+needing no window and no display. The Hebrew and the Latin are unchanged between them, which is
+the control: a change that moved those would be a change to something other than joining.
+
 Until 2026-08-08 this rendered as isolated forms, and the note here blamed terminal grids. That
 was wrong. Shaping was gated on a cluster having more than one codepoint, so a lone Arabic letter
 never reached the shaper at all and got the charmap's nominal glyph, which is the isolated form -

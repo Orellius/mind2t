@@ -45,6 +45,29 @@ fn pump(session: &mut Session, at_least: usize, budget: Duration) -> usize {
     draws
 }
 
+/// Polls until the child's own text is on the grid, and returns whether it arrived.
+///
+/// Waiting for a DRAW COUNT is the flake this replaces. A draw means the renderer painted
+/// something, which happens for the caret alone on a fresh terminal, so `pump(.., 1, ..)`
+/// could return satisfied before the child had written a byte. It passed on an idle machine
+/// and failed on a loaded one: measured 2026-08-07, red once in a full parallel run and green
+/// 5 of 5 in isolation, at a load average of about 7.
+///
+/// Waiting for the TEXT is not a longer timeout, it is a different question. The condition is
+/// now the thing the assertion depends on, so the test either observes what it is about to
+/// assert on or says plainly that it never arrived.
+fn pump_until_text(session: &mut Session, wanted: &str, budget: Duration) -> bool {
+    let deadline = Instant::now() + budget;
+    while Instant::now() < deadline {
+        session.poll();
+        if session.visible_text().contains(wanted) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    false
+}
+
 /// How many distinct colours the surface holds PAST THE FIRST CELL.
 ///
 /// The first cell is excluded because the CARET lives there on a fresh terminal, and the caret
@@ -73,8 +96,14 @@ fn a_child_that_prints_puts_ink_on_the_surface() {
     // `printf` rather than `echo`: no trailing newline to scroll the grid, and no shell
     // builtin differences between /bin/sh implementations.
     let mut session = spawn("printf 'RUUAH'; sleep 1");
-    let draws = pump(&mut session, 1, Duration::from_secs(5));
-    assert!(draws > 0, "the session never drew a frame");
+    // Wait for the CHILD'S TEXT, never for a draw count. A draw fires for the caret alone, so
+    // the old form could be satisfied before the child wrote anything and then assert on an
+    // empty surface - which is exactly how this failed under parallel load and passed alone.
+    assert!(
+        pump_until_text(&mut session, "RUUAH", Duration::from_secs(20)),
+        "the child's own output never reached the grid; surface holds:\n{}",
+        session.visible_text()
+    );
     let seen = colours_past_the_caret(&mut session);
     assert!(
         seen > 1,

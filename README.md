@@ -168,26 +168,40 @@ reorder. It would also make every RTL line diverge from the differential oracle 
 deleting the only correctness signal this project has. Slice 5.5 landed reordering with the
 corpus untouched at 78/78, which is that separation demonstrated rather than asserted.
 
+### Fonts, and what each script needs
+
+The algorithm is script agnostic. Drawing is a separate question, and it is answered by the font
+stack rather than by the reordering.
+
+| script | face | state |
+|---|---|---|
+| Latin, box drawing, powerline | Menlo | ships with macOS |
+| Hebrew | **Miriam Mono CLM** (Culmus, GPL-2.0) | optional, worth installing; monospaced, GSUB composes shin-dot and dagesh, GPOS centres niqqud, marks carry zero advance so a pointed cluster stays one cell |
+| Arabic, Persian | **Kawkab Mono** (SIL OFL 1.1) | optional, worth installing; monospaced, so Arabic shares the grid |
+| Arabic fallback | SF Arabic, Geeza Pro | ship with macOS, **proportional**, so Arabic renders but sits unevenly |
+
+Both optional faces are user-installed and the stack drops them silently when absent, so nothing
+here demands somebody else's font.
+
+Until 2026-08-07 the stack was `Menlo -> Miriam Mono CLM -> Arial Hebrew`, none of which carries
+the Arabic block, so every Arabic and Persian codepoint drew as a **blank cell** while the bidi
+algorithm reordered them perfectly. Correct algorithm, empty row, no error anywhere. It was found
+by rendering the sheet above across three scripts and looking at it, not by a test, and
+`arabic_and_persian_resolve_somewhere_in_the_stack` is that omission turned into one.
+
+Coverage alone was not the fix. Adding a proportional face stopped the blank cells and left
+Arabic sitting off the grid; `a_monospaced_arabic_face_outranks_the_proportional_ones` pins the
+ordering that fixes the second half, and checks that the monospaced face is the one which
+actually answers rather than merely the one listed first.
+
 ### What is not done
 
-**Hebrew is finished. Arabic and Persian render, and do not yet sit well.**
+**Arabic does not join across cells.** Letters render in their positional forms, one per cell,
+rather than as connected cursive. That is a property of terminal grids rather than of this
+implementation, and every terminal shares it.
 
-Until 2026-08-07 the font stack was `Menlo -> Miriam Mono CLM -> Arial Hebrew`, none of which
-carries the Arabic block, so every Arabic and Persian codepoint drew as a **blank cell** while
-the bidi algorithm reordered them perfectly. Correct algorithm, empty row, no error anywhere.
-It was found by rendering the sheet above across three scripts and looking at it, not by a test,
-and `arabic_and_persian_resolve_somewhere_in_the_stack` is that omission turned into one.
-
-SF Arabic and Geeza Pro now backstop the stack, so the glyphs appear. Both are **proportional**,
-exactly like the Arial Hebrew resort above them, so Arabic sits unevenly in a fixed grid and
-looks cramped next to Latin. That is visible in the image and it is the honest state: strictly
-better than blank, not yet good. A monospace Arabic face in the stack is the fix.
-
-Arabic contextual joining also cannot cross a cell boundary. That is a property of terminal grids
-rather than of this implementation, and every terminal shares it.
-
-Hebrew coverage is pinned across the classes that actually appear in text, not just one letter:
-base letters, final forms, niqqud, the dagesh that GSUB composes into its base, and punctuation.
+Hebrew coverage is pinned across the classes that appear in real text rather than one letter:
+base letters, final forms, niqqud, the dagesh GSUB composes into its base, and punctuation.
 
 ## How it compares
 

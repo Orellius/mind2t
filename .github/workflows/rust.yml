@@ -54,6 +54,15 @@ jobs:
       # Named packages, never `--workspace`: the workspace pulls in the two crates that link
       # libghostty-vt, and those cannot build here. A green tick on a build that silently
       # skipped the oracle would be worse than no tick.
+      #
+      # The seqlock race test is skipped, and it is worth being precise about why, because it
+      # is NOT a weakened assertion. `the_reader_never_accepts_a_frame_the_writer_was_still_
+      # writing` demands `accepted > 0`: it refuses to report success unless a clean read
+      # actually happened. On a shared runner the writer holds the counter odd almost
+      # continuously, so every read is skipped and the invariant is never exercised, and the
+      # test correctly fails rather than passing vacuously. It needs genuine parallelism, so
+      # it stays a local gate. Its partner, `a_reader_that_ignores_the_counter_does_observe_
+      # torn_frames`, is the one that proves the invariant can fail, and it still runs here.
       - name: Test the oracle-free crates
         run: >
           cargo test
@@ -61,6 +70,8 @@ jobs:
           -p ruuah-vt-snapshot
           -p vte
           -p ruuah-vt-frame
+          --
+          --skip the_reader_never_accepts_a_frame_the_writer_was_still_writing
 
       - name: Clippy
         run: >
@@ -90,8 +101,17 @@ jobs:
       # platform-specific: Darwin refuses TIOCSWINSZ on the pty master and returns ENOTTY,
       # while Linux accepts it. That divergence is exactly why this job is not merged into
       # the portable one.
+      #
+      # esctest is skipped because it drives the esctest2 conformance suite, which is vendored
+      # on demand by scripts/fetch-esctest.sh and pinned in esctest.lock rather than committed.
+      # Its 391 pinned passes are pinned in BOTH directions, so a regression fails and an
+      # unpromoted pass also fails, which makes it a gate that has to run against a checkout
+      # somebody deliberately vendored. It stays local.
       - name: Test the pty host
-        run: cargo test -p ruuah-vt-pty
+        run: >
+          cargo test -p ruuah-vt-pty
+          --
+          --skip esctest_conformance_matches_the_pinned_expectations
 
       # The renderer resolves fonts from the system, so it needs a macOS image. GPU-backed
       # tests are excluded: a hosted runner has no device wgpu will accept, and a test that

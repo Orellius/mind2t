@@ -215,11 +215,21 @@ impl FontStack {
             // the worst shape this class of defect takes: correct algorithm, empty row, no
             // error anywhere. Found by rendering a three-script proof sheet and looking at it.
             //
-            // SF Arabic leads because it ships on current macOS and carries the Persian
-            // letters an Arabic-only face omits (peh U+067E, gaf U+06AF). Geeza Pro backs it
-            // for older machines. Both are PROPORTIONAL, exactly like Arial Hebrew above, so
-            // Arabic sits unevenly in a fixed grid -- which is the same trade this stack
-            // already accepts there, and strictly better than a blank cell.
+            // Kawkab Mono leads it, and the ordering is the whole point. It is a genuinely
+            // MONOSPACED Arabic face (SIL OFL 1.1, github.com/aiaf/kawkab-mono), so Arabic
+            // shares the grid the way Miriam Mono CLM makes Hebrew share it. Optional and
+            // user-installed, exactly like Miriam: the filter below drops it silently when it
+            // is absent, and the two system faces beneath still answer.
+            //
+            // Measured 2026-08-07 on this machine: NOTHING monospaced with Arabic coverage was
+            // installed, and the Iosevka already at the end of this stack carries no Arabic at
+            // all (its cmap has no U+0628), so there was no existing candidate to promote.
+            (format!("{home}/Library/Fonts/KawkabMono-Regular.ttf"), 0),
+            // SF Arabic and Geeza Pro backstop it. SF Arabic first because it ships on current
+            // macOS and carries the Persian letters an Arabic-only face omits (peh U+067E,
+            // gaf U+06AF). Both are PROPORTIONAL, exactly like Arial Hebrew above, so without
+            // Kawkab installed Arabic renders but sits unevenly -- the same trade this stack
+            // already accepts for Hebrew, and strictly better than a blank cell.
             //
             // Contextual joining still cannot cross a cell boundary. That is a property of
             // terminal grids rather than of this stack, and every terminal shares it.
@@ -440,6 +450,47 @@ mod tests {
                 .unwrap_or_else(|| panic!("{what} resolves to no glyph in any stack font"));
             assert_ne!(resolved.glyph, 0, "{what} resolved to .notdef");
         }
+    }
+
+    /// A monospaced Arabic face, when installed, answers BEFORE the proportional ones.
+    ///
+    /// Coverage alone was never the goal. Adding SF Arabic stopped Arabic drawing as a blank
+    /// cell, and left it sitting unevenly in the grid because SF Arabic is proportional. The
+    /// ordering is what fixes the second half, and ordering is exactly the kind of thing that
+    /// survives a refactor by luck rather than by design unless something asserts it.
+    ///
+    /// Skipped rather than failed on a machine without Kawkab, for the same reason the Hebrew
+    /// stack tolerates a missing Miriam Mono CLM: it is optional and user-installed, and CI
+    /// must not demand somebody else's font.
+    #[test]
+    fn a_monospaced_arabic_face_outranks_the_proportional_ones() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let kawkab = format!("{home}/Library/Fonts/KawkabMono-Regular.ttf");
+        if !std::path::Path::new(&kawkab).is_file() {
+            eprintln!("skipped: Kawkab Mono is not installed; the proportional faces answer");
+            return;
+        }
+
+        let paths = FontStack::system_paths();
+        let index = |needle: &str| paths.iter().position(|p| p.contains(needle));
+        let mono = index("KawkabMono").expect("Kawkab is installed, so it is in the stack");
+        let proportional = index("SFArabic").expect("SF Arabic ships with macOS");
+        assert!(
+            mono < proportional,
+            "the proportional Arabic face is asked first, so Arabic renders off the grid \
+             even though a monospaced one is installed"
+        );
+
+        // And it is the one that actually answers, which is the claim the ordering is FOR.
+        // Position in a list proves nothing if resolution walks it differently.
+        let mut stack = FontStack::system(16.0).expect("system fonts");
+        let beh = stack.resolve('\u{0628}').expect("Arabic beh resolves");
+        assert_eq!(
+            usize::from(beh.font),
+            mono,
+            "Arabic resolved to font {} rather than to the monospaced face at {mono}",
+            beh.font
+        );
     }
 
     #[test]

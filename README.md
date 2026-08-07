@@ -196,9 +196,17 @@ actually answers rather than merely the one listed first.
 
 ### What is not done
 
-**Arabic does not join across cells.** Letters render in their positional forms, one per cell,
-rather than as connected cursive. That is a property of terminal grids rather than of this
-implementation, and every terminal shares it.
+**Arabic letters render in their isolated forms rather than joined**, and the reason is a bug
+here rather than a law of terminal grids. Shaping is gated on a cluster having more than one
+codepoint, so a lone Arabic letter never reaches the shaper and gets its nominal glyph, which is
+the isolated form. The joining lookups are never run.
+
+Arabic joining is overwhelmingly a one-to-one substitution, so the correct forms fit a grid
+exactly; the machinery to shape a run already exists and is currently hardcoded to Latin. The
+diagnosis, the fix, the harness that would catch it and the mutants that would prove it are in
+[`docs/plans/2026-08-07-arabic-joining.md`](docs/plans/2026-08-07-arabic-joining.md). What will
+remain afterwards is cosmetic: joining strokes drawn at cell boundaries do not always meet
+exactly, which is a real grid limit and a much smaller one.
 
 Hebrew coverage is pinned across the classes that appear in real text rather than one letter:
 base letters, final forms, niqqud, the dagesh GSUB composes into its base, and punctuation.

@@ -173,6 +173,28 @@ less in it; this produces **two**, and the second one CONSUMES the first.
 - **`canvas.rs` and `layout.rs` STAY.** Splits are a terminal feature (T4 asks for them); the
   canvas app's pane graph is a different thing that happens to share a word.
 
+## T7 INHERITS A GATEKEEPER PROBLEM FROM THE OPEN-SOURCE FLIP (2026-08-08 ~20:0x)
+
+Relayed by the session doing Orel's open-source flip; recorded here so T7 does not rediscover it
+at the moment of shipping. **Nothing is public yet - the visibility switch waits for his word.**
+
+- mind2t is slated to go public under AGPL-3.0, alongside coluanos and ozen. mind2t is already
+  the reference: AGPL LICENSE + NOTICE present, and its README header is now the house template
+  for the other two, so **do not restructure the README header**.
+- **AD-HOC SIGNING STOPS BEING SUFFICIENT THE DAY THE REPO IS PUBLIC.** It is fine while private
+  because only Orel opens the zip. A stranger downloading an ad-hoc-signed app gets "damaged and
+  can't be opened" - macOS 15 removed the right-click-open bypass. Two honest options, and it is
+  his call: Developer ID + notarization ($99/yr), or release notes that say build from source.
+  **T7 must state which one it took, in the release notes, rather than shipping a zip that fails
+  for everyone who is not him.**
+- The NOTICE's statements about esctest2 (GPL-2.0, vendored on demand, run at test time, never
+  distributed) and Miriam Mono CLM (GPL-2.0, not bundled) are what make the AGPL claim survive a
+  lawyer. Do not "tidy" them.
+- Dep audit run the same day: 502 third-party crates, zero GPL-2.0-only, zero LGPL-only, MPL-2.0
+  present and compatible. gitleaks over all 254 commits: clean.
+- `scripts/pre-push-gitleaks.sh` exists in the tree, uncommitted and NOT installed. Installing a
+  git hook is a contract change and is Orel's call, not another session's and not mine.
+
 ## Order of danger, so it is not discovered at 80%
 
 1. **T2 is the whole slice.** If keys cannot be read portably outside the webview, the Tauri

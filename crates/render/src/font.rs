@@ -30,8 +30,15 @@ pub enum FontError {
 }
 
 /// One loaded font file, kept as bytes because `FontRef` borrows them.
+///
+/// SHARED, not owned, and that is a measurement rather than a style choice. `Apple Color Emoji.ttc`
+/// is **183 MB** on this machine and every stack loads it, so a `Vec<u8>` per stack meant a copy
+/// per SESSION. Measured 2026-08-08 in fresh processes, before the fix: 435 MiB resident at one
+/// pane and **8,587 MiB at forty-one**, a flat ~204 MiB for each pane added. The tell that named
+/// it was that the cost did not move with the pane's size at all - 120px and 440px wide panes cost
+/// the same to the megabyte - so it could not be the pixel buffer, the grid or the surface.
 struct Face {
-    data: Vec<u8>,
+    data: std::sync::Arc<[u8]>,
     index: usize,
 }
 
@@ -113,16 +120,49 @@ pub struct FontStack {
     resolved: HashMap<char, Option<Resolved>>,
 }
 
+/// Every font file this process has read, kept once and handed out by reference.
+///
+/// Process-wide because the thing being shared is a file's contents, which cannot differ between
+/// two readers, and because the alternative - threading a cache handle down through `Session`,
+/// `Canvas` and both hosts - would put a parameter in five signatures to express a fact that has
+/// no caller-visible meaning. Keyed by the path as given: two spellings of one file cost two
+/// copies, which is a rounding error against the copy-per-session this replaces.
+///
+/// Not an LRU and deliberately never evicts. The set is the operator's font stack, it is bounded
+/// by how many fonts exist on the machine, and a font dropped while a `FontStack` still holds its
+/// `Arc` would simply be read again - so eviction would buy nothing and cost a re-read.
+static FONT_BYTES: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<[u8]>>>,
+> = std::sync::OnceLock::new();
+
+/// The bytes of one font file, read at most once per process.
+///
+/// A poisoned lock is recovered from rather than propagated: the only code under it is a map
+/// insert, so there is no invariant a panicking thread could have broken, and turning a font
+/// lookup into a panic would take the terminal down over a cache.
+fn shared_bytes(path: &str) -> Result<std::sync::Arc<[u8]>, FontError> {
+    let cache = FONT_BYTES.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let mut cache = cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(data) = cache.get(path) {
+        return Ok(std::sync::Arc::clone(data));
+    }
+    let data: std::sync::Arc<[u8]> = std::fs::read(path)
+        .map_err(|source| FontError::Read {
+            path: path.to_string(),
+            source,
+        })?
+        .into();
+    cache.insert(path.to_string(), std::sync::Arc::clone(&data));
+    Ok(data)
+}
+
 impl FontStack {
     /// Loads fonts in priority order. The first one also defines the cell box, because a
     /// terminal grid is the primary font's grid and a fallback must fit into it.
     pub fn load(paths: &[(&str, usize)], size: f32) -> Result<FontStack, FontError> {
         let mut faces = Vec::new();
         for (path, index) in paths {
-            let data = std::fs::read(path).map_err(|source| FontError::Read {
-                path: (*path).to_string(),
-                source,
-            })?;
+            let data = shared_bytes(path)?;
             FontRef::from_index(&data, *index).ok_or(FontError::Parse {
                 path: (*path).to_string(),
                 index: *index,
@@ -576,5 +616,50 @@ mod tests {
     fn a_missing_font_is_an_error_rather_than_a_panic() {
         let error = FontStack::load(&[("/nonexistent/font.ttf", 0)], 16.0);
         assert!(matches!(error, Err(FontError::Read { .. })));
+    }
+
+    /// Two stacks over one file must point at ONE allocation, not two equal ones.
+    ///
+    /// Asserted by pointer identity rather than by memory, because a cache that has quietly
+    /// stopped caching is invisible to every other test in this project: both stacks still render
+    /// correctly, both answer the same glyphs, and the only symptom is 183 MB of `Apple Color
+    /// Emoji.ttc` per session showing up as resident memory nobody is looking at. Comparing the
+    /// bytes would pass on two copies, which is precisely the defect.
+    ///
+    /// Seen red against the pre-fix `std::fs::read` per stack.
+    #[test]
+    fn two_stacks_over_one_file_share_its_bytes() {
+        let path = "/System/Library/Fonts/Menlo.ttc";
+        if !std::path::Path::new(path).exists() {
+            return;
+        }
+        let first = FontStack::load(&[(path, 0)], 16.0).expect("a stack");
+        let second = FontStack::load(&[(path, 0)], 16.0).expect("a second stack");
+        assert!(
+            std::sync::Arc::ptr_eq(&first.faces[0].data, &second.faces[0].data),
+            "each stack read its own copy of {path} - the shared cache is not firing, and at \
+             Apple Color Emoji's 183 MB that is a copy per terminal session"
+        );
+    }
+
+    /// The cache must not hand one file's bytes to a request for a different file.
+    ///
+    /// The neighbouring half of the guard above (SCAR-004): a cache proven only by hits is
+    /// indistinguishable from one that returns the same entry for everything.
+    #[test]
+    fn two_stacks_over_different_files_do_not_share() {
+        let (a, b) = (
+            "/System/Library/Fonts/Menlo.ttc",
+            "/System/Library/Fonts/ArialHB.ttc",
+        );
+        if !std::path::Path::new(a).exists() || !std::path::Path::new(b).exists() {
+            return;
+        }
+        let first = FontStack::load(&[(a, 0)], 16.0).expect("a stack");
+        let second = FontStack::load(&[(b, 0)], 16.0).expect("a second stack");
+        assert!(
+            !std::sync::Arc::ptr_eq(&first.faces[0].data, &second.faces[0].data),
+            "two different font files came back as the same allocation"
+        );
     }
 }

@@ -10,15 +10,15 @@ version = "0.15.0"
 # The PACKAGE is renamed because `vte` on crates.io belongs to the upstream project this forks.
 # The LIB TARGET keeps the name `vte`, so every `use vte::...` in this workspace is untouched and
 # the fork stays a re-vendorable diff rather than a rewrite.
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+description = "Parser for implementing terminal emulators (mind2t-vt APC fork)"
 repository.workspace = true
 publish.workspace = true
 
 [lib]
 name = "vte"
 path = "src/lib.rs"
-edition = "2021"
-license = "Apache-2.0 OR MIT"
-description = "Parser for implementing terminal emulators (mind2t-vt APC fork)"
 
 [dependencies]
 arrayvec = { version = "0.7.2", default-features = false }

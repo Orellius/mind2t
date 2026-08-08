@@ -68,7 +68,7 @@ jobs:
           cargo test
           -p mind2t-vt-core
           -p mind2t-vt-snapshot
-          -p vte
+          -p mind2t-vt-vte
           -p mind2t-vt-frame
           --
           --skip the_reader_never_accepts_a_frame_the_writer_was_still_writing

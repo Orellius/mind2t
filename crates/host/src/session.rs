@@ -100,6 +100,8 @@ pub struct Session {
     /// time the operator dragged the window, then silently revert - the terminal would simply be
     /// wearing different colours than it was a moment ago, with nothing in any log.
     palette: Palette,
+    /// Mirrors `Renderer::ligatures` so a renderer rebuilt by `set_font_size` can be told again.
+    ligatures: bool,
     /// The child's working directory, decoded from its last OSC 7 report. `None` until it
     /// reports one, and again after it reports an empty one.
     cwd: Option<String>,
@@ -157,6 +159,7 @@ impl Session {
             font_size,
             font_family,
             palette: Palette::xterm(),
+            ligatures: true,
             cwd: None,
             pointer: Pointer::default(),
         })
@@ -458,6 +461,17 @@ impl Session {
         self.renderer.set_palette(palette);
     }
 
+    /// Whether same-style ASCII segments may form ligatures (config `font-ligatures`).
+    ///
+    /// STORED as well as forwarded, for the same reason the palette is: `set_font_size` builds a
+    /// fresh renderer, and a fresh renderer starts on the default. Without the field the
+    /// operator's setting would last exactly until the first zoom chord - which is a defect that
+    /// only appears after an unrelated action and so never gets attributed to this call.
+    pub fn set_ligatures(&mut self, on: bool) {
+        self.ligatures = on;
+        self.renderer.set_ligatures(on);
+    }
+
     /// How rows are laid out - `Auto` is the Hebrew-first setting the `.app` ships.
     ///
     /// Set once and it holds: the publish channel does not carry a direction, and neither
@@ -710,8 +724,9 @@ impl Session {
         self.font_size = size;
         self.renderer = build(&self.gpu, geometry, size, self.font_family.as_deref())?;
         // A fresh renderer starts on the default scheme; without this the theme lasts exactly
-        // until the first font-size chord.
+        // until the first font-size chord. Ligatures are the same story and the same fix.
         self.renderer.set_palette(self.palette.clone());
+        self.renderer.set_ligatures(self.ligatures);
         self.geometry = geometry;
         // The highlight is in CELL coordinates and the cells just changed size underneath it, so
         // it now names different text than the operator selected. Clearing also marks the frame

@@ -81,7 +81,7 @@ fn measure(gpu: &GpuContext, count: u32) -> (Duration, Duration, f64, usize) {
     let area = area_for(count);
 
     let spawned = Instant::now();
-    let mut canvas = Canvas::spawn(gpu, grid, area, &[], FONT, shell).expect("a canvas");
+    let mut canvas = Canvas::spawn(gpu, grid, area, &[], FONT, None, shell).expect("a canvas");
     let spawn_time = spawned.elapsed();
 
     // One poll sweep across every pane, which is what a frame costs before anything is drawn.
@@ -139,7 +139,7 @@ fn the_same_sweep_with_the_window_held_still() {
         let grid = Grid { rows: 1, cols: count as u16, gutter: GUTTER };
         let area = Rect { x: 0, y: 0, width: 4000, height: 700 };
         let started = Instant::now();
-        let mut canvas = Canvas::spawn(&gpu, grid, area, &[], FONT, shell).expect("a canvas");
+        let mut canvas = Canvas::spawn(&gpu, grid, area, &[], FONT, None, shell).expect("a canvas");
         let spawn = started.elapsed();
         let polled = Instant::now();
         for pane in canvas.panes_mut() {
@@ -171,7 +171,7 @@ fn forty_one_panes_are_all_alive_at_the_same_time() {
 
     let started = Instant::now();
     let mut canvas =
-        Canvas::spawn(&gpu, grid, area_for(count), &[], FONT, shell).expect("41 panes");
+        Canvas::spawn(&gpu, grid, area_for(count), &[], FONT, None, shell).expect("41 panes");
     println!("\n{count} panes spawned in {:?}", started.elapsed());
 
     // Every pane gets its own byte and must show it. A canvas that built 41 rects over 3 live

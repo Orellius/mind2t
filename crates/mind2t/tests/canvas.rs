@@ -84,6 +84,7 @@ fn each_pane_tells_its_child_its_own_size() {
         area,
         &[PaneSpec::shell(), PaneSpec::shell()],
         FONT,
+        None,
         shell,
     )
     .expect("a canvas");
@@ -168,6 +169,7 @@ fn every_pane_reaches_one_frame_at_its_own_rect() {
         area,
         &[PaneSpec::shell(), PaneSpec::shell()],
         FONT,
+        None,
         |_spec| {
             // Each child prints a DIFFERENT banner, because the whole claim is positional: two
             // panes drawing the same pixels would pass this test with left and right exchanged.
@@ -363,6 +365,7 @@ fn a_split_adds_a_pane_and_the_existing_child_is_told_it_shrank() {
         area,
         &[PaneSpec::shell()],
         FONT,
+        None,
         |_| {
             let mut command = Command::new("/bin/sh");
             // Marked reports, for the same reason as the resize test: a narrowing pane reflows
@@ -385,7 +388,7 @@ fn a_split_adds_a_pane_and_the_existing_child_is_told_it_shrank() {
             let mut command = Command::new("/bin/sh");
             command.arg("-c").arg("stty size; exec cat");
             command
-        }, FONT)
+        }, FONT, None)
         .expect("a split");
 
     assert_eq!(index, 1, "the split did not report the new pane's index");
@@ -438,11 +441,12 @@ fn a_multi_row_canvas_refuses_to_split() {
         Rect { x: 0, y: 0, width: 1200, height: 900 },
         &[PaneSpec::shell(), PaneSpec::shell()],
         FONT,
+        None,
         shell,
     )
     .expect("a canvas");
 
-    let refused = canvas.split(&context, Command::new("/bin/sh"), FONT);
+    let refused = canvas.split(&context, Command::new("/bin/sh"), FONT, None);
     assert!(
         matches!(refused, Err(mind2t::canvas::CanvasError::NotSplittable { rows: 2 })),
         "a two-row canvas split anyway: {refused:?}"
@@ -465,6 +469,7 @@ fn a_resize_reaches_the_children() {
         Rect { x: 0, y: 0, width: 1800, height: 900 },
         &[PaneSpec::shell(), PaneSpec::shell()],
         FONT,
+        None,
         |_| {
             let mut command = Command::new("/bin/sh");
             // Every report is MARKED, and that is not decoration: after the pane narrows, the
@@ -539,6 +544,7 @@ fn splitting_stops_before_a_pane_becomes_unusable() {
         area,
         &[PaneSpec::shell()],
         FONT,
+        None,
         shell,
     )
     .expect("a canvas");
@@ -549,7 +555,7 @@ fn splitting_stops_before_a_pane_becomes_unusable() {
         let cols_before: Vec<u16> =
             canvas.panes().iter().map(|p| p.session.geometry().cols).collect();
 
-        match canvas.split(&context, shell(&PaneSpec::shell()), FONT) {
+        match canvas.split(&context, shell(&PaneSpec::shell()), FONT, None) {
             Ok(_) => {
                 // Every pane that survives a split is still usable. This is the assertion the
                 // old code could not satisfy, and it fails on the FIRST split that goes too far
@@ -608,13 +614,14 @@ fn closing_a_pane_gives_its_width_back_to_the_survivors() {
         area,
         &[PaneSpec::shell()],
         FONT,
+        None,
         shell,
     )
     .expect("a canvas");
     let alone = canvas.panes()[0].session.geometry().cols;
 
     canvas
-        .split(&context, shell(&PaneSpec::shell()), FONT)
+        .split(&context, shell(&PaneSpec::shell()), FONT, None)
         .expect("a split");
     let shared = canvas.panes()[0].session.geometry().cols;
     assert!(shared < alone, "the split did not narrow the first pane");
@@ -633,4 +640,57 @@ fn closing_a_pane_gives_its_width_back_to_the_survivors() {
     assert_eq!(canvas.close(0).expect("closing the last pane"), 0);
     assert!(canvas.panes().is_empty(), "the canvas kept a pane it was told to close");
     canvas.shutdown();
+}
+
+/// THE CONFIGURED FONT REACHES THE PANE, in both directions.
+///
+/// T4, 2026-08-08. `Canvas::spawn` passed a hardcoded `None` for the font family at both of its
+/// spawn sites, so `font-family` in config.toml was parsed, validated, reported a loud error for
+/// an unresolvable name - and then changed nothing at all in the window. Nothing failed, because
+/// nothing looked.
+///
+/// Measured through CELL METRICS, which is the observable a font actually moves: at 16pt these
+/// two faces agree on width (both advance 0.6em, which is why a width assertion would pass on a
+/// canvas that ignored the argument) and disagree on HEIGHT. That asymmetry is the reason the
+/// assertion names height rather than "the metrics differ".
+///
+/// An absolute path rather than a family NAME on purpose: `with_primary` resolves names against
+/// installed font FILE STEMS, so a name test would be asserting something about this machine's
+/// font directory. The path is a system font present on every macOS install.
+#[test]
+#[cfg(target_os = "macos")]
+fn the_configured_font_family_reaches_every_pane() {
+    const OTHER: &str = "/System/Library/Fonts/Monaco.ttf";
+
+    let context = gpu();
+    let area = Rect { x: 0, y: 0, width: 900, height: 600 };
+    let grid = Grid { rows: 1, cols: 1, gutter: GUTTER };
+
+    let mut default = Canvas::spawn(&context, grid, area, &[PaneSpec::shell()], FONT, None, shell)
+        .expect("a canvas on the default stack");
+    let mut chosen =
+        Canvas::spawn(&context, grid, area, &[PaneSpec::shell()], FONT, Some(OTHER), shell)
+            .expect("a canvas on the configured face");
+
+    let default_cell = default.panes()[0].session.cell_metrics();
+    let chosen_cell = chosen.panes()[0].session.cell_metrics();
+
+    assert_ne!(
+        default_cell.height, chosen_cell.height,
+        "both panes measure {default_cell:?} - the font family never reached the session"
+    );
+
+    // And the SPLIT path, which is a second hardcoded `None` and would otherwise give every pane
+    // made after launch the default face while the first one wore the operator's choice.
+    let index = chosen
+        .split(&context, shell(&PaneSpec::shell()), FONT, Some(OTHER))
+        .expect("a split");
+    assert_eq!(
+        chosen.panes()[index].session.cell_metrics().height,
+        chosen_cell.height,
+        "the pane made by a split does not share its neighbour's font"
+    );
+
+    default.shutdown();
+    chosen.shutdown();
 }

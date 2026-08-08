@@ -1007,6 +1007,10 @@ fn config_dir() -> Option<std::path::PathBuf> {
 /// rather than as a line of setup nobody called.
 fn dress(session: &mut mind2t_vt_host::session::Session, config: &Config) {
     session.set_palette(config.palette.clone());
+    // T4: applied, not merely parsed. `font-ligatures` was read by the config layer and reached
+    // only the C ABI host - `set_ligatures` had exactly one caller in the whole repo and it was
+    // not this one, so the key did nothing in the app Orel actually runs.
+    session.set_ligatures(config.font_ligatures);
     // Hebrew-first by default, matching the `.app`. `Auto` flips a row's flow only when that
     // row's own text resolves right-to-left, so column-addressed TUI output stays where the
     // program drew it - which is why it is safe as a default rather than a preference.
@@ -1130,6 +1134,10 @@ fn main() {
         // The configured size, scaled. The scale is applied HERE and not in the config, because
         // the config is a document about points and this is the only place that knows the display.
         font_size * scale as f32,
+        // T4: threaded, not `None`. Until 2026-08-08 this argument was hardcoded `None` at every
+        // spawn site, so `font-family` in config.toml parsed, validated, reported a loud error
+        // for an unresolvable name - and then changed nothing in the window.
+        config.font_family.as_deref(),
         |_spec| shell_from(&config),
     ) {
         Ok(canvas) => canvas,
@@ -1272,7 +1280,14 @@ fn main() {
                 Rc::clone(&focus),
                 BAR_HEIGHT,
                 font_size * scale as f32,
-                move || (split_gpu.clone(), shell_from(&split_config), font_size * scale as f32),
+                move || {
+            (
+                split_gpu.clone(),
+                shell_from(&split_config),
+                font_size * scale as f32,
+                split_config.font_family.clone(),
+            )
+        },
                 move |session| dress(session, &monitor_config),
             )
         })
@@ -1570,7 +1585,9 @@ fn main() {
                     // itself - the event mask and the keycode match - and that is a live tap, not
                     // a covered path (SCAR-014).
                     let (command, font) = (shell_from(&smoke_config), font_size * scale as f32);
-                    if let Err(error) = canvas.split(&smoke_gpu, command, font) {
+                    if let Err(error) =
+                        canvas.split(&smoke_gpu, command, font, smoke_config.font_family.as_deref())
+                    {
                         eprintln!("mind2t: smoke could not split: {error:?}");
                     }
                 }
@@ -2110,7 +2127,11 @@ mod input {
         // read off a pane, because by the time the chord is pressed no pane still knows what the
         // size was before the operator started zooming.
         base_font: f32,
-        spawn: impl Fn() -> (GpuContext, std::process::Command, f32) + 'static,
+        // The fourth element is the configured font family. A pane made by a split has to be
+        // built with the SAME font as the one it was split from - the stack is chosen when the
+        // renderer is built and cannot be set afterwards, so a family passed only at launch
+        // would give every later pane the default face.
+        spawn: impl Fn() -> (GpuContext, std::process::Command, f32, Option<String>) + 'static,
         // Applies the operator's appearance settings to a pane the chord just made. A closure
         // rather than a `Config` so this module never learns what a config is - it reads input.
         dress_pane: impl Fn(&mut mind2t_vt_host::session::Session) + 'static,
@@ -2405,8 +2426,8 @@ mod input {
                         // silent nothing is indistinguishable from a dead key binding.
                         if chord == Key::D && plain {
                             let mut canvas = canvas.borrow_mut();
-                            let (gpu, command, font) = spawn();
-                            match canvas.split(&gpu, command, font) {
+                            let (gpu, command, font, family) = spawn();
+                            match canvas.split(&gpu, command, font, family.as_deref()) {
                                 Ok(index) => {
                                     // The new pane is dressed before anything draws it, or it
                                     // arrives wearing the default scheme beside its neighbour.

@@ -107,6 +107,11 @@ impl Canvas {
         area: Rect,
         specs: &[PaneSpec],
         font_size: f32,
+        // The operator's `font-family`, threaded rather than defaulted. It was `None` at both
+        // spawn sites until 2026-08-08 (T4), which meant the key existed in config.toml, parsed,
+        // validated, reported a loud error for an unresolvable name - and then changed nothing in
+        // the window. A setting that is read and discarded is worse than one that is missing.
+        font_family: Option<&str>,
         shell: impl Fn(&PaneSpec) -> Command,
     ) -> Result<Canvas, CanvasError> {
         let rects = grid.tile(area);
@@ -124,7 +129,7 @@ impl Canvas {
                 rect.width,
                 rect.height,
                 font_size,
-                None,
+                font_family.map(str::to_string),
             )
             .map_err(CanvasError::Session)?;
 
@@ -185,6 +190,7 @@ impl Canvas {
         gpu: &GpuContext,
         command: Command,
         font_size: f32,
+        font_family: Option<&str>,
     ) -> Result<usize, CanvasError> {
         if self.grid.rows > 1 {
             return Err(CanvasError::NotSplittable { rows: self.grid.rows });
@@ -197,7 +203,7 @@ impl Canvas {
         };
 
         let mut session =
-            Session::spawn_fitted_on(gpu, command, last.width, last.height, font_size, None)
+            Session::spawn_fitted_on(gpu, command, last.width, last.height, font_size, font_family.map(str::to_string))
                 .map_err(CanvasError::Session)?;
         let metrics = session.cell_metrics();
 

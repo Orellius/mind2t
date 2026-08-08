@@ -88,7 +88,7 @@ impl Shaper {
             .context
             .builder(font)
             .script(script)
-            .size(fonts.size())
+            .size(fonts.size_for(resolved.font))
             .build();
         shaper.add_str(cluster);
 
@@ -145,7 +145,7 @@ impl Shaper {
             .context
             .builder(font)
             .script(Script::Latin)
-            .size(fonts.size())
+            .size(fonts.size_for(resolved.font))
             .features(&[("calt", 1u16), ("liga", 1u16)])
             .build();
         shaper.add_str(text);
@@ -236,7 +236,7 @@ impl Shaper {
             } else {
                 Direction::LeftToRight
             })
-            .size(fonts.size())
+            .size(fonts.size_for(resolved.font))
             .build();
         shaper.add_str(text);
 

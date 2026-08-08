@@ -113,7 +113,7 @@ impl Atlas {
         let mut scaler = self
             .context
             .builder(font)
-            .size(stack.size())
+            .size(stack.size_for(key.font))
             .hint(true)
             .build();
 

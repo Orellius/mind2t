@@ -250,37 +250,71 @@ fn latin_is_untouched_by_the_joining_path() {
     assert_eq!(&drawn[0], only_inked(&a));
 }
 
-/// The Arabic overhang, PINNED as it currently is rather than left as prose.
+/// An Arabic letter stays inside its own cell.
 ///
-/// P2 in docs/BACKLOG-2026.md said installing a monospaced Arabic face avoided this entirely and
-/// that the stack already prefers one. Measured 2026-08-08 on a machine where Kawkab Mono IS
-/// installed, IS ranked first and DOES answer for beh: the spill is still there, 50 inked pixels
-/// in the empty cell between two letters. The claim was wrong, and the reason is one number -
-/// Kawkab advances **22.40px against a 19px cell** at 32px, because monospaced means uniform
-/// within a face, not equal to the primary face's pitch. Miriam Mono answers Hebrew at 19.20px,
-/// which is why the control below is clean and Hebrew has never shown this.
+/// This was a characterisation pin until 2026-08-08: it asserted the defect AS IT STOOD, the way
+/// a corpus case marked `diff` does, and it was promoted the moment the renderer normalised a
+/// fallback face to the cell pitch. The promotion IS the evidence, exactly as with the corpus -
+/// before, `"beh space beh"` put **50 inked pixels** into the empty cell between the two letters;
+/// after, zero, with nothing else in this file moving.
 ///
-/// So this is a CHARACTERISATION PIN, in the same spirit as a corpus case marked `diff`: it
-/// asserts the defect as it stands, so the number cannot drift unnoticed and cannot quietly get
-/// worse. **When the renderer normalises each fallback face to the cell pitch, this test fails,
-/// and the failure is the feature** - promote it to expecting zero.
+/// The cause was never proportional fonts, which is what the backlog said for a day. Kawkab Mono
+/// IS monospaced and still overhung: monospaced means uniform WITHIN a face, and a terminal grid
+/// needs an advance equal to the PRIMARY face's, which no font promises. Measured at 32px against
+/// a 19px cell: Menlo 19.27, Miriam Mono 19.20, Kawkab Mono 22.40. Miriam agreeing with Menlo to
+/// 0.07px is luck, and it is the whole reason Hebrew never showed this.
 ///
-/// The control is not decoration. Hebrew going non-zero would mean the measurement had started
-/// reading something other than a proportional overhang.
+/// The Hebrew control is not decoration: its face was already inside the cell, so it must be
+/// clean both before and after. Ink appearing there would mean the fix had started moving
+/// something other than the overhang.
 #[test]
-fn an_arabic_glyph_still_overhangs_its_cell() {
+fn an_arabic_letter_stays_inside_its_own_cell() {
     let arabic = cells(&format!("{BEH} {BEH}"), 3);
     let hebrew = cells("\u{05D0} \u{05D0}", 3);
 
     assert_eq!(
         inked(&hebrew[1]),
         0,
-        "the CONTROL is contaminated: Hebrew's face here advances 19.20px into a 19px cell, so ink \
-         in the gap means this is reading something other than an overhang"
+        "the CONTROL is contaminated: Hebrew's face advances 19.20px into a 19px cell and was \
+         never scaled, so ink in its gap means the normalisation reached further than intended"
     );
+    assert_eq!(
+        inked(&arabic[1]),
+        0,
+        "an Arabic letter is spilling into the cell beside it again. The fallback face is not \
+         being rasterised at its own normalised size - see `normalise_to_cell` in font.rs, and \
+         check that the shaper and the atlas both ask for `size_for(font)` rather than `size()`"
+    );
+    // The letters themselves must still be DRAWN. A normalisation that scaled a face to nothing
+    // would satisfy every emptiness assertion above perfectly.
+    assert!(inked(&arabic[0]) > 0 && inked(&arabic[2]) > 0, "the Arabic letters drew nothing");
+}
+
+/// A joined WORD stays inside its cells, not just a lone letter.
+///
+/// Written because a mutant survived: reverting the SHAPER to the stack's size, while leaving the
+/// atlas normalised, changed nothing any test could see. The reason is structural rather than
+/// lucky - a lone Arabic letter never reaches the shaper at all (`needs_shaping` asks whether a
+/// cluster has a second codepoint), so every assertion in this file about isolated letters was
+/// measuring the atlas alone. `shape_joined_run` is a different path and it needs its own claim.
+///
+/// The word is followed by a space so there is an empty cell to measure, and the letters must
+/// still draw - a shaper scaled to nothing would satisfy emptiness perfectly.
+#[test]
+fn a_joined_word_stays_inside_its_cells() {
+    // beh-beh-beh: three cells of one cursive run, so the shaper runs and every letter takes a
+    // contextual form, then a space that must stay clean.
+    let drawn = cells(&format!("{BEH}{BEH}{BEH} "), 5);
+
     assert!(
-        inked(&arabic[1]) > 0,
-        "the Arabic overhang is GONE. If the renderer now normalises a fallback face to the cell \
-         pitch, this pin has done its job: change it to assert zero and close P2 in the backlog."
+        drawn[0..3].iter().all(|cell| inked(cell) > 0),
+        "the joined word drew nothing; the shaper is being asked for a size that rasterises away"
+    );
+    assert_eq!(
+        inked(&drawn[3]),
+        0,
+        "a joined run is overhanging the cell after it. The atlas and the shaper must BOTH ask \
+         for `size_for(font)`: they agree on the glyph but not on how wide it is, so the pen \
+         walks by one advance while the ink is drawn at another"
     );
 }

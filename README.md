@@ -12,7 +12,7 @@
   <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg"></a>
   <img alt="Rust 1.93+" src="https://img.shields.io/badge/rust-1.93%2B-orange.svg">
   <img alt="macOS arm64" src="https://img.shields.io/badge/platform-macOS%20arm64-lightgrey.svg">
-  <img alt="711 tests" src="https://img.shields.io/badge/tests-711-brightgreen.svg">
+  <img alt="713 tests" src="https://img.shields.io/badge/tests-713-brightgreen.svg">
 </p>
 
 ![bidirectional text, rendered by this terminal](docs/images/bidi-proof-20260807.png)
@@ -163,7 +163,7 @@ are untouched in both.
 
 | gate | what it proves |
 |---|---|
-| `cargo test --workspace` | 711 tests: units, pixels, concurrency, C-surface round trips |
+| `cargo test --workspace` | 713 tests: units, pixels, concurrency, C-surface round trips |
 | `mind2t-vt-difftest` | 223 corpus cases, every verdict met, 17 of them pinned to disagree |
 | `esctest2` | 391 pinned passes of 568, both directions: a regression fails, so does an unpromoted pass |
 | `scripts/smoke-mind2t.sh` | 26 host invariants about what AppKit, WebKit, the IPC and the child processes actually did, with no screen required |
@@ -282,8 +282,8 @@ the grid, so `a_monospaced_arabic_face_outranks_the_proportional_ones` pins the 
 checks that the monospaced face is the one which actually answers rather than merely the one
 listed first.
 
-**And that is still not enough, which this file claimed otherwise until 2026-08-08.** Installing a
-monospaced Arabic face does not put Arabic on the grid. Measured at 32px against a 19px cell:
+**And a monospaced face is still not enough**, which this file claimed otherwise for a day.
+Installing one does not put Arabic on the grid. Measured at 32px against a 19px cell:
 
 | codepoint | face that answers | advance |
 |---|---|---|
@@ -294,16 +294,35 @@ monospaced Arabic face does not put Arabic on the grid. Measured at 32px against
 Monospaced is a property of a face on its own - uniform advance within itself. A terminal grid
 needs something else entirely: an advance equal to the **primary** face's, and no font ships
 promising that. Miriam Mono matching Menlo to 0.07px is luck rather than design, and it is the
-whole reason Hebrew has never shown this and Arabic always will. The visible symptom is a letter
-overhanging its cell: because a run paints in logical order, on a right-to-left row each letter's
-spill lands on a cell already painted and never cleared, so an empty space beside an Arabic letter
-keeps 50 inked pixels of its neighbour.
+whole reason Hebrew never showed this symptom and Arabic always did: a letter overhanging its
+cell, and because a run paints in logical order, on a right-to-left row that spill lands on a cell
+already painted and never cleared. An empty space beside an Arabic letter kept 50 inked pixels of
+its neighbour.
 
-The fix is named rather than guessed at - rasterise each fallback at `size * cell / advance`,
-27.1px here, which is uniform scaling so letter shapes survive. Not built. Until it is, the defect
-is pinned by `an_arabic_glyph_still_overhangs_its_cell`, which asserts it **as it stands** the way
-a corpus case marked `diff` does: when the fix lands that test fails, and the failure is the
-feature. Detail in [`docs/BACKLOG-2026.md`](docs/BACKLOG-2026.md) under P2.
+**Fixed 2026-08-08.** Each fallback face is rasterised and shaped at a size whose advance fits one
+cell - `32 * 19 / 22.46 = 27.07px` for Kawkab. Uniform scaling, so letter shapes are preserved,
+which is what separates it from the two alternatives that were rejected on measurement: scaling a
+run horizontally distorts the letters, and clipping each glyph to its cell cuts exactly the
+strokes that make cursive readable.
+
+Before, three letters where each one's overhang pushes the next along and the last is clipped:
+
+![Arabic overhanging its cells](docs/images/arabic-overhang-before-20260808.png)
+
+After, the same bytes through the same renderer:
+
+![Arabic inside its cells](docs/images/arabic-overhang-after-20260808.png)
+
+Both are native-resolution crops of the same region, magnified with point sampling so no pixel is
+invented. Three exemptions keep the scaling where it belongs: the primary face defines the cell so
+it is never scaled; a face already inside the cell is left alone rather than nudged by fractions;
+and a full-em face is left alone because **an emoji spans two cells**, so its advance is correctly
+wider than one and fitting it to one would shrink every emoji in the terminal.
+
+The test that proves it was a characterisation pin asserting the defect, and was **promoted** to
+asserting zero - the promotion is the evidence, exactly as with a corpus case marked `diff`. Full
+record, including the four mutants killed and the two that survived, in
+[`docs/BACKLOG-2026.md`](docs/BACKLOG-2026.md).
 
 **Arabic letters take their contextual forms.** A contiguous run of cells in one cursive script
 is shaped as a run, so each letter resolves to its initial, medial, final or isolated glyph, and

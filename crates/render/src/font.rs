@@ -40,6 +40,19 @@ pub enum FontError {
 struct Face {
     data: std::sync::Arc<[u8]>,
     index: usize,
+    /// What to multiply the stack's size by before rasterising or shaping THIS face.
+    ///
+    /// 1.0 for almost everything. It exists because a terminal cell is the PRIMARY face's
+    /// advance, and a fallback face has its own idea of how wide a character is. Measured at
+    /// 32px against a 19px cell: Menlo 19.27, Miriam Mono CLM 19.20, and **Kawkab Mono 22.40** -
+    /// so Arabic drawn at the stack's size overhangs its cell by three pixels, and because a
+    /// right-to-left run paints over cells it has already drawn, that ink lands on a neighbour
+    /// and is never cleared.
+    ///
+    /// "Install a monospaced face" was the previous answer and it is wrong: monospaced means
+    /// uniform WITHIN a face, and no font promises to match somebody else's pitch. Miriam
+    /// agreeing with Menlo to 0.07px is luck, not design.
+    scale: f32,
 }
 
 impl Face {
@@ -156,6 +169,50 @@ fn shared_bytes(path: &str) -> Result<std::sync::Arc<[u8]>, FontError> {
     Ok(data)
 }
 
+/// Above this fraction of the em, a face is drawing FULL-EM artwork rather than text.
+///
+/// Measured 2026-08-08 at 32px: Menlo 0.602em, Miriam Mono 0.600em, Kawkab Mono 0.702em, SF
+/// Arabic 0.574em, Apple Braille 0.669em - and Apple Color Emoji **0.916em**, Arial Hebrew
+/// 0.960em. The gap is not marginal, which is what makes a threshold honest here rather than
+/// tuned. Emoji must be exempt for a reason no per-face number can express: an emoji occupies
+/// TWO cells, so its advance is correctly larger than one cell and shrinking it to fit one would
+/// be a defect rather than a fix.
+const FULL_EM_FACE: f32 = 0.8;
+
+/// Below this ratio the overflow is not worth touching.
+///
+/// Miriam Mono overhangs a 19px cell by 0.20px. Scaling for that would re-rasterise every Hebrew
+/// glyph in the project to fix something no pixel can show, and would move every existing Hebrew
+/// pixel test for nothing.
+const WORTH_SCALING: f32 = 1.02;
+
+/// Gives each FALLBACK face a scale that makes its nominal advance fit one cell.
+///
+/// Three faces are exempt and each exemption is load-bearing:
+///
+/// - **Face 0 is never scaled.** The cell IS its advance, so scaling it would move the goalposts
+///   it defines and change every glyph in the terminal to fix nothing.
+/// - **A face that already fits** (ratio under [`WORTH_SCALING`]) is left alone.
+/// - **A full-em face** ([`FULL_EM_FACE`]) is left alone, because its glyphs are not one cell
+///   wide by design - emoji span two - and a single per-face number cannot express that.
+///
+/// Uniform scaling, so letter shapes are preserved. The alternatives were rejected on measurement
+/// rather than taste: scaling a run horizontally distorts the letters, and clipping each glyph to
+/// its cell cuts exactly the strokes that make cursive script readable.
+fn normalise_to_cell(faces: &mut [Face], cell_width: u32, size: f32) {
+    if cell_width == 0 || size <= 0.0 {
+        return;
+    }
+    let cell = cell_width as f32;
+    for face in faces.iter_mut().skip(1) {
+        let advance = face.font().metrics(&[]).scale(size).average_width;
+        if advance <= 0.0 || advance / size >= FULL_EM_FACE || advance / cell < WORTH_SCALING {
+            continue;
+        }
+        face.scale = cell / advance;
+    }
+}
+
 impl FontStack {
     /// Loads fonts in priority order. The first one also defines the cell box, because a
     /// terminal grid is the primary font's grid and a fallback must fit into it.
@@ -170,11 +227,13 @@ impl FontStack {
             faces.push(Face {
                 data,
                 index: *index,
+                scale: 1.0,
             });
         }
 
         let first = faces.first().ok_or(FontError::Empty)?;
         let metrics = cell_metrics(first.font(), size);
+        normalise_to_cell(&mut faces, metrics.width, size);
 
         Ok(FontStack {
             faces,
@@ -305,6 +364,16 @@ impl FontStack {
         self.metrics
     }
 
+    /// The size to rasterise or shape ONE face at.
+    ///
+    /// Every caller that used to reach for [`size`](Self::size) wants this instead: the stack's
+    /// size is what the grid was measured from, and it is correct only for the primary face.
+    /// A caller that uses the stack size for a fallback draws that script off the grid, which is
+    /// the defect this exists to close and which looked exactly like a font problem.
+    pub fn size_for(&self, font: u16) -> f32 {
+        self.size * self.faces.get(usize::from(font)).map_or(1.0, |face| face.scale)
+    }
+
     pub fn size(&self) -> f32 {
         self.size
     }
@@ -326,7 +395,7 @@ impl FontStack {
         self.face(resolved.font)
             .map(|font| {
                 font.glyph_metrics(&[])
-                    .scale(self.size)
+                    .scale(self.size_for(resolved.font))
                     .advance_width(resolved.glyph)
             })
             .unwrap_or(0.0)
@@ -535,6 +604,75 @@ mod tests {
                 ),
                 None => eprintln!("{name:<10} -> (nothing resolves)"),
             }
+        }
+    }
+
+    /// Which faces the cell normalisation touches, and which it must not.
+    ///
+    /// Written after a mutant sweep found that three of the four exemptions in
+    /// `normalise_to_cell` could be DELETED with the entire render suite staying green. That is
+    /// the SCAR-004 shape exactly: a guard whose absence looks identical to its presence. Each
+    /// assertion below corresponds to one mutant that previously survived.
+    ///
+    /// The emoji case is the one that matters in practice. An emoji occupies TWO cells, so its
+    /// advance is correctly wider than one, and a normalisation that treated it as text would
+    /// shrink every emoji in the terminal to two-thirds size - silently, with no test objecting.
+    #[test]
+    #[ignore = "measurement"]
+    fn why_the_mutants_survive() {
+        let mut stack = FontStack::system(32.0).expect("fonts");
+        let cell = stack.metrics().width as f32;
+        let paths = FontStack::system_paths();
+        eprintln!("cell {cell}  size {}", stack.size());
+        for (label, ch) in [("primary A", 'A'), ("hebrew", '\u{05D0}'), ("arabic", '\u{0628}'), ("emoji brain", '\u{1F9E0}')] {
+            match stack.resolve(ch) {
+                Some(r) => {
+                    let adv = stack.face(r.font).map(|f| f.metrics(&[]).scale(32.0).average_width).unwrap_or(0.0);
+                    eprintln!("{label:<12} -> font {} {} advance {adv:.2} ratio {:.4} size_for {:.2}",
+                        r.font, paths[usize::from(r.font)].rsplit('/').next().unwrap_or("?"),
+                        adv / cell, stack.size_for(r.font));
+                }
+                None => eprintln!("{label:<12} -> RESOLVES TO NOTHING"),
+            }
+        }
+    }
+
+    #[test]
+    fn normalisation_touches_the_fallbacks_that_overhang_and_nothing_else() {
+        let mut stack = FontStack::system(32.0).expect("system fonts");
+        let size = stack.size();
+
+        // The primary defines the cell, so scaling it would move the goalposts it sets.
+        assert_eq!(stack.size_for(0), size, "the primary face was scaled");
+
+        let home = std::env::var("HOME").unwrap_or_default();
+        if std::path::Path::new(&format!("{home}/Library/Fonts/KawkabMono-Regular.ttf")).is_file() {
+            let arabic = stack.resolve('\u{0628}').expect("Arabic resolves");
+            assert!(
+                stack.size_for(arabic.font) < size,
+                "the Arabic face overhangs a {}px cell and was NOT scaled",
+                stack.metrics().width
+            );
+        }
+
+        // Emoji: exempt, and the reason cannot be expressed by any per-face advance.
+        if let Some(emoji) = stack.resolve('\u{1F9E0}') {
+            assert_eq!(
+                stack.size_for(emoji.font),
+                size,
+                "the emoji face was scaled; an emoji spans two cells, so fitting it to one \
+                 shrinks every emoji in the terminal"
+            );
+        }
+
+        // A face already inside the cell is left alone rather than nudged by fractions.
+        if std::path::Path::new(&format!("{home}/Library/Fonts/MiriamMonoCLM-Book.ttf")).is_file() {
+            let hebrew = stack.resolve('\u{05D0}').expect("Hebrew resolves");
+            assert_eq!(
+                stack.size_for(hebrew.font),
+                size,
+                "the Hebrew face fits the cell already and must not be re-rasterised for it"
+            );
         }
     }
 

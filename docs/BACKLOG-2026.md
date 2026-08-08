@@ -184,53 +184,61 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
     simply dropped), so it is left as a one-line follow-up instead of being
     smuggled into this slice.
 
-## P2 - an Arabic face overhangs its cell (found 2026-08-08, corrected same day)
+## ~~P2 - an Arabic face overhangs its cell~~ FIXED 2026-08-08
 
-Found while gating Arabic joining, and it is a SEPARATE defect that predates it.
-A run is painted in LOGICAL order, which on a right-to-left row runs right to
-left on screen, so each letter's overhang lands on a cell that has already been
-painted and is never cleared. Measured: `"\u{0628} \u{0628}"` at 32px puts **50
-inked pixels into the empty space between the two letters**, and
-`"\u{05D0} \u{05D0}"` puts none.
+Found while gating Arabic joining, wrong-diagnosed once, then fixed the same day. Kept rather
+than deleted because the wrong diagnosis is the useful part.
 
-**THE FIRST VERSION OF THIS ENTRY WAS WRONG AND IS CORRECTED HERE RATHER THAN
-REWRITTEN.** It said the macOS Arabic faces are proportional, that installing
-**Kawkab Mono** avoids the defect entirely, and that the font stack already
-prefers it. Measured 2026-08-08 on a machine where Kawkab IS installed, IS
-ranked first and DOES answer for beh: the 50 pixels are still there. Advances at
-32px against a 19px cell:
+**The defect.** A fallback face has its own idea of how wide a character is, and a terminal cell
+is the PRIMARY face's advance. Measured at 32px against a 19px cell: Menlo 19.27, Miriam Mono CLM
+19.20, **Kawkab Mono 22.40**. A run paints in logical order, so on a right-to-left row each
+letter's overhang landed on a cell already painted and never cleared: `"beh space beh"` put **50
+inked pixels** into the empty cell between the two letters. Hebrew showed none, because Miriam
+happens to match Menlo to 0.07px.
 
-| codepoint | face that answers | advance |
-|---|---|---|
-| `A` | Menlo | 19.27px |
-| `\u{05D0}` | Miriam Mono CLM | 19.20px |
-| `\u{0628}` | **Kawkab Mono** | **22.40px** |
+**The wrong answer, kept on the record.** This entry first said the macOS Arabic faces are
+proportional and that installing **Kawkab Mono** avoids the defect entirely. Kawkab IS monospaced,
+IS installed here, IS ranked first, DOES answer for beh - and overhangs anyway. **Monospaced is a
+property of a face on its own: uniform advance WITHIN itself.** A terminal grid needs an advance
+equal to the primary face's, and no font ships promising that. Miriam matching Menlo was luck, not
+design.
 
-So the mitigation does not exist. **Monospaced is a property of a face on its
-own - uniform advance within itself - and a terminal grid needs something else
-entirely: an advance equal to the PRIMARY face's.** No font ships promising
-that, and Miriam Mono matching Menlo to 0.07px is luck rather than design. It is
-also why Hebrew has never shown this and Arabic always will.
+**The fix.** `normalise_to_cell` in `crates/render/src/font.rs` gives each FALLBACK face a scale
+that makes its nominal advance fit one cell - Kawkab is rasterised and shaped at
+`32 * 19 / 22.46 = 27.07px`. Uniform scaling, so letter shapes are preserved, which is what
+separates it from the alternatives considered and rejected: scaling a run horizontally distorts
+the letters, and clipping each glyph to its cell cuts exactly the strokes that make cursive
+readable. Both the atlas and the shaper ask `size_for(font)`; a caller that uses the stack size
+for a fallback draws that script off the grid.
 
-**The fix, named rather than guessed at.** Rasterise each fallback face at a
-size whose advance equals the cell width: `size * cell / advance`, here
-`32 * 19 / 22.40 = 27.1px`. That is UNIFORM scaling, so letter shapes are
-preserved - which is what separates it from the three options this entry
-originally listed and rejected (horizontal run scaling distorts shapes, glyph
-clipping cuts the strokes that make cursive readable, requiring a monospaced
-face does not work as shown above). Cost: three files - a per-face size on
-`FontStack`, the atlas rasterising at it, and `shape.rs` positioning at it -
-plus pixel proofs. Hebrew moves by 1% and Latin not at all, so the blast radius
-is the scripts that are currently broken.
+**Three exemptions, each load-bearing:**
 
-**Pinned, not just described**: `an_arabic_glyph_still_overhangs_its_cell` in
-`crates/render/tests/arabic.rs` asserts the defect AS IT STANDS, the way a
-corpus case marked `diff` does. When the normalisation lands, that test fails,
-and the failure is the feature.
+- **Face 0 is never scaled.** The cell IS its advance.
+- **A face already inside the cell is left alone** (under 2% overflow). Scaling Miriam for 0.20px
+  would re-rasterise every Hebrew glyph in the project and move every Hebrew pixel test for
+  something no pixel can show.
+- **A full-em face is left alone** (advance at or above 0.8em: Apple Color Emoji is 0.916em).
+  **An emoji spans TWO cells**, so its advance is correctly wider than one, and fitting it to one
+  would shrink every emoji in the terminal. No per-face number can express that, which is why the
+  threshold exists rather than a pure ratio test.
 
-The other tests in that file are written around the defect rather than against
-it: form is asserted on glyph ids, and pixel comparisons are only made between
-cells that are equally contaminated or equally clean.
+**Evidence.** `an_arabic_letter_stays_inside_its_own_cell` was a characterisation pin asserting
+the defect and was PROMOTED to asserting zero - the promotion is the proof, exactly as with a
+corpus case marked `diff`. 50 pixels before, 0 after, with the Hebrew control clean on both sides
+and a live assertion that the letters still draw. Before/after crops at native resolution:
+`docs/images/arabic-overhang-{before,after}-20260808.png`.
+
+**Mutants: 4 killed, 2 survived and are recorded rather than dropped.** Killed: the emoji
+exemption removed, the 2% threshold removed, the atlas reverted to the stack size, and the
+normalisation made a no-op. Survived, both honestly:
+
+- Scaling the primary face too changes nothing, because Menlo's ratio here is 1.0140 and the 2%
+  threshold catches it anyway. The `skip(1)` is defensive on this font stack, not load-bearing -
+  it would matter on a stack whose primary overhangs by more than 2%.
+- Reverting the SHAPER to the stack size changes nothing measurable. The renderer positions every
+  glyph by `Run::column_of` rather than by the shaper's advances, so the shaper's size moves mark
+  offsets and not base placement, and nothing here measures a mark at a scaled size. It is passed
+  for consistency, and saying otherwise would be false credit.
 
 ## Deliberately NOT on the list
 

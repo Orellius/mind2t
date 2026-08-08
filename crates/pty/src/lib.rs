@@ -13,8 +13,13 @@
 
 pub mod host;
 pub mod key;
-/// macOS virtual keycodes, generated. See its module card before editing (do not).
-#[cfg(target_os = "macos")]
+/// Native hardware keycodes, one table per platform, generated. See its module card before
+/// editing (do not).
+///
+/// NOT cfg-gated any more (2026-08-08, T2). It was `#[cfg(target_os = "macos")]` while macOS was
+/// the only host that read native key events; a table is pure data, and gating it means the
+/// Linux table cannot be TESTED from the machine this project is developed on. Cross-compiling a
+/// data table to check it is a rule that guarantees it is never checked.
 pub mod keycode;
 pub mod mouse;
 pub mod paste;

@@ -1734,10 +1734,20 @@ mod gtk_input {
     use gtk::prelude::*;
 
     use mind2t::canvas::Canvas;
-    use mind2t::keys;
+    use mind2t::{clipboard, keys};
+    use mind2t_vt_pty::key::{KEY_MODS_CTRL, KEY_MODS_SHIFT, Key, KeyMods};
     use mind2t_vt_pty::keycode::key_from_linux_keycode;
 
     use super::{Focus, tracing};
+
+    /// The Linux terminal convention for copy and paste.
+    ///
+    /// NOT ctrl+c and ctrl+v, and this is the reason the chord looks awkward to everyone who
+    /// arrives from another platform: ctrl+c is SIGINT and a terminal that stole it would stop
+    /// being able to interrupt a running command. Every terminal on this platform - GNOME
+    /// Terminal, Konsole, Alacritty, Ghostty - takes the shift-qualified pair for the same
+    /// reason, so matching it is not a preference.
+    const COPY_PASTE: KeyMods = KEY_MODS_CTRL | KEY_MODS_SHIFT;
 
     /// Connects the terminal's key source. Errors only if the window has no GTK peer, which
     /// cannot happen for a window Tauri built and is therefore reported rather than handled.
@@ -1776,6 +1786,45 @@ mod gtk_input {
             println!(
                 "mind2t: TRACE gtk key code={code} -> {key:?} mods={mods:#x} text={text:?}"
             );
+        }
+
+        // The clipboard chords, BEFORE the canvas is borrowed, and the order is load-bearing:
+        // `clipboard::text` pumps the GTK main loop while it waits for the owning process to
+        // answer, so other callbacks can run inside it. Reading first and borrowing second means
+        // a re-entrant callback finds the `RefCell` free; the other order panics, and only on a
+        // machine slow enough or an owner remote enough for the wait to be real.
+        if mods & COPY_PASTE == COPY_PASTE {
+            match key {
+                Key::V => {
+                    let pasted = clipboard::text();
+                    let canvas = canvas.borrow();
+                    match (canvas.panes().get(index), pasted) {
+                        (Some(pane), Some(text)) => clipboard::paste_text(&pane.session, &text),
+                        (_, None) => eprintln!("mind2t: the clipboard holds no text"),
+                        _ => {}
+                    }
+                    return Propagation::Stop;
+                }
+                Key::C => {
+                    // Conditional on there BEING a selection, so an empty ctrl+shift+C falls
+                    // through instead of silently emptying the operator's clipboard.
+                    //
+                    // Nothing can select yet on this platform - the pointer is macOS-only - so
+                    // this is reachable and inert today. It is wired anyway because the
+                    // alternative is shipping a clipboard nothing calls, and a copy path that
+                    // arrives with the mouse is a path nobody thinks to test.
+                    let canvas = canvas.borrow();
+                    if let Some(text) = canvas
+                        .panes()
+                        .get(index)
+                        .and_then(|pane| pane.session.selection_text())
+                    {
+                        clipboard::set_text(&text);
+                        return Propagation::Stop;
+                    }
+                }
+                _ => {}
+            }
         }
 
         let canvas = canvas.borrow();

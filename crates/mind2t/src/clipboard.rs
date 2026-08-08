@@ -58,9 +58,38 @@ pub fn set_text(text: &str) -> bool {
     }
 }
 
-/// No clipboard reached for on other platforms yet (B6), and answering `false` says so rather
-/// than reporting a copy that never happened.
-#[cfg(not(target_os = "macos"))]
+/// The same, through GTK's clipboard, which is the toolkit that already owns the window.
+///
+/// T3, 2026-08-08. **No new dependency, and that is the answer to "why is the standard path
+/// insufficient" - it is not.** `gtk` entered the tree for the key source in T2b and it carries
+/// the system clipboard, so reaching for `arboard` or `copypasta` would add a package to do what
+/// the toolkit under our own window already does, with its own idea of which display connection
+/// to use. GTK's clipboard talks to the same GDK display the window lives on; a third-party
+/// crate opens its own, which is a second connection to disagree with the first.
+///
+/// **`SELECTION_CLIPBOARD`, never `SELECTION_PRIMARY`.** X11 has two, and PRIMARY is the
+/// middle-click selection every text widget writes to as you drag. Writing there would replace
+/// whatever the operator last highlighted anywhere on their desktop, every time a Mind2t
+/// selection changed. CLIPBOARD is the one ctrl+c means.
+///
+/// **The X11 caveat, stated rather than discovered**: an X11 clipboard is owned by the process
+/// that set it, so what we put there vanishes when Mind2t exits unless a clipboard manager is
+/// running. `store()` asks the manager to keep it and is a no-op when there is none - which is
+/// why it is called rather than assumed, and why this cannot promise more than it does.
+#[cfg(target_os = "linux")]
+pub fn set_text(text: &str) -> bool {
+    if text.is_empty() {
+        return false;
+    }
+    let clipboard = gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD);
+    clipboard.set_text(text);
+    clipboard.store();
+    true
+}
+
+/// No clipboard reached for on other platforms yet, and answering `false` says so rather than
+/// reporting a copy that never happened.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn set_text(text: &str) -> bool {
     let _ = text;
     false
@@ -78,9 +107,28 @@ pub fn text() -> Option<String> {
     value.map(|string| string.to_string())
 }
 
+/// The same, through GTK. `None` when the clipboard holds something that is not text.
+///
+/// **`wait_for_text` blocks and PUMPS THE MAIN LOOP while it waits**, because on X11 fetching the
+/// clipboard is a round trip to whichever process owns it. Two consequences worth knowing before
+/// this is called from anywhere new:
+/// - it must be called on the main thread, which every caller here already is;
+/// - it is re-entrant. Other GTK callbacks can run inside this call, so a caller holding a
+///   `RefCell` borrow across it would panic on the re-entry rather than here. The paste path
+///   reads the clipboard BEFORE it borrows the canvas, and that ordering is the reason.
+///
+/// A dead or unresponsive owner makes this hang until GTK's own timeout, which is the cost of
+/// the X11 model and not something a wrapper can fix.
+#[cfg(target_os = "linux")]
+pub fn text() -> Option<String> {
+    gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD)
+        .wait_for_text()
+        .map(|value| value.to_string())
+}
+
 /// No clipboard reached for on other platforms yet, and saying so out loud beats a paste that
-/// silently does nothing on the day Mind2t is built for one (B6).
-#[cfg(not(target_os = "macos"))]
+/// silently does nothing on the day Mind2t is built for one.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn text() -> Option<String> {
     None
 }

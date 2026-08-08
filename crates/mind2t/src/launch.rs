@@ -184,10 +184,49 @@ pub fn into_pane(
     Err(LaunchError::Failed(attempts))
 }
 
+/// What every child spawned into a pane is handed, in ONE place.
+///
+/// EXTRACTED 2026-08-08 because it was not in one place, and the consequence was live: a real
+/// `claude` launched into a pane reported "Transcript saving is off - inherited
+/// CLAUDE_CODE_CHILD_SESSION marker". The rule existed and was correct; it just lived inside
+/// `main.rs`'s `shell_from`, and three other places built a `Command` without it - this module's
+/// own `shell_command`, `agent::launch`, and the probe host. Exactly the shape that had already
+/// cost this project the font-family bug: a rule applied on one path and silently absent on the
+/// rest.
+///
+/// TERM IS DECLARED, NEVER PASSED THROUGH. An app launched from Finder inherits no environment,
+/// so a child handed an empty TERM finds no terminfo entry and every ncurses program exits before
+/// drawing a cell. That is what "no CLI can run in here" looks like from outside, and it is
+/// invisible whenever the app is started from a terminal that already had one set.
+///
+/// A TERMINAL WINDOW IS A SESSION BOUNDARY. `CLAUDECODE` and `CLAUDE_CODE_CHILD_SESSION` are
+/// removed so an agent CLI opened in a pane is its own session rather than a child of whatever
+/// launched Mind2t. Leaving them set does not fail loudly - the agent starts, and quietly turns
+/// off transcript saving.
+pub fn dress(command: &mut Command) {
+    command.env("TERM", CHILD_TERM);
+    // Declared for the same reason as TERM rather than merely echoed: without it a program that
+    // checks for truecolor falls back to 256 colours in a terminal that has had 24-bit colour
+    // since slice 1.
+    command.env("COLORTERM", "truecolor");
+    command.env_remove("CLAUDECODE");
+    command.env_remove("CLAUDE_CODE_CHILD_SESSION");
+}
+
+/// The terminal type every pane declares.
+pub const CHILD_TERM: &str = "xterm-256color";
+
 /// The command a pane would run for a plain shell, for callers mixing shells and agents.
+///
+/// `-l` for the same reason `shell_from` passes it: a shell with a pty on stdin is INTERACTIVE
+/// already, so `.zshrc` was always sourced, but without `-l` neither `/etc/zprofile` (path_helper)
+/// nor `~/.zprofile` (homebrew's shellenv) runs, and the pane's PATH is whatever launched the app.
 pub fn shell_command() -> Command {
     let path = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    Command::new(path)
+    let mut command = Command::new(path);
+    command.arg("-l");
+    dress(&mut command);
+    command
 }
 
 #[cfg(test)]

@@ -342,6 +342,10 @@ pub fn launch(
     let mut command = Command::new(binary);
     command.args(agent.default_args);
     command.args(extra);
+    // The child environment, from the one place that owns it. Without this an agent CLI spawned
+    // here inherits the launching session's markers and quietly turns off its own transcript
+    // saving - seen live on 2026-08-08, in a pane, by the operator.
+    crate::launch::dress(&mut command);
     Ok(command)
 }
 

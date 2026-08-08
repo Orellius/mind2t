@@ -141,7 +141,9 @@ const SELECT_TAIL: &str = "gamma";
 /// so a host that passes on its own TERM hands the child an empty one and every ncurses program
 /// exits before drawing. The gate asserts this exact value against a deliberately poisoned
 /// TERM, which is the only way the check can tell declaring from inheriting.
-pub const CHILD_TERM: &str = "xterm-256color";
+/// The terminal type every pane declares, re-exported from the module that owns it so the gate
+/// and the spawner cannot drift to two different strings.
+pub use mind2t::launch::CHILD_TERM;
 
 /// The SGR report a press in the top-left cell produces, as `cat` echoes it back: ESC is drawn
 /// `^[` by ECHOCTL, so this is the printable form, not the wire form.
@@ -1045,25 +1047,11 @@ fn shell_from(config: &Config) -> Command {
             command
         }
     };
-    // Everything below is the contract the C ABI host has had since slice 8
-    // (`crates/host/src/lib.rs`) and this host never got. That divergence is the exact failure
-    // the "the Swift host is the ORACLE, not the corpse" law exists to catch, and no gate
-    // compared the two until now.
-    //
-    // TERM is DECLARED, never passed through: an app launched from Finder inherits no
-    // environment, so a child handed an empty TERM finds no terminfo entry and every ncurses
-    // program exits before drawing a cell. That is what "no CLI can run" looks like from the
-    // outside, and it is invisible when the app is started from a terminal that already has one.
-    command.env("TERM", CHILD_TERM);
-    // Declared for the same reason and not merely echoed: without it a program that checks for
-    // truecolor support falls back to 256 colours in a terminal that has had 24-bit colour
-    // since slice 1.
-    command.env("COLORTERM", "truecolor");
-    // A terminal window is a SESSION BOUNDARY. Leaving these set makes an agent CLI opened in
-    // a pane believe it is a child of whatever session launched Mind2t - seen live 2026-07-29,
-    // fixed in the C host, and never carried across to this one.
-    command.env_remove("CLAUDECODE");
-    command.env_remove("CLAUDE_CODE_CHILD_SESSION");
+    // The child environment lives in `mind2t::launch::dress`, once. It was written out here and
+    // NOWHERE ELSE, so three other spawn sites built a bare `Command` - which is how a real
+    // `claude` in a pane came to report "Transcript saving is off - inherited
+    // CLAUDE_CODE_CHILD_SESSION marker" while this path was perfectly correct.
+    mind2t::launch::dress(&mut command);
     command
 }
 

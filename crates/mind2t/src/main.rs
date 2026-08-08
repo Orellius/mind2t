@@ -1234,33 +1234,55 @@ fn main() {
     let canvas = Rc::new(RefCell::new(canvas));
     let focus = Rc::new(Cell::new(Focus::Pane(0)));
 
-    // Never in headless mode: a local monitor makes the app eat keystrokes the moment it is
-    // active, and an invisible window that steals the keyboard is the worst of both worlds.
+    // `acceptsMouseMovedEvents` is NO by default on an NSWindow, and the failure is invisible: a
+    // child in mode 1003 receives every click and drag and never hears a bare move, so a menu
+    // that highlights under the cursor simply never highlights.
     #[cfg(target_os = "macos")]
     accept_mouse_moved(&window);
 
-    #[cfg(target_os = "macos")]
-    // The split's ingredients are captured, not rebuilt: the SAME context every existing pane was
-    // spawned on, and the font already multiplied by this display's scale. Two clones because the
-    // gate splits too, and a context is reference-counted - both hand out the same device.
-    let split_gpu = gpu.clone();
     let smoke_gpu = gpu.clone();
-    // A pane made later runs the SAME configured shell as the ones made at launch. Cloned rather
-    // than borrowed because both of these outlive this scope inside closures, and a split that
-    // quietly fell back to $SHELL would diverge from the window it was split out of.
-    let split_config = config.clone();
-    let monitor_config = config.clone();
     let smoke_config = config.clone();
-    let _monitor = (!headless()).then(|| {
-        input::monitor(
-            Rc::clone(&canvas),
-            Rc::clone(&focus),
-            BAR_HEIGHT,
-            font_size * scale as f32,
-            move || (split_gpu.clone(), shell_from(&split_config), font_size * scale as f32),
-            move |session| dress(session, &monitor_config),
-        )
-    });
+
+    // The AppKit event monitor, and everything it captures, in ONE cfg'd block.
+    //
+    // It was five separate statements with `#[cfg(target_os = "macos")]` on the first of them,
+    // which is a shape that reads as gated and is not: an attribute on a `let` covers that `let`
+    // and nothing after it, so `split_gpu` vanished on Linux while the call using it stayed.
+    // The Linux CI job's first run caught exactly that, in two errors and no others - which is
+    // the whole argument for having a job a Mac cannot pass by default.
+    //
+    // A block, rather than five attributes: five is five chances to add a sixth statement in the
+    // middle and gate nothing.
+    #[cfg(target_os = "macos")]
+    let _monitor = {
+        // The split's ingredients are captured, not rebuilt: the SAME context every existing pane
+        // was spawned on, and the font already multiplied by this display's scale. A context is
+        // reference-counted, so this hands out the same device the panes already have.
+        let split_gpu = gpu.clone();
+        // A pane made later runs the SAME configured shell as the ones made at launch. Cloned
+        // rather than borrowed because both of these outlive this scope inside closures, and a
+        // split that quietly fell back to $SHELL would diverge from the window it was split from.
+        let split_config = config.clone();
+        let monitor_config = config.clone();
+        // Never in headless mode: a local monitor makes the app eat keystrokes the moment it is
+        // active, and an invisible window that steals the keyboard is the worst of both worlds.
+        (!headless()).then(|| {
+            input::monitor(
+                Rc::clone(&canvas),
+                Rc::clone(&focus),
+                BAR_HEIGHT,
+                font_size * scale as f32,
+                move || (split_gpu.clone(), shell_from(&split_config), font_size * scale as f32),
+                move |session| dress(session, &monitor_config),
+            )
+        })
+    };
+
+    // Linux has no key or mouse source yet, and this is where it lands (T2b). Saying so in code
+    // rather than leaving a silent absence: a Linux build today opens a window, spawns a shell,
+    // renders it correctly and accepts nothing from the keyboard.
+    #[cfg(not(target_os = "macos"))]
+    let _ = (&canvas, &focus);
 
     // Registered before the run loop: the chrome can announce itself the moment its script
     // runs, and a listener attached later would miss exactly the fast case.

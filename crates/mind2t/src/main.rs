@@ -1278,10 +1278,22 @@ fn main() {
         })
     };
 
-    // Linux has no key or mouse source yet, and this is where it lands (T2b). Saying so in code
-    // rather than leaving a silent absence: a Linux build today opens a window, spawns a shell,
-    // renders it correctly and accepts nothing from the keyboard.
-    #[cfg(not(target_os = "macos"))]
+    // The Linux key source. Same headless rule as macOS: an invisible window that claims the
+    // keyboard is the worst of both worlds, and the gate runs headless.
+    //
+    // The MOUSE is still macOS-only, and that is scope rather than oversight - see the module
+    // card. A Linux build types and does not select.
+    #[cfg(target_os = "linux")]
+    if !headless()
+        && let Err(error) = gtk_input::monitor(&window, Rc::clone(&canvas), Rc::clone(&focus))
+    {
+        eprintln!("mind2t: no GTK key source: {error}");
+    }
+
+    // Neither macOS nor Linux: the window runs, the shell runs, and nothing reaches it from the
+    // keyboard. Named rather than silent, because a platform that half-works without saying so
+    // is how "cross-platform" becomes a claim nobody checked.
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let _ = (&canvas, &focus);
 
     // Registered before the run loop: the chrome can announce itself the moment its script
@@ -1671,6 +1683,118 @@ fn main() {
     });
 }
 
+/// Whether to print what each input path saw. `MIND2T_TRACE=1`.
+///
+/// Off by default and not a debug leftover: the whole layer is invisible by construction - a key
+/// that does nothing, a click that does nothing and a path that was never reached look identical
+/// from outside, and the only alternative to this is guessing. Read once, because a `getenv` per
+/// mouse-moved event is a syscall per pixel of travel.
+///
+/// At FILE scope since 2026-08-08 (T2b) because there are two input modules now. It lived inside
+/// the AppKit one, which made it invisible to the GTK one - and on a platform that cannot be
+/// compiled here, an unresolved name is a CI round trip rather than a squiggle.
+#[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(dead_code))]
+fn tracing() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("MIND2T_TRACE").is_ok_and(|value| value == "1"))
+}
+
+/// Reading the keyboard from GTK, because Tauri does not offer it on Linux either.
+///
+/// The macOS twin below is 1,000 lines because it also owns the mouse: clicks, drags, selection,
+/// the wheel. This one is keys ONLY, and that is a stated scope rather than an oversight - the
+/// pointer is a second surface with its own coordinate space, its own capture rules and its own
+/// gestures, and shipping half of it silently is worse than not shipping it.
+///
+/// **Why the toplevel and not the webview.** GTK delivers a key press to the toplevel window
+/// first, which then dispatches it to the focus widget. Connecting here means the terminal sees
+/// the key before the WebKitGTK widget does, and returning `Propagation::Stop` means the webview
+/// never sees it at all - which is project law 2 (no terminal bytes in the webview) enforced by
+/// the event's own route rather than by a convention someone has to remember.
+///
+/// **Everything that can be wrong in arithmetic is somewhere else.** The keycode table lives in
+/// `mind2t_vt_pty::keycode`, the modifier mapping and the encode rule in `mind2t::keys`, and all
+/// three are tested from a Mac. What is left here is the glue that cannot be: which signal, what
+/// the event's accessors are called, and what the handler returns.
+///
+/// **`[untested - needs a Linux machine]`, and specifically:** GDK documents
+/// `hardware_keycode` only as "the raw code of the key that was pressed or released" and names
+/// no convention. `LINUX_KEYCODES` is keyed on the X11/xkb code (evdev + 8). If GDK ever reports
+/// something else - a Wayland compositor passing a raw evdev scancode, say - every key would be
+/// off by exactly 8 and the symptom would be that letters type other letters. That is the first
+/// thing to check on first contact, and `MIND2T_TRACE=1` prints the raw code for it.
+#[cfg(target_os = "linux")]
+mod gtk_input {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    use gtk::gdk::EventKey;
+    use gtk::glib::Propagation;
+    use gtk::prelude::*;
+
+    use mind2t::canvas::Canvas;
+    use mind2t::keys;
+    use mind2t_vt_pty::keycode::key_from_linux_keycode;
+
+    use super::{Focus, tracing};
+
+    /// Connects the terminal's key source. Errors only if the window has no GTK peer, which
+    /// cannot happen for a window Tauri built and is therefore reported rather than handled.
+    pub fn monitor(
+        window: &tauri::Window,
+        canvas: Rc<RefCell<Canvas>>,
+        focus: Rc<Cell<Focus>>,
+    ) -> Result<(), tauri::Error> {
+        let gtk_window = window.gtk_window()?;
+        gtk_window.connect_key_press_event(move |_window, event| handle(&canvas, &focus, event));
+        Ok(())
+    }
+
+    /// One key press. `Proceed` hands the event on to GTK, which is what lets the chrome's own
+    /// widgets keep working; `Stop` claims it for the terminal.
+    fn handle(canvas: &RefCell<Canvas>, focus: &Cell<Focus>, event: &EventKey) -> Propagation {
+        // The chrome owns the keyboard while it has focus, exactly as on macOS. Without this the
+        // strip's own inputs would be unusable, because every press would be swallowed here.
+        let Focus::Pane(index) = focus.get() else {
+            return Propagation::Proceed;
+        };
+
+        let code = event.hardware_keycode();
+        let key = key_from_linux_keycode(code);
+        let mods = keys::mods_from_gdk(event.state().bits());
+        // What the LAYOUT produced, which is the whole reason a keyval exists beside a keycode:
+        // the keycode says which physical key, the keyval says what it means under the operator's
+        // layout. A key with no character (an arrow, a modifier) correctly yields none.
+        let text = event
+            .keyval()
+            .to_unicode()
+            .map(String::from)
+            .unwrap_or_default();
+
+        if tracing() {
+            println!(
+                "mind2t: TRACE gtk key code={code} -> {key:?} mods={mods:#x} text={text:?}"
+            );
+        }
+
+        let canvas = canvas.borrow();
+        let Some(pane) = canvas.panes().get(index) else {
+            return Propagation::Proceed;
+        };
+        let bytes = keys::encode_key(key, &text, mods, &pane.session.key_options());
+        if bytes.is_empty() {
+            // Nothing to send is not the same as nothing to do: passing the event on keeps
+            // chords the terminal has no encoding for working elsewhere. Same rule as macOS.
+            return Propagation::Proceed;
+        }
+        if let Err(error) = pane.session.send(&bytes) {
+            eprintln!("mind2t: send failed: {error:?}");
+        }
+        Propagation::Stop
+    }
+}
+
 /// Reading the keyboard and the mouse from AppKit, because Tauri does not offer them.
 #[cfg(target_os = "macos")]
 mod input {
@@ -1691,19 +1815,7 @@ mod input {
     };
     use mind2t_vt_pty::keycode::key_from_macos_keycode;
 
-    use super::Focus;
-
-    /// Whether to print what each input path saw. `MIND2T_TRACE=1`.
-    ///
-    /// Off by default and not a debug leftover: the whole layer is invisible by construction -
-    /// a key that does nothing, a click that does nothing and a path that was never reached
-    /// look identical from outside, and the only alternative to this is guessing. Read once,
-    /// because a `getenv` per mouse-moved event is a syscall per pixel of travel.
-    fn tracing() -> bool {
-        use std::sync::OnceLock;
-        static ON: OnceLock<bool> = OnceLock::new();
-        *ON.get_or_init(|| std::env::var("MIND2T_TRACE").is_ok_and(|value| value == "1"))
-    }
+    use super::{Focus, tracing};
 
     /// Where an event landed, in the space the mouse encoder measures in.
     ///

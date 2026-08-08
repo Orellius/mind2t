@@ -43,6 +43,20 @@ serde = { version = "1", features = ["derive"] }
 [build-dependencies]
 tauri-build = "2"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# T2b. The Linux key source, and the justification the no-new-dependencies rule asks for: this
+# is not a choice between libraries, it is the only way to name a type we are already handed.
+# `tauri::Window::gtk_window()` RETURNS a `gtk::ApplicationWindow`; without the crate we cannot
+# name that type, let alone connect a signal to it. It is already in the tree - Cargo.lock has
+# gtk 0.18.2 and gdk 0.18.2, pulled by tauri itself - so this adds a path, not a package, and
+# the version is pinned to the one already resolved because a second major would give us a
+# DIFFERENT `ApplicationWindow` type than the one tauri hands back.
+#
+# Linux only, not the BSDs. `gtk_window()` is available on dragonfly, freebsd, netbsd and
+# openbsd too; the plan's stated scope is macOS and Linux, and claiming a platform nothing has
+# ever built for is the kind of claim this file exists to stop.
+gtk = "0.18"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 # T1, 2026-08-08. These two were in the portable `[dependencies]` table until now, which is why
 # `cargo tree -p mind2t --target x86_64-unknown-linux-gnu` resolved `block2` and `objc2` for a

@@ -2101,6 +2101,7 @@ name = "mind2t"
 version = "0.1.0"
 dependencies = [
  "block2",
+ "gtk",
  "mind2t-vt-frame",
  "mind2t-vt-host",
  "mind2t-vt-pty",

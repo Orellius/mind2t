@@ -1,32 +1,38 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <!--
-    Mind2t - the app mark. Drawn 2026-08-06 for the workshop reading of the product's
-    previous name (Sadna, סדנה); the rebrand to Mind2t kept the artwork deliberately,
-    because the mark had already been picked from the screen and a name change is not a
-    reason to spend another four rounds at 32px. Revisit it only on Orel's word.
+    Mind2t - the app mark. REDRAWN 2026-08-08 on Orel's word: "change the icon, create an icon
+    with 'M2T'". It replaces a cabinet-maker's screwdriver, which was drawn for the product's
+    previous reading as a workshop and stopped describing a terminal the day the workbench was
+    parked.
 
-    A cabinet-maker's screwdriver, drawn as a silhouette rather than assembled from rectangles.
-    The earlier attempts stacked four rounded rects and rotated them, which is why they read as
-    a toy: a real driver's handle is a tapered lozenge that swells past the ferrule and flares
-    again at the butt, and that curve is the entire reason the object is recognisable at any
-    size. It is one bezier outline here.
+    THE GLYPHS ARE DRAWN ON A COARSE GRID, ON PURPOSE, and that is the whole design argument.
+    Three characters in one icon is one more than this mark has ever survived - the note in
+    CLAUDE.md says two elements is the ceiling, learned across four attempts that died at 32
+    pixels. What makes three viable is refusing curves: every stroke here is axis-aligned and 80
+    design units wide, which is 2.5 device pixels at 32, and a rectangle at 2.5px is still a
+    rectangle. A drawn '2' with a bowl and a tail is not - it turns to porridge, which is exactly
+    how the earlier rounded attempts failed.
 
-    Proportion is the second half of it. The handle is roughly 2.4 times as long as it is wide
-    and the shaft plus blade are longer than the handle - a fatter handle over a short shaft is
-    what made the first drawn version read as a vegetable at 32 pixels rather than as a tool.
+    It is also the honest mark for this product. A terminal draws glyphs on a cell grid; the icon
+    is the product's own rasteriser applied to its own name. The '2' is a seven-segment form (the
+    a, b, g, e and d segments) for the same reason.
 
-    The colours are the terminal's own, measured from `crates/render/src/color.rs`: ground
-    #0d0d0d, and the handle is palette index 3 (#f0c674) with its own shading rather than a flat
-    fill. Steel is cool and desaturated so it separates from the handle without introducing a
-    third hue.
+    LAYOUT, stated so a later edit does not have to re-derive it. Content box x 112..912,
+    y 300..724. Three cells 240 wide with 40 between them: 240*3 + 40*2 = 800. Cap height 424,
+    which is 41 percent of the canvas - large enough that each glyph owns about 8 device pixels
+    at 32, and any smaller was unreadable when measured.
 
-    One light source, upper left, and it is consistent across all four parts: the handle's
-    highlight, the shaft's specular stripe and the ferrule's top bevel all sit on the same side.
-    An icon whose highlights disagree looks wrong before anyone can say why.
+    COLOUR is the terminal's own, from crates/render/src/color.rs: ground #0d0d0d
+    (default_background) over the same #1c1c1c gradient the previous mark used, ink #ffffff
+    (default_foreground), and the '2' in #f0c674, palette index 3. The accent is on the middle
+    glyph deliberately - at 32 pixels a colour difference survives where a shape difference does
+    not, so the three characters keep their rhythm even when the strokes start to blur.
 
-    Judged at 32, which is what the Dock draws. The tool runs corner to corner because a
-    diagonal buys about 40 percent more length than an axis-aligned one, and length is what
-    keeps the shaft visible when each pixel is 32 design units.
+    Regenerate BOTH raster copies after any edit; nothing does it automatically:
+      rsvg-convert -w 1024 -h 1024 assets/icon/mind2t.svg -o assets/icon/mind2t-1024.png
+      cp assets/icon/mind2t-1024.png crates/mind2t/icons/icon.png
+    And judge the result at 32, which is what the Dock draws:
+      rsvg-convert -w 32 assets/icon/mind2t.svg | magick - -filter point -resize 900% out.png
   -->
   <defs>
     <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
@@ -38,25 +44,6 @@
       <stop offset="0.45" stop-color="#ffffff" stop-opacity="0.05"/>
       <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
-
-    <!-- Handle: lit from the upper left, so the gradient runs across the tool's short axis. -->
-    <linearGradient id="wood" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#f8dda2"/>
-      <stop offset="0.42" stop-color="#f0c674"/>
-      <stop offset="1" stop-color="#c9973f"/>
-    </linearGradient>
-    <!-- Steel: brightest just above the centre line, which is where a cylinder's specular sits. -->
-    <linearGradient id="steel" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#b9c2cc"/>
-      <stop offset="0.34" stop-color="#f6f8fa"/>
-      <stop offset="0.62" stop-color="#d2d9e0"/>
-      <stop offset="1" stop-color="#8d959e"/>
-    </linearGradient>
-    <linearGradient id="collar" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#e0b168"/>
-      <stop offset="0.5" stop-color="#b8863a"/>
-      <stop offset="1" stop-color="#8a6228"/>
-    </linearGradient>
   </defs>
 
   <rect x="64" y="64" width="896" height="896" rx="200" ry="200" fill="url(#ground)"/>
@@ -64,82 +51,44 @@
         fill="none" stroke="url(#rim)" stroke-width="2"/>
 
   <!--
-    The tool. Drawn pointing LEFT along y=512 and rotated as one group, so every part shares an
-    axis by construction and the angle is a single number to change.
+    M, cell x 112..352. One filled outline rather than three shapes, so the V notch cannot drift
+    away from the two stems. The notch bottoms at y 560, well above the baseline: a deep V eats
+    the middle of the glyph and at 32 pixels an M with a deep notch reads as two separate bars.
   -->
-  <g transform="rotate(-38 512 512)">
-    <!-- A contact shadow: the same shapes, offset down and right, at low opacity. Enough to lift
-         the tool off a near-black ground without becoming a glow. -->
-    <g opacity="0.5" transform="translate(12 18)">
-      <path d="M212 492 L136 474 L112 474 L112 552 L136 552 L212 534 Z" fill="#000000"/>
-      <rect x="196" y="491" width="326" height="44" rx="13" fill="#000000"/>
-      <path d="M516 470 C592 440 668 428 742 432 C816 436 866 452 884 476
-               C898 496 898 528 884 548 C866 572 816 588 742 592
-               C668 596 592 584 516 554 Z" fill="#000000"/>
-    </g>
+  <path d="M112 724 L112 300 L192 300 L232 430 L272 300 L352 300 L352 724
+           L272 724 L272 470 L232 560 L192 470 L192 724 Z" fill="#ffffff"/>
 
-    <!-- Blade. Flat-head: it widens as it leaves the shaft and ends square, which is the shape
-         that stops the tip reading as a nail or a pen. -->
-    <path d="M212 492 L136 474 L112 474 L112 552 L136 552 L212 534 Z" fill="url(#steel)"/>
+  <!--
+    2, cell x 392..632, seven-segment: top, upper-right, middle, lower-left, bottom. Five
+    rectangles and no curve anywhere. The verticals overlap the horizontals by a full stroke, so
+    the corners are solid rather than mitred - a mitre is sub-pixel detail at 32 and reads as a
+    notch.
 
-    <!-- Shaft. -->
-    <rect x="196" y="491" width="326" height="44" rx="13" fill="url(#steel)"/>
-    <!-- The specular stripe. One thin line at the same height as the gradient's brightest band,
-         which is what makes a flat rectangle read as a round bar. -->
-    <rect x="212" y="500" width="296" height="8" rx="4" fill="#ffffff" fill-opacity="0.55"/>
-
-    <!-- Ferrule, sitting over the joint so the shaft appears to enter the handle rather than
-         stop against it. -->
-    <path d="M498 474 C516 474 528 478 532 484 L532 540 C528 546 516 550 498 550 Z"
-          fill="url(#collar)"/>
-    <rect x="498" y="478" width="34" height="7" rx="3" fill="#ffffff" fill-opacity="0.35"/>
-
-    <!-- Handle: one outline. Swells past the ferrule, runs long, flares at the butt. -->
-    <path d="M516 470
-             C592 440 668 428 742 432
-             C816 436 866 452 884 476
-             C898 496 898 528 884 548
-             C866 572 816 588 742 592
-             C668 596 592 584 516 554 Z"
-          fill="url(#wood)"/>
-
-    <!-- The grip flutes. Three, following the handle's own curve, and drawn as darker strokes
-         rather than filled bars so they never look like stripes painted on. -->
-    <g stroke="#a97c30" stroke-opacity="0.42" stroke-width="15" stroke-linecap="round" fill="none">
-      <path d="M622 448 C614 486 614 538 622 576"/>
-      <path d="M706 442 C698 484 698 540 706 582"/>
-      <path d="M790 448 C784 486 784 538 790 576"/>
-    </g>
-
-    <!-- The handle's own highlight: a crescent along the lit edge, fading out before the butt
-         so it reads as a curved surface rather than as an outline. -->
-    <path d="M546 486 C616 458 690 446 756 450 C702 458 640 472 588 496 Z"
-          fill="#ffffff" fill-opacity="0.34"/>
+    Two things here were measured at 32 rather than reasoned about, and the first render had both
+    wrong:
+    - THE GAPS MUST BE EQUAL. They were 52 units above the middle bar and 132 below, and at 32
+      pixels 52 units is 1.6 device pixels - the top bar and the middle bar fused into one block
+      and the glyph became a solid amber slab with a notch. The three bars now sit at 300, 472
+      and 644 with 92 units of air on both sides of the middle one, which is 2.9 pixels.
+    - THE TOP BAR IS INSET 40 UNITS ON THE LEFT, and that inset is what stops it reading as a Z.
+      A seven-segment 2 and a Z are otherwise the same five strokes; a real 2 begins its top
+      stroke to the right of its left edge because that stroke is the start of a curve. The
+      bottom bar stays full width, which is the other half of the distinction.
+  -->
+  <g fill="#f0c674">
+    <rect x="432" y="300" width="200" height="80"/>
+    <rect x="552" y="300" width="80" height="252"/>
+    <rect x="392" y="472" width="240" height="80"/>
+    <rect x="392" y="472" width="80" height="252"/>
+    <rect x="392" y="644" width="240" height="80"/>
   </g>
 
   <!--
-    The prompt, `_<`, in the corner the tool leaves empty.
-
-    Read right to left, which is the whole point: the chevron aims LEFT and the cursor sits to
-    its left, where a cursor sits on a Hebrew line. Every terminal icon in the Dock is a `>` and
-    a block; this is the mirror of that, and the mirror is the product claim - Ghostty has no
-    bidi at all.
-
-    Placed on the counter-diagonal. The tool runs lower-left to upper-right, so the lower-right
-    is the one large area it never crosses, and putting the prompt anywhere else would have it
-    touching the blade or the handle at 32 pixels even though the two look clear at 1024.
-
-    Weights are set for 32 again: the chevron stroke is 44 units (about one and a half device
-    pixels there) and the gap between cursor and chevron is 74, which is a bit over two - the
-    earlier two-object attempt left 44 and the shapes fused into one blob.
-
-    Inset from the plate rather than tucked into the corner. The first placement put the chevron
-    68 units off the bottom and 22 off the right, and at 32 pixels that reads as an element
-    falling out of the icon rather than as one sitting inside it.
+    T, cell x 672..912. The stem is centred on the cell and the arms are symmetric, because an
+    asymmetric T is the one letter people notice immediately even when they cannot say why.
   -->
-  <g opacity="0.92">
-    <rect x="470" y="766" width="120" height="30" rx="15" fill="#f0c674"/>
-    <polyline points="756,688 664,781 756,874" fill="none" stroke="#f2f2f2" stroke-width="44"
-              stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="#ffffff">
+    <rect x="672" y="300" width="240" height="80"/>
+    <rect x="752" y="380" width="80" height="344"/>
   </g>
 </svg>

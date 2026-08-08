@@ -531,6 +531,13 @@ mod tests {
             "Arabic resolved to font {} rather than to the monospaced face at {mono}",
             beh.font
         );
+
+        // AND IT IS STILL NOT ENOUGH, measured 2026-08-08. Kawkab is monospaced at ITS OWN pitch,
+        // which is not Menlo's: beh advances 22.40px against a 19px cell at 32px, where Miriam
+        // Mono answers Hebrew at 19.20px and lines up. "Monospaced" is a property of a face on its
+        // own; what a terminal grid needs is an advance equal to the PRIMARY face's, and no font
+        // ships promising that. See `an_arabic_glyph_still_overhangs_its_cell` in
+        // crates/render/tests/arabic.rs and P2 in docs/BACKLOG-2026.md.
     }
 
     #[test]

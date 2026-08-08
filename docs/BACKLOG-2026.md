@@ -184,30 +184,53 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
     simply dropped), so it is left as a one-line follow-up instead of being
     smuggled into this slice.
 
-## P2 - a proportional Arabic face overhangs its cell (found 2026-08-08)
+## P2 - an Arabic face overhangs its cell (found 2026-08-08, corrected same day)
 
-Found while gating Arabic joining, and it is a SEPARATE defect that predates it:
-the Arabic faces shipping with macOS are proportional, so beh advances 22.4px
-against a 19px cell and a glyph drawn at its cell's origin spills right.
+Found while gating Arabic joining, and it is a SEPARATE defect that predates it.
+A run is painted in LOGICAL order, which on a right-to-left row runs right to
+left on screen, so each letter's overhang lands on a cell that has already been
+painted and is never cleared. Measured: `"\u{0628} \u{0628}"` at 32px puts **50
+inked pixels into the empty space between the two letters**, and
+`"\u{05D0} \u{05D0}"` puts none.
 
-Whether the spill survives is decided by paint order, which makes it direction
-dependent. A run is painted in LOGICAL order, which on a right-to-left row runs
-right to left on screen, so each letter's overhang lands on a cell that has
-already been painted and is never cleared. Measured: `"\u{0628} \u{0628}"` at
-32px puts **50 inked pixels into the empty space between the two letters**, and
-`"\u{05D0} \u{05D0}"` puts none, because Hebrew's faces here are monospaced.
+**THE FIRST VERSION OF THIS ENTRY WAS WRONG AND IS CORRECTED HERE RATHER THAN
+REWRITTEN.** It said the macOS Arabic faces are proportional, that installing
+**Kawkab Mono** avoids the defect entirely, and that the font stack already
+prefers it. Measured 2026-08-08 on a machine where Kawkab IS installed, IS
+ranked first and DOES answer for beh: the 50 pixels are still there. Advances at
+32px against a 19px cell:
 
-Not fixed with joining, because the honest fixes are all bigger than the bug:
-scale the run horizontally to the cell pitch (changes letter shapes), clip each
-glyph to its cell (cuts the strokes that make cursive readable), or require a
-monospaced face. Installing **Kawkab Mono** avoids it entirely and the font
-stack already prefers it - see `a_monospaced_arabic_face_outranks_the_
-proportional_ones`.
+| codepoint | face that answers | advance |
+|---|---|---|
+| `A` | Menlo | 19.27px |
+| `\u{05D0}` | Miriam Mono CLM | 19.20px |
+| `\u{0628}` | **Kawkab Mono** | **22.40px** |
 
-The tests in `crates/render/tests/arabic.rs` are written around it rather than
-against it: form is asserted on glyph ids, and pixel comparisons are only made
-between cells that are equally contaminated or equally clean. That is stated in
-the file so a later reader does not mistake the omission for an oversight.
+So the mitigation does not exist. **Monospaced is a property of a face on its
+own - uniform advance within itself - and a terminal grid needs something else
+entirely: an advance equal to the PRIMARY face's.** No font ships promising
+that, and Miriam Mono matching Menlo to 0.07px is luck rather than design. It is
+also why Hebrew has never shown this and Arabic always will.
+
+**The fix, named rather than guessed at.** Rasterise each fallback face at a
+size whose advance equals the cell width: `size * cell / advance`, here
+`32 * 19 / 22.40 = 27.1px`. That is UNIFORM scaling, so letter shapes are
+preserved - which is what separates it from the three options this entry
+originally listed and rejected (horizontal run scaling distorts shapes, glyph
+clipping cuts the strokes that make cursive readable, requiring a monospaced
+face does not work as shown above). Cost: three files - a per-face size on
+`FontStack`, the atlas rasterising at it, and `shape.rs` positioning at it -
+plus pixel proofs. Hebrew moves by 1% and Latin not at all, so the blast radius
+is the scripts that are currently broken.
+
+**Pinned, not just described**: `an_arabic_glyph_still_overhangs_its_cell` in
+`crates/render/tests/arabic.rs` asserts the defect AS IT STANDS, the way a
+corpus case marked `diff` does. When the normalisation lands, that test fails,
+and the failure is the feature.
+
+The other tests in that file are written around the defect rather than against
+it: form is asserted on glyph ids, and pixel comparisons are only made between
+cells that are equally contaminated or equally clean.
 
 ## Deliberately NOT on the list
 

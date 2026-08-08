@@ -249,3 +249,38 @@ fn latin_is_untouched_by_the_joining_path() {
     let a = cells("a", 3);
     assert_eq!(&drawn[0], only_inked(&a));
 }
+
+/// The Arabic overhang, PINNED as it currently is rather than left as prose.
+///
+/// P2 in docs/BACKLOG-2026.md said installing a monospaced Arabic face avoided this entirely and
+/// that the stack already prefers one. Measured 2026-08-08 on a machine where Kawkab Mono IS
+/// installed, IS ranked first and DOES answer for beh: the spill is still there, 50 inked pixels
+/// in the empty cell between two letters. The claim was wrong, and the reason is one number -
+/// Kawkab advances **22.40px against a 19px cell** at 32px, because monospaced means uniform
+/// within a face, not equal to the primary face's pitch. Miriam Mono answers Hebrew at 19.20px,
+/// which is why the control below is clean and Hebrew has never shown this.
+///
+/// So this is a CHARACTERISATION PIN, in the same spirit as a corpus case marked `diff`: it
+/// asserts the defect as it stands, so the number cannot drift unnoticed and cannot quietly get
+/// worse. **When the renderer normalises each fallback face to the cell pitch, this test fails,
+/// and the failure is the feature** - promote it to expecting zero.
+///
+/// The control is not decoration. Hebrew going non-zero would mean the measurement had started
+/// reading something other than a proportional overhang.
+#[test]
+fn an_arabic_glyph_still_overhangs_its_cell() {
+    let arabic = cells(&format!("{BEH} {BEH}"), 3);
+    let hebrew = cells("\u{05D0} \u{05D0}", 3);
+
+    assert_eq!(
+        inked(&hebrew[1]),
+        0,
+        "the CONTROL is contaminated: Hebrew's face here advances 19.20px into a 19px cell, so ink \
+         in the gap means this is reading something other than an overhang"
+    );
+    assert!(
+        inked(&arabic[1]) > 0,
+        "the Arabic overhang is GONE. If the renderer now normalises a fallback face to the cell \
+         pitch, this pin has done its job: change it to assert zero and close P2 in the backlog."
+    );
+}

@@ -255,7 +255,7 @@ need these two side by side" - and then as a deliberate decision, not a drift.
 > terminal, where one thing on screen at a time is the right model. Mind2t is a
 > fleet controller, which is N-up by definition - you cannot direct four agents you
 > cannot see, and parallel sessions are already how the operator works. Splits are
-> now **Mind2t slice B3** (`docs/plans/2026-08-04-bindary.md`): a Rust-side layout
+> now **Mind2t slice B3** (`docs/plans/2026-08-04-mind2t-workbench.md`): a Rust-side layout
 > tree inside ONE wgpu surface, not per-pane surfaces, so EXACT TILING extends from
 > two regions to a tree without changing its nature. S7 itself stays closed - the
 > work lives under B3, not here.

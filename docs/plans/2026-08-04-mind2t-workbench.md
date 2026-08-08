@@ -1,6 +1,10 @@
 # Mind2t - plan of record
 
 > Written 2026-08-04 (IDT), approved by Orel the same night.
+> **Renamed 2026-08-08**: this file was `2026-08-04-bindary.md` until the product's first name
+> was retired from everything else. The date is the provenance and it has not moved. The
+> `B1..B9` slice namespace is unchanged on purpose - `B` is in 43 commit subjects, and renaming
+> an identifier to match a name makes history unreadable to satisfy a letter.
 > **Engine keeps its name (`mind2t-vt`). The app is Mind2t** (born Bindary, briefly Sadna,
 > renamed 2026-08-06). The "zero rebrand cost" this line used to claim was wrong twice over -
 > the second rename touched 30 files, the crate directory, the GitHub repo and the config

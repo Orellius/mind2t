@@ -1,8 +1,9 @@
 # Pin the target dir LOCALLY, overriding the machine-global studio-cache
 # redirect in ~/.cargo/config.toml (closer config wins). This repo cannot use
-# the shared root: swift/Package.swift links the staticlib by literal path
-# (-L../target/release), and the differential-oracle scripts reference
-# ./target/debug. Remove this pin only after those paths are made
-# CARGO_TARGET_DIR-aware.
+# the shared root: the differential-oracle scripts reference ./target/debug by
+# literal path. It also served swift/Package.swift, which linked the staticlib
+# at -L../target/release until that host was deleted on 2026-08-08 - one of the
+# two reasons is gone and the other is not. Remove this pin only after those
+# paths are made CARGO_TARGET_DIR-aware.
 [build]
 target-dir = "target"

@@ -1,52 +1,26 @@
-//! The generated macOS keycode table, checked against its OTHER generated copy.
+//! The generated macOS keycode table.
 //!
-//! `scripts/gen-keymap.ts` writes two files from one source: a Swift dictionary the AppKit host
-//! reads and a Rust table Mind2t reads. Two generated copies are safe only while they are
-//! actually regenerated together - the moment someone hand-edits one, or regenerates against a
-//! moved oracle and commits only the file their build touched, the hosts disagree about what a
-//! key IS. The failure is per-key and silent: one key stops working in one app.
+//! WHAT THIS FILE USED TO DO, and why saying so matters. Until 2026-08-08 it read
+//! `swift/Sources/mind2t-host/KeyMap.swift` at test time and demanded exact agreement with the
+//! Rust table. `scripts/gen-keymap.ts` wrote both from one source, and two generated copies are
+//! safe only while they are actually regenerated together - the moment somebody hand-edits one,
+//! or regenerates against a moved oracle and commits only the file their build touched, the two
+//! hosts disagree about what a key IS. That failure is per-key and silent.
 //!
-//! So this test reads the SWIFT file at test time and requires exact agreement. It is the only
-//! thing in the repo that can see that drift.
+//! The Swift host was retired in T6, so that test had nothing left to compare against and is
+//! gone. **The property it guarded is NOT gone**: `keycode_linux.rs` makes the same check
+//! between the macOS and Linux tables, by parsing the DomCode each entry carries in its
+//! generated comment. It is a better version of the same test, because both sides now live in
+//! this repository and neither can be edited without the other being visible in the same diff.
+//!
+//! What is genuinely lost is narrower and worth naming: nothing now proves the table is usable
+//! from a language that is not Rust. That was never what this test measured, but the Swift file
+//! existing was incidental evidence of it.
 
 #![cfg(target_os = "macos")]
 
-use std::collections::BTreeMap;
-
 use mind2t_vt_pty::key::Key;
 use mind2t_vt_pty::keycode::{MACOS_KEYCODES, key_from_macos_keycode};
-
-fn swift_table() -> BTreeMap<u16, u16> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../swift/Sources/mind2t-host/KeyMap.swift"
-    );
-    let text = std::fs::read_to_string(path).expect("the Swift keymap is where it has always been");
-    text.lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            let (code, rest) = line.split_once(':')?;
-            let (value, _) = rest.split_once(',')?;
-            Some((code.trim().parse().ok()?, value.trim().parse().ok()?))
-        })
-        .collect()
-}
-
-#[test]
-fn the_rust_and_swift_tables_are_the_same_table() {
-    let swift = swift_table();
-    assert!(
-        swift.len() > 100,
-        "parsed only {} entries from the Swift keymap; the parser, not the table, is wrong",
-        swift.len()
-    );
-
-    let rust: BTreeMap<u16, u16> = MACOS_KEYCODES.iter().copied().collect();
-    assert_eq!(
-        rust, swift,
-        "the two generated keycode tables disagree - regenerate BOTH with scripts/gen-keymap.ts"
-    );
-}
 
 /// The table is binary-searched, which is a silent-wrong-answer bug if it is ever unsorted.
 #[test]
@@ -72,4 +46,20 @@ fn known_keys_resolve_and_unknown_ones_stay_unidentified() {
 
     assert_eq!(key_from_macos_keycode(u16::MAX), Key::Unidentified);
     assert_eq!(key_from_macos_keycode(1000), Key::Unidentified);
+}
+
+/// No entry may resolve to `Unidentified`.
+///
+/// Inherited from the Linux table's suite, because the reason applies to both: an entry pointing
+/// past `Key::ALL` answers exactly as if there were no entry at all, so a generator that emitted
+/// a wrong enum value would be invisible to every lookup test above.
+#[test]
+fn every_macos_entry_names_a_real_key() {
+    for (code, value) in MACOS_KEYCODES {
+        assert_ne!(
+            key_from_macos_keycode(*code),
+            Key::Unidentified,
+            "macOS keycode {code} carries enum value {value}, which is not a key"
+        );
+    }
 }

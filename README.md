@@ -444,29 +444,26 @@ you several agents at once, which is the whole point of the word and the reason 
 - Agent launcher: ten agent CLIs with the fields that actually differ, a PATH probe that measures availability rather than trusting a table, spawn-observe-retry with counted backoff, and a guard that refuses an auto-approve bypass rather than stripping it
 - `~/.mind2t/config.toml`: font size, family, ligatures, shell, themes, auto-direction, and `reports`, off by default because it lets a program read back what is on your screen
 
-**The Swift host** (`swift/`) - a wrapper around the same engine, and currently the richer of the
-two. It is the parity target the Tauri port is measured against, which is why it is not deleted:
-a port with no reference is a rewrite with extra steps.
-
-- Top tab bar with live program titles and work-state dots driven by OSC 9;4 progress
-- Scrollback viewport: wheel and cmd+PageUp / Home / End, pinned to content while a program prints, snapping back the moment you type
-- cmd+K command palette with TOML workflows: placeholders discovered from the command text, filled one at a time, and pasted rather than executed
-- Autosuggestions, fish-style ghost text keyed by working directory
-- OSC 133 blocks with a gutter: copy command, copy output, run again
-- Git-worktree workspaces and a WKWebView diff-review panel over the active session's repository
+**There was a second host, in Swift, and it was deleted on 2026-08-08.** It carried tabs, a
+cmd+K palette with TOML workflows, fish-style autosuggestions, OSC 133 blocks and git-worktree
+workspaces, and it was kept for a long time as the parity target the Tauri port was measured
+against - a port with no reference is a rewrite with extra steps. It went once the Tauri host
+could produce an app on its own, because a reference nobody builds is a liability rather than a
+reference. `git log -- swift/` still has all of it.
 
 ## Status
 
 Working as a terminal, and in daily use on macOS, Apple Silicon. Pre-1.0, no stability promises.
 
 **What it is not: a workbench.** There is no session map, no canvas, no way to see what several
-agents are doing at once. The Tauri host is a window with panes and an agent launcher; the Swift
-host is a wrapper with tabs, a palette, blocks and worktrees. Both sit on one engine, and the
-engine is the part that is finished. The surface that would earn the word "workbench" is planned
-in `docs/plans/` and not started.
+agents are doing at once. The host is a window with panes and an agent launcher. The engine is
+the part that is finished. The surface that would earn the word "workbench" is planned in
+`docs/plans/` and not started.
 
-Other platforms are not built or tested; the core, frame, render and difftest crates are portable
-and that work is welcome.
+Linux is compiled on every push (`cargo check -p mind2t` on ubuntu-latest) and is otherwise
+UNRUN: the GTK key and clipboard paths exist and no key has ever been pressed on a real Linux
+machine. Windows is a separate slice and is not started - there is no POSIX pty there, so the pty
+crate needs ConPTY.
 
 ## Building
 
@@ -486,7 +483,6 @@ cargo run -p mind2t-vt-difftest          # the corpus, measured against libghost
 ./scripts/smoke-mind2t.sh               # host gate: no window, no synthesized input
 ./scripts/build-lib.sh                  # libmind2t-vt.a       (the drop-in ABI)
 ./scripts/build-host.sh                 # libmind2t-vt-host.a  (ABI plus embedder surface)
-./scripts/build-swift.sh                # the Swift reference host and its headless smoke test
 ./scripts/build-app.sh                  # assemble, sign and install the app
 sh scripts/demo-features.sh             # the one-screen feature tour, inside the terminal
 ```

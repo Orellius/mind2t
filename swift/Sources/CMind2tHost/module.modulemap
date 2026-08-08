@@ -1,4 +1,0 @@
-module CMind2tHost {
-    header "../../../crates/host/include/mind2t_host.h"
-    export *
-}

@@ -48,6 +48,10 @@ fn expected() -> Vec<(String, Option<String>)> {
         ("CLAUDE_CODE_CHILD_SESSION".to_string(), None),
         ("COLORTERM".to_string(), Some("truecolor".to_string())),
         (
+            "PWD".to_string(),
+            Some(std::env::var("HOME").expect("a HOME on this machine")),
+        ),
+        (
             "TERM".to_string(),
             Some(mind2t::launch::CHILD_TERM.to_string()),
         ),
@@ -192,4 +196,109 @@ fn claude_typed_into_a_shell_pane_reports_a_clean_session() {
         !screen.contains("Transcript saving is off"),
         "claude reports transcript saving OFF when started from a shell pane"
     );
+}
+
+/// A BATTERY, printed rather than asserted: what a pane actually shows for the sequences this
+/// machine's shell emits, plus the ordinary things a terminal has to get right.
+///
+/// Written 2026-08-08 because "something is weird with the terminal" is not a bug report anybody
+/// can act on, and the alternative to guessing is reading the grid.
+///
+/// THE CHILD PRINTS THE SEQUENCES; THEY ARE NOT SENT TO IT. The first version of this test sent
+/// the bytes to a `cat` and read the echo, which measured the line discipline rather than the
+/// parser: ECHOCTL renders an ESC as a printable `^[`, so every probe "leaked" and the test was
+/// reading its own input. Bytes written BY the child travel up the pty to the core untouched,
+/// which is the only path that answers the question.
+///
+///     cargo test -p mind2t --test child_env -- --ignored --nocapture probe_battery
+#[test]
+#[ignore = "diagnostic; prints a grid rather than asserting"]
+fn probe_battery() {
+    use std::time::{Duration, Instant};
+
+    let gpu = mind2t_vt_render::GpuContext::new().expect("a GPU");
+    let mut command = std::process::Command::new("/bin/sh");
+    // Each probe prints a LABEL, then the sequence, then a bar. A sequence the core handles
+    // leaves the two markers adjacent; one that leaks puts its payload between them.
+    command.arg("-c").arg(concat!(
+        r#"printf 'A[\033]1337;CurrentDir=/tmp\007]\n';"#,
+        r#"printf 'B[\033]1337;RemoteHost=orel@mac\007]\n';"#,
+        r#"printf 'C[\033]1337;ShellIntegrationVersion=14;shell=zsh\007]\n';"#,
+        r#"printf 'D[\033]7;file://mac/tmp\007]\n';"#,
+        r#"printf 'E[\033]133;A\007]\n';"#,
+        r#"printf 'F[\033]0;a title\007]\n';"#,
+        r#"printf 'G[wide \346\274\242 combining e\314\201 emoji \360\237\230\200]\n';"#,
+        "exec sleep 30"
+    ));
+    mind2t::launch::dress(&mut command);
+    let mut session =
+        mind2t_vt_host::session::Session::spawn_fitted_on(&gpu, command, 1200, 700, 16.0, None)
+            .expect("a pane");
+
+    let settle = Instant::now();
+    while settle.elapsed() < Duration::from_millis(1500) {
+        session.poll();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    let screen = session.visible_text();
+    println!("--- grid ---");
+    for (row, line) in screen.lines().enumerate().take(9) {
+        println!("{row:>2} |{}|", line.trim_end());
+    }
+    println!("--- end ---");
+    println!("a probe is CLEAN when its label and the closing bracket are adjacent, eg `A[]`");
+    assert!(screen.contains('A'), "the pane shows nothing at all");
+    session.shutdown();
+}
+
+/// A pane opens AT HOME, and this is the assertion for "why does the terminal not start at ~".
+///
+/// Every builder must place the child, because the alternative is placing it wherever the app was
+/// launched from - and a Finder-launched app inherits `/`, the sealed read-only root. The C ABI
+/// host has had this since 2026-07-30 and the Tauri host never got it.
+#[test]
+fn every_spawn_path_starts_the_child_at_home() {
+    let home = std::path::PathBuf::from(std::env::var("HOME").expect("a HOME"));
+
+    let mut dressed = Command::new("/bin/sh");
+    mind2t::launch::dress(&mut dressed);
+    assert_eq!(dressed.get_current_dir(), Some(home.as_path()));
+
+    assert_eq!(
+        mind2t::launch::shell_command().get_current_dir(),
+        Some(home.as_path()),
+        "a shell pane does not open at home"
+    );
+
+    let agent = mind2t::agent::REGISTRY
+        .iter()
+        .find(|agent| agent.id == "claude")
+        .expect("the registry still lists claude");
+    assert_eq!(
+        mind2t::agent::launch(agent, "claude", &[])
+            .expect("a plain launch")
+            .get_current_dir(),
+        Some(home.as_path()),
+        "an agent pane does not open at home"
+    );
+
+    // The control. A command nobody dressed inherits this process's directory, which is what the
+    // app was doing and what the operator saw.
+    assert_eq!(Command::new("/bin/sh").get_current_dir(), None);
+}
+
+/// A caller with a real destination overrides the default by saying so afterwards.
+///
+/// This is the precedence the C ABI host states in its own comment: an explicit directory (a
+/// worktree, a spec) outranks the home default, and it does so WITHOUT that caller having to know
+/// the default exists. If the order ever inverts, a workspace silently opens at home and still
+/// looks like a working terminal.
+#[test]
+fn an_explicit_directory_outranks_the_home_default() {
+    let elsewhere = std::env::temp_dir();
+    let mut command = Command::new("/bin/sh");
+    mind2t::launch::dress(&mut command);
+    command.current_dir(&elsewhere);
+    assert_eq!(command.get_current_dir(), Some(elsewhere.as_path()));
 }

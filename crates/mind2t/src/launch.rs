@@ -204,6 +204,30 @@ pub fn into_pane(
 /// launched Mind2t. Leaving them set does not fail loudly - the agent starts, and quietly turns
 /// off transcript saving.
 pub fn dress(command: &mut Command) {
+    // A TERMINAL WINDOW MEANS "A SHELL AT HOME", and without this it means "a shell wherever the
+    // app happened to be launched from". A Finder-launched app inherits `/`, so the pane opens on
+    // the sealed read-only root - which starship dresses in a padlock, and which the operator
+    // read as a permission block. That was seen live on 2026-07-30, fixed in the C ABI host, and
+    // never carried across to this one; Orel hit it again on 2026-08-08 as "why does the terminal
+    // not start at ~".
+    //
+    // Set FIRST, so a caller with a real destination (a worktree, a spec) overrides it simply by
+    // calling `current_dir` afterwards and without having to know this default exists.
+    //
+    // A HOME that is not a directory is ignored rather than fatal: `Command::spawn` reports a bad
+    // cwd as a plain ENOENT from the exec, indistinguishable from a missing shell, and a terminal
+    // should open somewhere usable rather than fail with a misleading error.
+    if let Ok(home) = std::env::var("HOME")
+        && std::path::Path::new(&home).is_dir()
+    {
+        command.current_dir(&home);
+        // PWD TOO, AND IT IS NOT REDUNDANT. `current_dir` changes the process's directory and
+        // leaves the INHERITED `PWD` naming the parent's, so a shell builtin `pwd` - which
+        // prefers the variable - reports the wrong answer until something reassigns it. A login
+        // zsh does reassign it, which is exactly what makes this the kind of bug that appears
+        // only under the one shell that does not.
+        command.env("PWD", &home);
+    }
     command.env("TERM", CHILD_TERM);
     // Declared for the same reason as TERM rather than merely echoed: without it a program that
     // checks for truecolor falls back to 256 colours in a terminal that has had 24-bit colour

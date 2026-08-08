@@ -212,6 +212,18 @@ struct Smoke {
     before_resize: Vec<(Rect, (u16, u16))>,
     after_resize: Vec<(Rect, (u16, u16))>,
     resized_to: Option<u32>,
+    /// Whether the gate has ASKED for a resize, and whether the canvas has since APPLIED one.
+    ///
+    /// These two flags exist because the first version of this check waited a fixed 400ms after
+    /// `set_size` and then read the tiling, which made a timer stand in for an event. AppKit
+    /// delivers `Resized` when it delivers it, and on a loaded machine that is sometimes past the
+    /// budget - the check then read the tiling from BEFORE the resize and reported that the canvas
+    /// had ignored it. Measured: one failure in four runs of an unchanged, correct host.
+    /// The request flag is what keeps this honest, because a window emits `Resized` at creation
+    /// too: without it the applied flag is already true before the gate has asked for anything,
+    /// and the check would snapshot the opening tiling twice and compare it with itself.
+    resize_requested: bool,
+    resize_applied: bool,
     /// Title bar inset plus strip, in physical pixels: what the origin MUST clear.
     reserved: Option<u32>,
     /// Every distinct directory the SESSION decoded, in the order it decoded them.
@@ -1279,7 +1291,6 @@ fn main() {
     let mut finished = false;
     let mut probed_at: Option<std::time::Instant> = None;
     // When the headless resize was asked for; `None` until it has been.
-    let mut resized_at: Option<std::time::Instant> = None;
     let mut ready_at: Option<std::time::Instant> = None;
     let smoke = std::rc::Rc::new(std::cell::RefCell::new(Smoke::default()));
     let mut probe = InputProbe::new();
@@ -1482,13 +1493,11 @@ fn main() {
             // `Canvas::resize`) runs exactly as it does for a human dragging a corner.
             if headless() && probe.done() {
                 let mut record = smoke.borrow_mut();
-                if resized_at.is_none() {
+                if !record.resize_requested {
                     record.before_resize = snapshot(&canvas);
+                    record.resize_requested = true;
                     let _ = window.set_size(LogicalSize::new(600.0, 380.0));
-                    resized_at = Some(std::time::Instant::now());
-                } else if record.after_resize.is_empty()
-                    && resized_at.is_some_and(|at| at.elapsed() >= SETTLE)
-                {
+                } else if record.after_resize.is_empty() && record.resize_applied {
                     record.after_resize = snapshot(&canvas);
                     // ASKED of the window, never the number we requested: a window manager may
                     // give something else, and asserting against our own request would pass on a
@@ -1617,6 +1626,14 @@ fn main() {
                 // operator asking for something impossible, and the last good tiling stays on
                 // screen until they let go.
                 eprintln!("mind2t: canvas resize refused: {error:?}");
+            } else {
+                // The gate's completion signal, and it is set HERE rather than on a timer because
+                // this is the only place that knows the new tiling exists. Gated on the request so
+                // the window's own opening `Resized` cannot satisfy it.
+                let mut record = smoke.borrow_mut();
+                if record.resize_requested {
+                    record.resize_applied = true;
+                }
             }
 
             // The webview is a child view with no autoresizing mask; nothing moves it but this.

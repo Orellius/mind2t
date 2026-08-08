@@ -15,6 +15,13 @@
   <img alt="706 tests" src="https://img.shields.io/badge/tests-706-brightgreen.svg">
 </p>
 
+![bidirectional text, rendered by this terminal](docs/images/bidi-proof-20260807.png)
+
+<p align="center"><em>Hebrew, Arabic and Latin on one grid. Rendered by this terminal, not mocked
+up: <code>cargo run -p mind2t-vt-render --example screenshot</code>. The number does not flip, the
+code keeps its direction, and the box drawing stays in its own columns.<br>
+Details and the Unicode conformance numbers: <a href="#bidirectional-text">Bidirectional text</a>.</em></p>
+
 ---
 
 ## Why this exists
@@ -37,7 +44,12 @@ through with regular expressions. If you own the terminal, you do not guess: the
 its working directory and its git branch are already sitting in cells, typed, because your own
 parser put them there.
 
-So the terminal came first, and the workbench grew on top of it.
+So the terminal came first. **The workbench is the goal and it is not built** - there is no session
+map, no canvas, nothing that shows you what several agents are doing at once. What exists on top of
+the engine today is a window with panes, plus a module that can launch an agent CLI into one. The
+richer surface lives in the Swift host, which is a wrapper around the same engine and is where the
+tabs, palette, blocks and worktrees actually are. Read the feature list below as two hosts over one
+core, not as a product.
 
 ## Written from zero
 
@@ -166,11 +178,8 @@ picture of some other terminal agreeing with our numbers would not be the claim 
 This is the feature the renderer was shaped around, and the one thing here that no other
 terminal does.
 
-![bidirectional text, rendered by this terminal](docs/images/bidi-proof-20260807.png)
-
-<p align="center"><em>Rendered by this terminal, not mocked up.</em></p>
-
-Every line in that image is a rule that a plausible implementation gets wrong:
+Every line in the image at the top of this file is a rule that a plausible implementation gets
+wrong:
 
 - **The number does not flip.** `גיל 42 שנה` becomes `הנש 42 ליג`. An implementation that reverses the run wholesale gives you `24`, and it looks entirely reasonable until somebody reads a port number backwards.
 - **Word order reverses, the words do not.**
@@ -405,7 +414,8 @@ Three rules, enforced by crate boundaries rather than by convention.
 - SGR mouse (1000 / 1002 / 1003 / 1006) plus alternate scroll, against a ~65k-case differential matrix; the wheel routes by mode to report, arrow keys, or viewport
 - Chords match physical keys, so a Hebrew layout keeps every one of them
 
-**The workbench** (`crates/mind2t`)
+**The Tauri host** (`crates/mind2t`) - a window with panes. Not a workbench yet: nothing here shows
+you several agents at once, which is the whole point of the word and the reason it is not used.
 
 - One window opening with one pane, split right with cmd+D, with a real gutter between panes and a rule drawn into it in the same render pass. Splitting stops before a pane becomes too narrow to use rather than continuing until something breaks
 - A pane whose child has exited closes itself and gives its width back to the survivors; the last one closing closes the window
@@ -414,7 +424,9 @@ Three rules, enforced by crate boundaries rather than by convention.
 - Agent launcher: ten agent CLIs with the fields that actually differ, a PATH probe that measures availability rather than trusting a table, spawn-observe-retry with counted backoff, and a guard that refuses an auto-approve bypass rather than stripping it
 - `~/.mind2t/config.toml`: font size, family, ligatures, shell, themes, auto-direction, and `reports`, off by default because it lets a program read back what is on your screen
 
-**The Swift reference host** (`swift/`), the parity target the port is measured against
+**The Swift host** (`swift/`) - a wrapper around the same engine, and currently the richer of the
+two. It is the parity target the Tauri port is measured against, which is why it is not deleted:
+a port with no reference is a rewrite with extra steps.
 
 - Top tab bar with live program titles and work-state dots driven by OSC 9;4 progress
 - Scrollback viewport: wheel and cmd+PageUp / Home / End, pinned to content while a program prints, snapping back the moment you type
@@ -425,10 +437,16 @@ Three rules, enforced by crate boundaries rather than by convention.
 
 ## Status
 
-Working, and in daily use on macOS, Apple Silicon. Pre-1.0, no stability promises. The workbench
-host is still being ported to parity against the Swift reference host in `swift/`, which is where
-some of the features above currently live. Other platforms are not built or tested; the core,
-frame, render and difftest crates are portable and that work is welcome.
+Working as a terminal, and in daily use on macOS, Apple Silicon. Pre-1.0, no stability promises.
+
+**What it is not: a workbench.** There is no session map, no canvas, no way to see what several
+agents are doing at once. The Tauri host is a window with panes and an agent launcher; the Swift
+host is a wrapper with tabs, a palette, blocks and worktrees. Both sit on one engine, and the
+engine is the part that is finished. The surface that would earn the word "workbench" is planned
+in `docs/plans/` and not started.
+
+Other platforms are not built or tested; the core, frame, render and difftest crates are portable
+and that work is welcome.
 
 ## Building
 

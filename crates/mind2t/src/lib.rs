@@ -1,5 +1,5 @@
 //! Purpose: the pieces both Mind2t binaries share.
-//! Public surface: `canvas`, `clipboard`, `keys`, `layout`, `wheel`.
+//! Public surface: `canvas`, `clipboard`, `keys`, `layout`, `scrollback`, `wheel`.
 //! Why this file: there are two hosts - the Tauri app (`main.rs`) and the tao + wry oracle
 //!   (`bin/probe.rs`) - and Cargo gives binaries no way to share a module without a library
 //!   target. Everything here is host-agnostic by construction; anything that knows which
@@ -13,4 +13,5 @@ pub mod clipboard;
 pub mod keys;
 pub mod launch;
 pub mod layout;
+pub mod scrollback;
 pub mod wheel;

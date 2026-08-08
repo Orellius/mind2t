@@ -1734,7 +1734,7 @@ mod gtk_input {
     use gtk::prelude::*;
 
     use mind2t::canvas::Canvas;
-    use mind2t::{clipboard, keys};
+    use mind2t::{clipboard, keys, scrollback};
     use mind2t_vt_pty::key::{KEY_MODS_CTRL, KEY_MODS_SHIFT, Key, KeyMods};
     use mind2t_vt_pty::keycode::key_from_linux_keycode;
 
@@ -1831,6 +1831,15 @@ mod gtk_input {
         let Some(pane) = canvas.panes().get(index) else {
             return Propagation::Proceed;
         };
+
+        // The scrollback chords, before the encoder gets a look. `scrollback::action` answers
+        // `None` for everything the child owns, which is nearly everything.
+        if let Some(scroll) = scrollback::action(key, mods) {
+            pane.session
+                .scroll(scrollback::rows(scroll, pane.session.geometry().rows));
+            return Propagation::Stop;
+        }
+
         let bytes = keys::encode_key(key, &text, mods, &pane.session.key_options());
         if bytes.is_empty() {
             // Nothing to send is not the same as nothing to do: passing the event on keeps
@@ -2495,6 +2504,17 @@ mod input {
                     let Some(pane) = canvas.panes().get(index) else {
                         return pass;
                     };
+                    // The scrollback chords, before the encoder gets a look. Same two lines as
+                    // the GTK path, and the same `scrollback::action` deciding - which is the
+                    // point of that module existing rather than a match arm in each host.
+                    if let Some(scroll) = mind2t::scrollback::action(key, mods) {
+                        pane.session.scroll(mind2t::scrollback::rows(
+                            scroll,
+                            pane.session.geometry().rows,
+                        ));
+                        return std::ptr::null_mut();
+                    }
+
                     // The consumed-shift rule lives in `keys::encode_key`, once. It used to be
                     // written out here as well, comment for comment, and the Linux path was
                     // about to make a third copy - which is how a subtle shared rule drifts by

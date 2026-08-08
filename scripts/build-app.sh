@@ -19,6 +19,13 @@ cd "$(dirname "$0")/.."
 ./scripts/build-swift.sh
 
 APP_NAME="Mind2t VT"
+# The bundle's version comes from the TAG, never from a literal. It was hardcoded at 0.8.0 and
+# stayed there through thirteen releases, so every installed app since has claimed a version it
+# was not - and nothing errors, because a plist string is only ever read by a human or an updater.
+# Tag BEFORE building: `git describe` on an untagged tree yields the PREVIOUS version and bakes it
+# in, which is the same trap the sibling project paid for once already.
+VERSION="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')"
+VERSION="${VERSION:-0.0.0}"
 BUILD="swift/.build/$APP_NAME.app"
 # Mind2t's own mark, in this repo (2026-08-06). It used to be Ghostty's icon out of the oracle
 # checkout, which was borrowed goods AND a build that broke the moment that checkout moved - it
@@ -40,13 +47,17 @@ cat > "$BUILD/Contents/Info.plist" <<'PLIST'
   <key>CFBundleIdentifier</key>      <string>com.orellius.mind2t-vt</string>
   <key>CFBundleExecutable</key>      <string>mind2t-host</string>
   <key>CFBundlePackageType</key>     <string>APPL</string>
-  <key>CFBundleShortVersionString</key> <string>0.8.0</string>
+  <key>CFBundleShortVersionString</key> <string>__VERSION__</string>
   <key>CFBundleIconFile</key>        <string>Mind2tVT</string>
   <key>NSHighResolutionCapable</key> <true/>
   <key>LSMinimumSystemVersion</key>  <string>14.0</string>
 </dict>
 </plist>
 PLIST
+
+# Quoted heredoc above, deliberately - the plist is full of characters a shell would eat. The one
+# value that must vary is substituted here instead.
+sed -i '' "s/__VERSION__/$VERSION/" "$BUILD/Contents/Info.plist"
 
 cp swift/.build/release/mind2t-host "$BUILD/Contents/MacOS/mind2t-host"
 cp swift/Resources/banner.sh "$BUILD/Contents/Resources/banner.sh"

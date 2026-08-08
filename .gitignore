@@ -40,3 +40,8 @@ crates/mind2t/icons/ios/
 crates/mind2t/icons/Square*.png
 crates/mind2t/icons/StoreLogo.png
 crates/mind2t/icons/icon.ico
+
+# Plans of record. Untracked on purpose: working strategy documents that quote
+# the operator directly and name product direction. They are not documentation of
+# the product, and they stay on disk.
+docs/plans/

@@ -137,6 +137,42 @@ Start by telling me what you verified about the macOS coupling in crates/mind2t,
 not what you plan to build.
 ```
 
+## TWO PRODUCTS, NOT ONE STRIPPED ONE (Orel, 2026-08-08 ~18:0x, mid-slice)
+
+His words: *"I want the terminal to be a separate application and the 'workbench/canvas' we do
+later, which is app by itself as terminal to use outside of any other 'wrappers around it', also
+being a distinct product from the terminal itself, both being Separated Productions, but with the
+terminal eventually embedded within the so called 'canvas' app so I can read Hebrew if you
+accidentally write in Hebrew."*
+
+This is a stronger statement than "strip the workbench out". Stripping produces one product with
+less in it; this produces **two**, and the second one CONSUMES the first.
+
+- **Product 1, the terminal.** Its own app, its own bundle, usable with no wrapper around it.
+  Ghostty's job, on macOS and Linux.
+- **Product 2, the canvas/workbench.** A separate app, later, whose panes are **real terminals** -
+  the same engine, embedded, not re-implemented and not an xterm.js rented from somebody else.
+- **Embedding is already the mechanism and needs nothing new.** `crates/host` publishes the
+  pipeline behind one handle in two forms: a Rust `Session` and the 56-export C surface. That IS
+  how product 2 will hold product 1. It is why the engine/product split has been enforced since
+  slice 8.
+- **The Hebrew line is a requirement, not an aside.** He must be able to read Hebrew wherever a
+  terminal appears, so the embedded pane has to be the real engine (bidi, shaping, Arabic
+  joining) rather than a text box. A canvas whose panes are not the real terminal fails his own
+  stated reason for wanting one.
+
+**What this changes in the work below, decided and stated rather than asked:**
+
+- **One repository, two product crates.** `crates/mind2t` stays the terminal; the canvas becomes
+  its own crate and its own bundle when it starts. Two repos would mean publishing the engine to
+  depend on it, and nothing in this workspace is published (crates are publishable-SHAPED, on
+  purpose). Reversible in an afternoon if he wants two repos later; the reverse is not.
+- **`agent.rs` (607 lines) and `launch.rs` (392) leave the terminal.** They are the agent registry
+  and the CLI launcher - workbench organs, in the terminal's crate for historical reasons only.
+  They are parked with the workbench, not deleted.
+- **`canvas.rs` and `layout.rs` STAY.** Splits are a terminal feature (T4 asks for them); the
+  canvas app's pane graph is a different thing that happens to share a word.
+
 ## Order of danger, so it is not discovered at 80%
 
 1. **T2 is the whole slice.** If keys cannot be read portably outside the webview, the Tauri

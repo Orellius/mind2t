@@ -111,6 +111,18 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # `chrome/dist` is gitignored, and the host embeds it at COMPILE time - so without this
+      # step `tauri::generate_context!` panics with "frontendDist is set to ../../chrome/dist but
+      # this path doesn't exist" and the job fails for a reason that has nothing to do with
+      # portability. Found by the job's second run, which is the job earning its keep twice:
+      # first on a real cfg defect, then on its own missing prerequisite.
+      #
+      # `bun run build` is `tsc --noEmit && vite build`, so this also typechecks the chrome. That
+      # is a free gain, not the reason it is here.
+      - uses: oven-sh/setup-bun@v2
+      - name: Build the chrome bundle the host embeds
+        run: bun install --cwd chrome --frozen-lockfile && bun run --cwd chrome build
+
       # THIS JOB IS THE DEFINITION OF DONE FOR T1, and it is the only thing that can be.
       # `block2` and `objc2` sat in the portable `[dependencies]` table until 2026-08-08, so the
       # product crate could not compile off macOS at all - and nothing on a Mac can notice that,

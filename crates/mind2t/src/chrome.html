@@ -2,6 +2,16 @@
 <!--
   B2.2 chrome probe. Not a design - a fixture.
 
+  STRIPPED 2026-08-08 on Orel's word: the "tap me" button, the text input and its echo span are
+  gone, with their click, input and IME-composition handlers. They were B2.2's measurement of
+  WHERE INPUT LANDS when a transparent webview sits over a GPU surface, and that question is
+  answered - the terminal's keys come from AppKit and GTK, never from a webview, which is
+  project law 2. A fixture that keeps measuring a settled question is just something on screen.
+
+  What survives is what is still being measured: the bar (does the webview draw at all), the
+  marker and its caption (does it composite OVER the surface), and the mousedown/keydown taps
+  (does input reach the page at all). Only `probe.rs` includes this file.
+
   Three things on this page are load-bearing and none of them are decoration:
 
   - `background: transparent` on html and body. A webview that composites correctly but paints
@@ -72,9 +82,6 @@
 
 <div id="bar">
   <strong>MIND2T</strong>
-  <button id="tap">tap me</button>
-  <input id="probe" placeholder="type here - then switch to Hebrew" />
-  <span id="echo"></span>
 </div>
 
 <div id="marker"></div>
@@ -93,23 +100,6 @@
   // transparent region, which is the interesting half of the measurement.
   addEventListener('mousedown', (e) => send({ ch: 'webview', kind: 'mousedown', ...where(e) }), true);
   addEventListener('keydown', (e) => send({ ch: 'webview', kind: 'keydown', key: e.key, code: e.code }), true);
-
-  const probe = document.getElementById('probe');
-  const echo = document.getElementById('echo');
-
-  // IME is its own channel. A Hebrew layout produces plain keydowns, but a real composition
-  // (and anything CJK) produces none, so a probe that watched only keys would report silence
-  // and call it a failure.
-  for (const kind of ['compositionstart', 'compositionupdate', 'compositionend']) {
-    probe.addEventListener(kind, (e) => send({ ch: 'webview', kind, data: e.data ?? '' }));
-  }
-
-  probe.addEventListener('input', (e) => {
-    echo.textContent = e.target.value;
-    send({ ch: 'webview', kind: 'input', value: e.target.value });
-  });
-
-  document.getElementById('tap').addEventListener('click', () => send({ ch: 'webview', kind: 'button' }));
 
   send({ ch: 'webview', kind: 'ready' });
 </script>

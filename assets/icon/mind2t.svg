@@ -46,10 +46,22 @@
       rsvg-convert -w 32 assets/icon/mind2t.svg | magick - -filter point -resize 900% out.png
   -->
   <defs>
-    <!-- userSpaceOnUse, spanning the plate exactly, so the fence below can share it. -->
+    <!--
+      userSpaceOnUse, spanning the plate exactly, so the fence below can share it.
+
+      FULL BLACK on Orel's word, 2026-08-08. It was #1e1e1e to #0b0b0b; it now bottoms out at
+      pure #000000 with only enough lift at the top to keep it a gradient rather than a flat
+      fill. Two consequences, stated rather than discovered:
+      - the plate no longer separates itself from a dark page. On GitHub's dark theme (#0d1117)
+        the silhouette is now carried entirely by the rim highlight below, which is why that rim
+        is not optional any more.
+      - the fence around the 2 follows automatically, because it strokes THIS gradient object in
+        user space. That is the whole reason it was built that way: a flat fence colour would
+        have had to be changed here too, and would have been forgotten.
+    -->
     <linearGradient id="ground" gradientUnits="userSpaceOnUse" x1="0" y1="64" x2="0" y2="960">
-      <stop offset="0" stop-color="#1e1e1e"/>
-      <stop offset="1" stop-color="#0b0b0b"/>
+      <stop offset="0" stop-color="#121212"/>
+      <stop offset="1" stop-color="#000000"/>
     </linearGradient>
     <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#ffffff" stop-opacity="0.20"/>

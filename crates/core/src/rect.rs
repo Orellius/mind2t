@@ -226,7 +226,7 @@ mod tests {
         assert_eq!(rows(&terminal), ["abcdefgh", "i%%lmnop", "q%%tuvwx", "yz012345"]);
         let snapshot = terminal.snapshot();
         let cell = &snapshot.grid[1].cells[1];
-        assert_eq!(cell.style.fg, ruuah_vt_snapshot::Color::Palette(1), "pen rides the fill");
+        assert_eq!(cell.style.fg, mind2t_vt_snapshot::Color::Palette(1), "pen rides the fill");
     }
 
     #[test]

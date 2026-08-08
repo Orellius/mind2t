@@ -1,7 +1,7 @@
 //! The bridge D2b's gesture stands on: a FRAME can answer the selection rules.
 //!
-//! `ruuah_vt_core::selection` is gated differentially against libghostty-vt, but it reads
-//! `ruuah_vt_snapshot::Row` and a host holds a `Frame` of packed cells. Without this bridge the
+//! `mind2t_vt_core::selection` is gated differentially against libghostty-vt, but it reads
+//! `mind2t_vt_snapshot::Row` and a host holds a `Frame` of packed cells. Without this bridge the
 //! host's only options were to reach the core's scrollback across a thread it does not own, or
 //! to re-derive the word rules from packed cells - a second copy of a set of boundary
 //! codepoints with no oracle behind it.
@@ -13,10 +13,10 @@
 //! A `viewport_rows` that returned blanks, transposed x and y, or dropped the wrap flags would
 //! be caught by the disagreement rather than by an assertion someone had to predict.
 
-use ruuah_vt_core::Terminal;
-use ruuah_vt_core::selection::{format, select_line, select_word};
-use ruuah_vt_frame::{Frame, Publisher, ReadOutcome, channel};
-use ruuah_vt_snapshot::{Point, Row};
+use mind2t_vt_core::Terminal;
+use mind2t_vt_core::selection::{format, select_line, select_word};
+use mind2t_vt_frame::{Frame, Publisher, ReadOutcome, channel};
+use mind2t_vt_snapshot::{Point, Row};
 
 const COLS: u16 = 20;
 const ROWS: u16 = 4;

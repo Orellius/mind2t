@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use mind2t::canvas::{Canvas, PaneSpec};
 use mind2t::layout::{Canvas as Grid, Rect};
-use ruuah_vt_render::{GpuContext, Surface, wgpu};
+use mind2t_vt_render::{GpuContext, Surface, wgpu};
 
 const FONT: f32 = 16.0;
 
@@ -188,7 +188,7 @@ fn every_pane_reaches_one_frame_at_its_own_rect() {
     }
 
     let format = wgpu::TextureFormat::Rgba8Unorm;
-    let blitter = ruuah_vt_render::Blitter::new(&context, format).expect("a non-sRGB target");
+    let blitter = mind2t_vt_render::Blitter::new(&context, format).expect("a non-sRGB target");
     let device = context.device();
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("canvas target"),
@@ -205,9 +205,9 @@ fn every_pane_reaches_one_frame_at_its_own_rect() {
     // The rules, in the same shape the host builds them - from the canvas, before the panes are
     // borrowed mutably.
     let dividers = canvas.dividers();
-    let fills: Vec<ruuah_vt_render::Fill> = dividers
+    let fills: Vec<mind2t_vt_render::Fill> = dividers
         .iter()
-        .map(|rect| ruuah_vt_render::Fill {
+        .map(|rect| mind2t_vt_render::Fill {
             x: rect.x,
             y: rect.y,
             width: rect.width,

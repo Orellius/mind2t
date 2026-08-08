@@ -11,7 +11,7 @@
 //!   arithmetic that is cheapest to read in isolation (the cursor landing past the end of
 //!   its line, wide cells at the new edge, blank-row deferral).
 
-use ruuah_vt_snapshot::{RowSemantic, Semantic, Style};
+use mind2t_vt_snapshot::{RowSemantic, Semantic, Style};
 
 use crate::cell::Wide;
 use crate::grid::RowMeta;

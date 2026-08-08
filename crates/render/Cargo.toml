@@ -1,5 +1,5 @@
 [package]
-name = "ruuah-vt-render"
+name = "mind2t-vt-render"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -8,12 +8,12 @@ publish.workspace = true
 [dependencies]
 bytemuck = "1.25.2"
 pollster = "1.0.1"
-ruuah-vt-frame.workspace = true
-ruuah-vt-snapshot.workspace = true
+mind2t-vt-frame.workspace = true
+mind2t-vt-snapshot.workspace = true
 swash = "0.2"
 thiserror.workspace = true
 wgpu = "26.0.1"
 
 [dev-dependencies]
-ruuah-vt-core.workspace = true
-ruuah-vt-pty.workspace = true
+mind2t-vt-core.workspace = true
+mind2t-vt-pty.workspace = true

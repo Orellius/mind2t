@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 
-use ruuah_vt_snapshot::{Row, Semantic, Style};
+use mind2t_vt_snapshot::{Row, Semantic, Style};
 
 use crate::cell::{Cell, Wide};
 use crate::grid::RowMeta;
@@ -182,7 +182,7 @@ impl Page {
                     text.extend(rest.iter());
                 }
             }
-            cells.push(ruuah_vt_snapshot::Cell {
+            cells.push(mind2t_vt_snapshot::Cell {
                 text,
                 wide: cell.wide.into(),
                 style: self.styles.get(cell.style_id),
@@ -201,7 +201,7 @@ impl Page {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ruuah_vt_snapshot::Color;
+    use mind2t_vt_snapshot::Color;
 
     fn plain(text: &str, cols: usize) -> HistoryRow {
         let mut cells: Vec<HistoryCell> = text

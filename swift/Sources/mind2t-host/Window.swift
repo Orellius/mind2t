@@ -1,6 +1,6 @@
 // The terminal surface: blit target, key forwarding, and the app's keyboard chords.
 //
-// The view draws exactly what ruuah_host_poll hands over -- an RGBA8 buffer at native
+// The view draws exactly what mind2t_host_poll hands over -- an RGBA8 buffer at native
 // (backing) resolution, because the host is spawned with font_size scaled by the window's
 // backingScaleFactor and the layer's contentsScale set to match. Pixels map 1:1 to device
 // pixels; nothing is stretched. Session plumbing lives in AppDelegate.swift.
@@ -72,7 +72,7 @@ final class TerminalView: NSView {
     let presentLayer = CAMetalLayer()
 
     /// One keyboard event for the host's key encoder: (action, key, mods,
-    /// consumedMods, utf8, unshiftedCodepoint) in the ruuah_host_key vocabulary.
+    /// consumedMods, utf8, unshiftedCodepoint) in the mind2t_host_key vocabulary.
     /// Returns whether the terminal produced bytes.
     var onKey: ((UInt32, UInt32, UInt32, UInt32, [UInt8], UInt32) -> Bool)?
     var onPaste: (([UInt8]) -> Void)?
@@ -98,7 +98,7 @@ final class TerminalView: NSView {
     /// The receiver forwards to the active session's host, which owns the clamping.
     var onScroll: ((Int32) -> Void)?
     /// One pointer event for mouse reporting: (action, button, mods, x, y) in the
-    /// RUUAH_MOUSE_* vocabulary and surface pixels. Returns whether the terminal
+    /// MIND2T_MOUSE_* vocabulary and surface pixels. Returns whether the terminal
     /// consumed it; false hands the event back to AppKit's default handling.
     var onMouse: ((UInt32, UInt32, UInt32, Float, Float) -> Bool)?
     /// One wheel gesture: (x, y, whole ticks positive-up, mods). Returns whether the

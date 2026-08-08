@@ -59,9 +59,9 @@
 //!   on this machine to mix into a run. The boundaries are correct and unproven, and they are
 //!   kept because a glyph id means nothing outside the font it came from.
 
-use ruuah_vt_core::Terminal;
-use ruuah_vt_frame::{Frame, Publisher, channel};
-use ruuah_vt_render::{FontStack, Renderer, Shaper};
+use mind2t_vt_core::Terminal;
+use mind2t_vt_frame::{Frame, Publisher, channel};
+use mind2t_vt_render::{FontStack, Renderer, Shaper};
 
 /// Large enough that a form difference is many pixels rather than a rounding artefact.
 const SIZE: f32 = 32.0;

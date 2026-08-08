@@ -1,12 +1,12 @@
 // The app: a top tab strip over one terminal surface.
 //
-// Each session is its own RuuahHost -- pty, pump thread, renderer -- and the app blits
+// Each session is its own Mind2tHost -- pty, pump thread, renderer -- and the app blits
 // whichever is active. Background sessions keep running and are polled at a low rate
 // only to notice exits; their frames queue in the seqlock (the writer never blocks), so
 // a switch shows the newest state immediately.
 
 import AppKit
-import CRuuahHost
+import CMind2tHost
 import UserNotifications
 
 final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
@@ -39,8 +39,8 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// An environment switch rather than a config key, on purpose. This is a temporary A/B
     /// against the path it replaces, not a preference anyone should carry: once presenting is
     /// proven it becomes the only path and this disappears, whereas a config key would have to
-    /// be parsed, defaulted, documented and then deprecated. `RUUAH_GPU_PRESENT=1`.
-    private let gpuPresent = ProcessInfo.processInfo.environment["RUUAH_GPU_PRESENT"] == "1"
+    /// be parsed, defaulted, documented and then deprecated. `MIND2T_GPU_PRESENT=1`.
+    private let gpuPresent = ProcessInfo.processInfo.environment["MIND2T_GPU_PRESENT"] == "1"
     /// The session whose host currently owns the metal layer. Only one can: the layer is a
     /// single swapchain, and attaching a second host to it would have two renderers presenting
     /// into the same drawable.
@@ -74,7 +74,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     private static let sidebarWidth: CGFloat = 300
     /// git runs here, never on the main thread -- `status` on a large tree is tens of
     /// milliseconds and the terminal is blitting at 60 Hz on the other side of it.
-    private let gitQueue = DispatchQueue(label: "ruuah.git", qos: .userInitiated)
+    private let gitQueue = DispatchQueue(label: "mind2t.git", qos: .userInitiated)
 
     init(
         command: String?, autoDirection: Bool, config: OpaquePointer?,
@@ -88,7 +88,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         self.configError = configError
         self.configDir = configDir
         self.webDir = webDir
-        if let config, let family = ruuah_config_font_family(config) {
+        if let config, let family = mind2t_config_font_family(config) {
             self.fontFamily = String(cString: family)
         } else {
             self.fontFamily = nil
@@ -104,7 +104,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             let ok = session.present()
             if !ok, !presentReported {
                 presentReported = true
-                FileHandle.standardError.write(Data("RUUAH_PRESENT=failed\n".utf8))
+                FileHandle.standardError.write(Data("MIND2T_PRESENT=failed\n".utf8))
             }
             // The CGImage path is NOT run as a fallback here on purpose. Drawing the old way
             // when a present fails would hide the failure behind a working-looking window,
@@ -148,7 +148,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         // as proof the GPU path ran. Success needs no announcement; the zero-readback test
         // covers that side.
         if !ok {
-            let report = "RUUAH_PRESENT_ATTACH=failed "
+            let report = "MIND2T_PRESENT_ATTACH=failed "
                 + "drawable=\(Int(size.width))x\(Int(size.height))\n"
             FileHandle.standardError.write(Data(report.utf8))
         }
@@ -181,7 +181,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         )
         window.title =
             (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String)
-            ?? "ruuah-vt host"
+            ?? "mind2t-vt host"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
 
@@ -275,14 +275,14 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         view.onPalette = { [weak self] in self?.togglePalette() }
         // Left nil when panels are off, so the chord falls through to the child rather
         // than being swallowed by a feature that is not there.
-        if ruuah_config_panels(config) {
+        if mind2t_config_panels(config) {
             view.onDiffPanel = { [weak self] in self?.toggleDiffPanel() }
             // The live-tap hook (SCAR-014): a panel is a GUI seam, and proving it means
             // seeing it in a real window. Opening it from the environment is what lets
             // that be a scripted capture instead of synthesized keystrokes into
             // whatever the operator happens to be doing.
             // "1"/"diff" opens the review card, "sidebar" docks the workspace sidebar.
-            let open = ProcessInfo.processInfo.environment["RUUAH_PANEL_OPEN"]
+            let open = ProcessInfo.processInfo.environment["MIND2T_PANEL_OPEN"]
             if open == "1" || open == "diff" || open == "sidebar" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                     if open == "sidebar" {
@@ -295,7 +295,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         }
         // The S5 live tap, same reasoning: drives createWorkspace directly so a capture
         // exercises the real worktree + cwd + pill path without synthesizing a modal.
-        if let branch = ProcessInfo.processInfo.environment["RUUAH_WORKSPACE_TAP"],
+        if let branch = ProcessInfo.processInfo.environment["MIND2T_WORKSPACE_TAP"],
             !branch.isEmpty
         {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
@@ -327,14 +327,14 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         // For screenshots: `screencapture -l` takes this id. Written unbuffered, because a
         // scripted capture reads it while the app is still running.
         FileHandle.standardOutput.write(
-            Data("RUUAH_HOST_WINDOW=\(window.windowNumber)\n".utf8))
+            Data("MIND2T_HOST_WINDOW=\(window.windowNumber)\n".utf8))
         // The frame too, top-left origin, so scripted captures and synthetic-input
         // tests (SCAR-014 live taps) can aim without a window-server query.
         let screenHeight = window.screen?.frame.height ?? 0
         let frame = window.frame
         FileHandle.standardOutput.write(
             Data(
-                "RUUAH_HOST_FRAME=\(Int(frame.origin.x)),\(Int(screenHeight - frame.origin.y - frame.height)),\(Int(frame.width)),\(Int(frame.height))\n"
+                "MIND2T_HOST_FRAME=\(Int(frame.origin.x)),\(Int(screenHeight - frame.origin.y - frame.height)),\(Int(frame.width)),\(Int(frame.height))\n"
                     .utf8))
 
         if let configError {
@@ -648,7 +648,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(text, forType: .string)
             case .notify(let title, let body):
-                postNotification(title: title.isEmpty ? "RUUAH VT" : title, body: body)
+                postNotification(title: title.isEmpty ? "Mind2t" : title, body: body)
             case .bell:
                 NSSound.beep()
             case .commandStart:
@@ -778,9 +778,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         var cellW: UInt32 = 0
         var cellH: UInt32 = 0
         let metricsResult = fontFamily.withCStringOrNil { familyPointer in
-            ruuah_host_cell_metrics(size, familyPointer, &cellW, &cellH)
+            mind2t_host_cell_metrics(size, familyPointer, &cellW, &cellH)
         }
-        guard metricsResult == RUUAH_HOST_SUCCESS,
+        guard metricsResult == MIND2T_HOST_SUCCESS,
             cellW > 0, cellH > 0
         else { return }
         fontScale = clamped
@@ -857,9 +857,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     private func setupSuggestions() {
         if let configDir {
             let path = (configDir as NSString).appendingPathComponent("history")
-            _ = path.withCString { pointer in ruuah_history_load(pointer, &historyStore) }
+            _ = path.withCString { pointer in mind2t_history_load(pointer, &historyStore) }
         } else {
-            _ = ruuah_history_load(nil, &historyStore)
+            _ = mind2t_history_load(nil, &historyStore)
         }
         ghost.actions = [
             "contents": NSNull(), "position": NSNull(), "bounds": NSNull(),
@@ -875,7 +875,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// v1 boundary, and joining a whole prompt RUN would merge adjacent commands
     /// (the cd-then-cd case measured in the tap).
     private func currentInputLine(_ session: Session) -> String {
-        session.rowText(UInt16(session.cursorRow), semantic: UInt8(RUUAH_ROW_INPUT))
+        session.rowText(UInt16(session.cursorRow), semantic: UInt8(MIND2T_ROW_INPUT))
             .trimmingCharacters(in: .whitespaces)
     }
 
@@ -899,7 +899,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         // Only at the live bottom, with a visible caret parked at the END of the
         // typed line -- a ghost mid-line would suggest an edit we cannot make.
         //
-        // AT OR PAST the end, not exactly at it. `ruuah_host_row_text` ends with
+        // AT OR PAST the end, not exactly at it. `mind2t_host_row_text` ends with
         // `trim_end_matches(' ')`, so spaces the operator actually typed are
         // invisible here: typing `echo ` puts the caret at column 7 against a
         // reported length of 6 and the old equality hid the ghost. Measured by
@@ -907,7 +907,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         // the trailing space the single most common way to see nothing, since a
         // space is what you type before an argument.
         let rowText = session.rowText(
-            UInt16(session.cursorRow), semantic: UInt8(RUUAH_TEXT_ALL))
+            UInt16(session.cursorRow), semantic: UInt8(MIND2T_TEXT_ALL))
         guard session.viewportOffset == 0, session.cursorVisible,
             session.cellWidth > 0, !input.isEmpty,
             session.cursorCol >= rowText.count
@@ -1044,11 +1044,11 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
                 title: "Scroll to Bottom", subtitle: "cmd+End", workflowIndex: nil,
                 action: { [weak self] in self?.activeSession?.scroll(Int32.min) }))
         for index in 0..<workflows.count {
-            let description = workflows.field(index, RUUAH_WORKFLOW_DESCRIPTION)
-            let command = workflows.field(index, RUUAH_WORKFLOW_COMMAND)
+            let description = workflows.field(index, MIND2T_WORKFLOW_DESCRIPTION)
+            let command = workflows.field(index, MIND2T_WORKFLOW_COMMAND)
             items.append(
                 PaletteItem(
-                    title: workflows.field(index, RUUAH_WORKFLOW_NAME),
+                    title: workflows.field(index, MIND2T_WORKFLOW_NAME),
                     subtitle: description.isEmpty ? command : description,
                     workflowIndex: index, action: nil))
         }
@@ -1095,7 +1095,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     /// The active session's working directory, decoded.
     ///
-    /// Decoded by the RUST side (`ruuah_cwd_path`), never here: the percent-decode and
+    /// Decoded by the RUST side (`mind2t_cwd_path`), never here: the percent-decode and
     /// the `file://host` strip already exist in one place, and a second copy in Swift
     /// is exactly the drift the OSC 7 slice was written to avoid.
     private func activeDirectory() -> String? {
@@ -1103,16 +1103,16 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         var length = 0
         let raw = session.pwdRaw
         let sized = raw.withUnsafeBufferPointer { pointer in
-            ruuah_cwd_path(pointer.baseAddress, raw.count, nil, 0, &length)
+            mind2t_cwd_path(pointer.baseAddress, raw.count, nil, 0, &length)
         }
-        guard sized == RUUAH_HOST_SUCCESS, length > 0 else { return nil }
+        guard sized == MIND2T_HOST_SUCCESS, length > 0 else { return nil }
         var buffer = [UInt8](repeating: 0, count: length)
         let copied = raw.withUnsafeBufferPointer { pointer in
             buffer.withUnsafeMutableBufferPointer { out in
-                ruuah_cwd_path(pointer.baseAddress, raw.count, out.baseAddress, length, &length)
+                mind2t_cwd_path(pointer.baseAddress, raw.count, out.baseAddress, length, &length)
             }
         }
-        guard copied == RUUAH_HOST_SUCCESS else { return nil }
+        guard copied == MIND2T_HOST_SUCCESS else { return nil }
         return String(decoding: buffer, as: UTF8.self)
     }
 
@@ -1529,7 +1529,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     }
 
     func tabBarCanToggleSidebar() -> Bool {
-        ruuah_config_panels(config)
+        mind2t_config_panels(config)
     }
 
     func tabBarDidToggleSidebar() {

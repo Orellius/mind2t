@@ -5,8 +5,8 @@
 //! measured against libghostty-vt -- so agreeing with it here inherits that evidence rather
 //! than restating expected cell contents by hand.
 
-use ruuah_vt_core::Terminal;
-use ruuah_vt_frame::{CLUSTER_BYTES, Frame, FrameReader, Publisher, ReadOutcome, channel};
+use mind2t_vt_core::Terminal;
+use mind2t_vt_frame::{CLUSTER_BYTES, Frame, FrameReader, Publisher, ReadOutcome, channel};
 
 fn published(terminal: &mut Terminal, cols: u16, rows: u16) -> (Frame, FrameReader) {
     let (writer, reader) = channel(cols, rows);
@@ -31,7 +31,7 @@ fn frame_text(frame: &Frame) -> Vec<String> {
                 let cell = frame.cell(x, y);
                 if cell.has_text() {
                     line.push_str(cell.cluster(&mut scratch));
-                } else if cell.wide() != ruuah_vt_snapshot::Wide::SpacerTail {
+                } else if cell.wide() != mind2t_vt_snapshot::Wide::SpacerTail {
                     line.push(' ');
                 }
             }
@@ -99,8 +99,8 @@ fn a_wide_cell_keeps_its_spacer_and_its_columns() {
     let (frame, _reader) = published(&mut terminal, 6, 1);
     let runs = frame.runs(0);
 
-    assert_eq!(frame.cell(0, 0).wide(), ruuah_vt_snapshot::Wide::Wide);
-    assert_eq!(frame.cell(1, 0).wide(), ruuah_vt_snapshot::Wide::SpacerTail);
+    assert_eq!(frame.cell(0, 0).wide(), mind2t_vt_snapshot::Wide::Wide);
+    assert_eq!(frame.cell(1, 0).wide(), mind2t_vt_snapshot::Wide::SpacerTail);
     assert_eq!(runs.iter().map(|r| r.width()).sum::<u16>(), 6);
 }
 

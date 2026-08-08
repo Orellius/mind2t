@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Builds the shipped artifact: libruuah-vt.a, with the hyphen.
+# Builds the shipped artifact: libmind2t-vt.a, with the hyphen.
 #
-# Cargo cannot emit that name. A package called `libruuah-vt` produces liblibruuah_vt.a, and
-# `[lib] name = "ruuah-vt"` is a hard cargo error -- "library target names cannot contain
-# hyphens". So the crate is named ruuah_vt, cargo emits libruuah_vt.a, and this renames it, so
-# a consumer's link flag reads `-lruuah-vt` and mirrors `-lghostty-vt` exactly.
+# Cargo cannot emit that name. A package called `libmind2t-vt` produces liblibmind2t_vt.a, and
+# `[lib] name = "mind2t-vt"` is a hard cargo error -- "library target names cannot contain
+# hyphens". So the crate is named mind2t_vt, cargo emits libmind2t_vt.a, and this renames it, so
+# a consumer's link flag reads `-lmind2t-vt` and mirrors `-lghostty-vt` exactly.
 #
 # Also verifies the archive actually exports the ABI. A drop-in that silently stopped
 # exporting a symbol would fail at the consumer's link step, which is the worst place to find
@@ -17,14 +17,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 case "$PROFILE" in
-  release) cargo build --release -p ruuah-vt-abi ;;
-  debug)   cargo build -p ruuah-vt-abi ;;
+  release) cargo build --release -p mind2t-vt-abi ;;
+  debug)   cargo build -p mind2t-vt-abi ;;
   *) echo "usage: $0 [release|debug]" >&2; exit 2 ;;
 esac
 
 OUT="target/$PROFILE"
-SRC="$OUT/libruuah_vt.a"
-DST="$OUT/libruuah-vt.a"
+SRC="$OUT/libmind2t_vt.a"
+DST="$OUT/libmind2t-vt.a"
 
 if [ ! -f "$SRC" ]; then
   echo "cargo did not produce $SRC" >&2
@@ -74,5 +74,5 @@ fi
 
 echo "built $DST"
 echo "  exports  ${#EXPECTED[@]}/${#EXPECTED[@]} verified"
-echo "  link as  -L$ROOT/$OUT -lruuah-vt"
+echo "  link as  -L$ROOT/$OUT -lmind2t-vt"
 echo "  headers  ghostty/vt/*.h from libghostty-vt, unchanged"

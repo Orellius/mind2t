@@ -9,7 +9,7 @@
 //!   last-writer-wins pair (`stream_terminal.zig` `setMode`: enabling any event mode
 //!   replaces the previous one, disabling ANY of them yields `.none`; formats
 //!   likewise fall back to x10). Dropping either half loses observable behavior.
-//! NOT responsible for: encoding reports (`ruuah-vt-pty`'s `mouse.rs`), deciding wheel
+//! NOT responsible for: encoding reports (`mind2t-vt-pty`'s `mouse.rs`), deciding wheel
 //!   routing (host policy), or answering DECRQM (`replies.rs` reads the raw bits).
 //! Test strategy: derived semantics unit-tested here against the measured rules;
 //!   raw bits corpus-pinned through `ghostty_terminal_mode_get` per case.

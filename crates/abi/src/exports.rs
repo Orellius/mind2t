@@ -1,4 +1,4 @@
-//! Purpose: the C entry points, implemented on `ruuah-vt-core`.
+//! Purpose: the C entry points, implemented on `mind2t-vt-core`.
 //! Public surface: the `ghostty_*` functions a consumer links against.
 //! Why this file: this is the drop-in claim made executable. Everything here is a thin
 //!   translation of a call the core already answers, and it is thin on purpose -- a fat ABI
@@ -14,9 +14,9 @@ use std::ffi::c_void;
 use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, MutexGuard};
 
-use ruuah_vt_snapshot::{Color, Row, Screen, Snapshot, Underline, Wide};
+use mind2t_vt_snapshot::{Color, Row, Screen, Snapshot, Underline, Wide};
 
-use ruuah_vt_abi_types::*;
+use mind2t_vt_abi_types::*;
 
 /// The boxed terminal a `GhosttyTerminal` handle points at.
 ///
@@ -30,7 +30,7 @@ use ruuah_vt_abi_types::*;
 /// (`vt_write`, `resize`) take the terminal exclusively. `tests/soundness.rs` holds both
 /// Miri controls, each seen to fail against the `&mut` version.
 pub struct Terminal {
-    core: ruuah_vt_core::Terminal,
+    core: mind2t_vt_core::Terminal,
     view: Mutex<Option<Snapshot>>,
 }
 
@@ -121,7 +121,7 @@ pub unsafe extern "C" fn ghostty_terminal_new(
         return GHOSTTY_INVALID_VALUE;
     }
     let terminal = Box::new(Terminal {
-        core: ruuah_vt_core::Terminal::with_scrollback(
+        core: mind2t_vt_core::Terminal::with_scrollback(
             options.cols,
             options.rows,
             options.max_scrollback,
@@ -285,7 +285,7 @@ pub unsafe extern "C" fn ghostty_terminal_get(
             GHOSTTY_TERMINAL_DATA_COLOR_PALETTE_DEFAULT => {
                 let table = out.cast::<[GhosttyColorRgb; 256]>();
                 for (slot, c) in
-                    (*table).iter_mut().zip(ruuah_vt_snapshot::default_palette().iter())
+                    (*table).iter_mut().zip(mind2t_vt_snapshot::default_palette().iter())
                 {
                     *slot = GhosttyColorRgb { r: c.r, g: c.g, b: c.b };
                 }
@@ -708,7 +708,7 @@ pub unsafe extern "C" fn ghostty_style_default(out: *mut GhosttyStyle) {
     if out.is_null() {
         return;
     }
-    unsafe { *out = pack_style(&ruuah_vt_snapshot::Style::DEFAULT) };
+    unsafe { *out = pack_style(&mind2t_vt_snapshot::Style::DEFAULT) };
 }
 
 /// # Safety
@@ -722,7 +722,7 @@ unsafe fn resolve<'a>(grid_ref: *const GhosttyGridRef) -> Option<(&'a Terminal, 
     Some((terminal, grid_ref))
 }
 
-fn pack_cell(cell: &ruuah_vt_snapshot::Cell) -> GhosttyCell {
+fn pack_cell(cell: &mind2t_vt_snapshot::Cell) -> GhosttyCell {
     let codepoint = u64::from(cell.text.chars().next().map(u32::from).unwrap_or(0)) & 0x1F_FFFF;
     let wide = match cell.wide {
         Wide::Narrow => 0u64,
@@ -731,9 +731,9 @@ fn pack_cell(cell: &ruuah_vt_snapshot::Cell) -> GhosttyCell {
         Wide::SpacerHead => 3,
     };
     let semantic = match cell.semantic {
-        ruuah_vt_snapshot::Semantic::Output => 0u64,
-        ruuah_vt_snapshot::Semantic::Input => 1,
-        ruuah_vt_snapshot::Semantic::Prompt => 2,
+        mind2t_vt_snapshot::Semantic::Output => 0u64,
+        mind2t_vt_snapshot::Semantic::Input => 1,
+        mind2t_vt_snapshot::Semantic::Prompt => 2,
     };
     let styled = u64::from(!cell.style.is_default());
     let style_id = u64::from(style_id(&cell.style));
@@ -753,7 +753,7 @@ fn pack_cell(cell: &ruuah_vt_snapshot::Cell) -> GhosttyCell {
 /// style itself. That keeps the two properties a consumer can actually rely on: the default style
 /// is 0, matching upstream, and equal styles get equal ids. It does NOT promise upstream's exact
 /// numbering, which is an allocation order no other implementation could reproduce anyway.
-fn style_id(style: &ruuah_vt_snapshot::Style) -> u16 {
+fn style_id(style: &mind2t_vt_snapshot::Style) -> u16 {
     if style.is_default() {
         return 0;
     }
@@ -766,9 +766,9 @@ fn style_id(style: &ruuah_vt_snapshot::Style) -> u16 {
 
 fn pack_row(row: &Row, dirty: bool) -> GhosttyRow {
     let semantic = match row.semantic_prompt {
-        ruuah_vt_snapshot::RowSemantic::None => 0u64,
-        ruuah_vt_snapshot::RowSemantic::Prompt => 1,
-        ruuah_vt_snapshot::RowSemantic::PromptContinuation => 2,
+        mind2t_vt_snapshot::RowSemantic::None => 0u64,
+        mind2t_vt_snapshot::RowSemantic::Prompt => 1,
+        mind2t_vt_snapshot::RowSemantic::PromptContinuation => 2,
     };
     let grapheme = row.cells.iter().any(|cell| cell.text.chars().count() > 1);
     let styled = row.cells.iter().any(|cell| !cell.style.is_default());
@@ -783,7 +783,7 @@ fn pack_row(row: &Row, dirty: bool) -> GhosttyRow {
 /// A pure out-param's `.size` is written from the type, never read from the caller -- the
 /// oracle whole-struct-assigns at every equivalent site and its own tests pass `undefined`
 /// out-params, so the incoming field may be uninitialised memory (finding 15).
-fn pack_style(style: &ruuah_vt_snapshot::Style) -> GhosttyStyle {
+fn pack_style(style: &mind2t_vt_snapshot::Style) -> GhosttyStyle {
     GhosttyStyle {
         size: size_of::<GhosttyStyle>(),
         fg_color: pack_color(style.fg),

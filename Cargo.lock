@@ -2101,20 +2101,123 @@ name = "mind2t"
 version = "0.1.0"
 dependencies = [
  "block2",
+ "mind2t-vt-frame",
+ "mind2t-vt-host",
+ "mind2t-vt-pty",
+ "mind2t-vt-render",
  "muda",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
- "ruuah-vt-frame",
- "ruuah-vt-host",
- "ruuah-vt-pty",
- "ruuah-vt-render",
  "serde",
  "tao",
  "tauri",
  "tauri-build",
  "wry 0.56.0",
 ]
+
+[[package]]
+name = "mind2t-vt-abi"
+version = "0.1.0"
+dependencies = [
+ "mind2t-vt-abi-types",
+ "mind2t-vt-core",
+ "mind2t-vt-snapshot",
+ "serde",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "mind2t-vt-abi-types"
+version = "0.1.0"
+
+[[package]]
+name = "mind2t-vt-core"
+version = "0.1.0"
+dependencies = [
+ "mind2t-vt-snapshot",
+ "png 0.17.16",
+ "unicode-width",
+ "vte",
+]
+
+[[package]]
+name = "mind2t-vt-difftest"
+version = "0.1.0"
+dependencies = [
+ "mind2t-vt-core",
+ "mind2t-vt-ghostty",
+ "mind2t-vt-snapshot",
+ "serde",
+ "thiserror 2.0.19",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "mind2t-vt-frame"
+version = "0.1.0"
+dependencies = [
+ "mind2t-vt-core",
+ "mind2t-vt-snapshot",
+ "wezterm-bidi",
+]
+
+[[package]]
+name = "mind2t-vt-ghostty"
+version = "0.1.0"
+dependencies = [
+ "bindgen",
+ "mind2t-vt-abi-types",
+ "mind2t-vt-core",
+ "mind2t-vt-pty",
+ "mind2t-vt-snapshot",
+ "serde_json",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "mind2t-vt-host"
+version = "0.1.0"
+dependencies = [
+ "mind2t-vt-abi",
+ "mind2t-vt-core",
+ "mind2t-vt-frame",
+ "mind2t-vt-pty",
+ "mind2t-vt-render",
+ "mind2t-vt-snapshot",
+ "serde",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "mind2t-vt-pty"
+version = "0.1.0"
+dependencies = [
+ "mind2t-vt-core",
+ "mind2t-vt-frame",
+ "mind2t-vt-snapshot",
+ "rustix",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "mind2t-vt-render"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "mind2t-vt-core",
+ "mind2t-vt-frame",
+ "mind2t-vt-pty",
+ "mind2t-vt-snapshot",
+ "pollster",
+ "swash",
+ "thiserror 2.0.19",
+ "wgpu",
+]
+
+[[package]]
+name = "mind2t-vt-snapshot"
+version = "0.1.0"
 
 [[package]]
 name = "minimal-lexical"
@@ -2985,109 +3088,6 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
-
-[[package]]
-name = "ruuah-vt-abi"
-version = "0.1.0"
-dependencies = [
- "ruuah-vt-abi-types",
- "ruuah-vt-core",
- "ruuah-vt-snapshot",
- "serde",
- "toml 0.9.12+spec-1.1.0",
-]
-
-[[package]]
-name = "ruuah-vt-abi-types"
-version = "0.1.0"
-
-[[package]]
-name = "ruuah-vt-core"
-version = "0.1.0"
-dependencies = [
- "png 0.17.16",
- "ruuah-vt-snapshot",
- "unicode-width",
- "vte",
-]
-
-[[package]]
-name = "ruuah-vt-difftest"
-version = "0.1.0"
-dependencies = [
- "ruuah-vt-core",
- "ruuah-vt-ghostty",
- "ruuah-vt-snapshot",
- "serde",
- "thiserror 2.0.19",
- "toml 0.9.12+spec-1.1.0",
-]
-
-[[package]]
-name = "ruuah-vt-frame"
-version = "0.1.0"
-dependencies = [
- "ruuah-vt-core",
- "ruuah-vt-snapshot",
- "wezterm-bidi",
-]
-
-[[package]]
-name = "ruuah-vt-ghostty"
-version = "0.1.0"
-dependencies = [
- "bindgen",
- "ruuah-vt-abi-types",
- "ruuah-vt-core",
- "ruuah-vt-pty",
- "ruuah-vt-snapshot",
- "serde_json",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "ruuah-vt-host"
-version = "0.1.0"
-dependencies = [
- "ruuah-vt-abi",
- "ruuah-vt-core",
- "ruuah-vt-frame",
- "ruuah-vt-pty",
- "ruuah-vt-render",
- "ruuah-vt-snapshot",
- "serde",
- "toml 0.9.12+spec-1.1.0",
-]
-
-[[package]]
-name = "ruuah-vt-pty"
-version = "0.1.0"
-dependencies = [
- "rustix",
- "ruuah-vt-core",
- "ruuah-vt-frame",
- "ruuah-vt-snapshot",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "ruuah-vt-render"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "pollster",
- "ruuah-vt-core",
- "ruuah-vt-frame",
- "ruuah-vt-pty",
- "ruuah-vt-snapshot",
- "swash",
- "thiserror 2.0.19",
- "wgpu",
-]
-
-[[package]]
-name = "ruuah-vt-snapshot"
-version = "0.1.0"
 
 [[package]]
 name = "same-file"

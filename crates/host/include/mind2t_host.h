@@ -1,16 +1,16 @@
-/* ruuah_host.h -- the embedder surface of libruuah-vt-host.a.
+/* mind2t_host.h -- the embedder surface of libmind2t-vt-host.a.
  *
  * This is NOT part of the ghostty ABI mirror. The 13 `ghostty_*` entry points ride in the
  * same archive unchanged; this header is the small surface a GUI host needs on top of them:
  * spawn a shell on a pty, poll rendered pixels, send input bytes, resize. One handle wraps
  * the whole Rust pipeline (pty host -> frame channel -> GPU renderer).
  *
- * Threading contract: a RuuahHost is NOT thread-safe. Every call on one handle must come
+ * Threading contract: a Mind2tHost is NOT thread-safe. Every call on one handle must come
  * from the same thread (in practice: the UI thread that polls and forwards key input).
  */
 
-#ifndef RUUAH_HOST_H
-#define RUUAH_HOST_H
+#ifndef MIND2T_HOST_H
+#define MIND2T_HOST_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -20,41 +20,41 @@
 extern "C" {
 #endif
 
-/* Opaque. Create with ruuah_host_spawn, destroy with ruuah_host_free. */
-typedef struct RuuahHost RuuahHost;
+/* Opaque. Create with mind2t_host_spawn, destroy with mind2t_host_free. */
+typedef struct Mind2tHost Mind2tHost;
 
-/* Opaque. Create with ruuah_config_load, destroy with ruuah_config_free. */
-typedef struct RuuahConfig RuuahConfig;
+/* Opaque. Create with mind2t_config_load, destroy with mind2t_config_free. */
+typedef struct Mind2tConfig Mind2tConfig;
 
 typedef enum {
-  RUUAH_HOST_SUCCESS = 0,
+  MIND2T_HOST_SUCCESS = 0,
   /* A NULL pointer, a zero geometry, or an otherwise malformed argument. */
-  RUUAH_HOST_INVALID_VALUE = 1,
+  MIND2T_HOST_INVALID_VALUE = 1,
   /* Opening the pty or starting the child failed. */
-  RUUAH_HOST_SPAWN_FAILED = 2,
+  MIND2T_HOST_SPAWN_FAILED = 2,
   /* The requested geometry exceeds the frame channel's fixed capacity. */
-  RUUAH_HOST_RESIZE_REFUSED = 3,
+  MIND2T_HOST_RESIZE_REFUSED = 3,
   /* The renderer could not be built or could not draw (e.g. no GPU adapter, no fonts). */
-  RUUAH_HOST_RENDER_FAILED = 4,
+  MIND2T_HOST_RENDER_FAILED = 4,
   /* Writing to the child failed (typically: the child is gone). */
-  RUUAH_HOST_SEND_FAILED = 5,
+  MIND2T_HOST_SEND_FAILED = 5,
   /* The call was valid but the protocol produced nothing: mouse reporting off, motion
    * deduplicated, or a wheel left to the embedder's viewport scroll. Not an error --
    * the embedder's own handling of the event is next. */
-  RUUAH_HOST_IGNORED = 6,
-} RuuahHostResult;
+  MIND2T_HOST_IGNORED = 6,
+} Mind2tHostResult;
 
-/* ruuah_host_mouse vocabularies. */
-#define RUUAH_MOUSE_PRESS 0u
-#define RUUAH_MOUSE_RELEASE 1u
-#define RUUAH_MOUSE_MOTION 2u
-#define RUUAH_MOUSE_BUTTON_NONE 0u
-#define RUUAH_MOUSE_BUTTON_LEFT 1u
-#define RUUAH_MOUSE_BUTTON_MIDDLE 2u
-#define RUUAH_MOUSE_BUTTON_RIGHT 3u
-#define RUUAH_MOUSE_MODS_SHIFT 1u
-#define RUUAH_MOUSE_MODS_CTRL 2u
-#define RUUAH_MOUSE_MODS_ALT 4u
+/* mind2t_host_mouse vocabularies. */
+#define MIND2T_MOUSE_PRESS 0u
+#define MIND2T_MOUSE_RELEASE 1u
+#define MIND2T_MOUSE_MOTION 2u
+#define MIND2T_MOUSE_BUTTON_NONE 0u
+#define MIND2T_MOUSE_BUTTON_LEFT 1u
+#define MIND2T_MOUSE_BUTTON_MIDDLE 2u
+#define MIND2T_MOUSE_BUTTON_RIGHT 3u
+#define MIND2T_MOUSE_MODS_SHIFT 1u
+#define MIND2T_MOUSE_MODS_CTRL 2u
+#define MIND2T_MOUSE_MODS_ALT 4u
 
 typedef struct {
   uint16_t cols;
@@ -69,18 +69,18 @@ typedef struct {
   bool auto_direction;
   /* Contributes ONLY the theme palette; NULL keeps the built-in scheme. Read during the
    * spawn call and not retained -- freeing the config afterwards is legal. The scalar
-   * settings are read through the ruuah_config_* getters instead, because the embedder
+   * settings are read through the mind2t_config_* getters instead, because the embedder
    * owns their precedence (CLI flags, Retina scaling). */
-  const RuuahConfig *config;
+  const Mind2tConfig *config;
   /* Working directory for the child, or NULL for the default (home for an interactive
    * shell, the caller's cwd for an explicit command). A path that does not exist is
    * IGNORED rather than fatal: a bad cwd surfaces from exec as a bare ENOENT that looks
    * exactly like a missing shell, and a workspace whose directory vanished should still
    * open somewhere usable. S5 workspaces set this to a worktree. */
   const char *cwd;
-} RuuahHostOptions;
+} Mind2tHostOptions;
 
-/* One rendered frame, filled by ruuah_host_poll. */
+/* One rendered frame, filled by mind2t_host_poll. */
 typedef struct {
   /* RGBA8, row-major, width*height*4 bytes. Borrowed: valid until the next poll, resize,
    * or free on the same handle. Never NULL after the first poll that drew. */
@@ -101,7 +101,7 @@ typedef struct {
    * alike. Never pixel-sampled: the corner pixel is the caret when the cursor is home. */
   uint8_t background[4];
   /* One byte per grid row (row_count of them): the row's shell-semantic class per
-   * OSC 133 -- RUUAH_ROW_OUTPUT, RUUAH_ROW_PROMPT or RUUAH_ROW_INPUT. What a block
+   * OSC 133 -- MIND2T_ROW_OUTPUT, MIND2T_ROW_PROMPT or MIND2T_ROW_INPUT. What a block
    * gutter draws from. Borrowed with the same lifetime as pixels: valid until the next
    * poll, resize, or free. NULL before the first drawn frame. */
   const uint8_t *row_semantics;
@@ -115,31 +115,31 @@ typedef struct {
   uint16_t cursor_col;
   uint16_t cursor_row;
   bool cursor_visible;
-} RuuahHostFrame;
+} Mind2tHostFrame;
 
-/* RuuahHostFrame.row_semantics values, and ruuah_host_row_text filters. */
-#define RUUAH_ROW_OUTPUT 0
-#define RUUAH_ROW_PROMPT 1
-#define RUUAH_ROW_INPUT 2
-/* ruuah_host_row_text only: take every cell regardless of its OSC 133 mark. */
-#define RUUAH_TEXT_ALL 255
+/* Mind2tHostFrame.row_semantics values, and mind2t_host_row_text filters. */
+#define MIND2T_ROW_OUTPUT 0
+#define MIND2T_ROW_PROMPT 1
+#define MIND2T_ROW_INPUT 2
+/* mind2t_host_row_text only: take every cell regardless of its OSC 133 mark. */
+#define MIND2T_TEXT_ALL 255
 
 /* Spawns the command on a fresh pty and starts the parse/publish pipeline.
  *
  * options and out must be non-NULL. On success writes the new handle to *out and returns
- * RUUAH_HOST_SUCCESS; on any failure writes NULL to *out. */
-RuuahHostResult ruuah_host_spawn(const RuuahHostOptions *options, RuuahHost **out);
+ * MIND2T_HOST_SUCCESS; on any failure writes NULL to *out. */
+Mind2tHostResult mind2t_host_spawn(const Mind2tHostOptions *options, Mind2tHost **out);
 
 /* Reads the latest published frame and, if it is new, draws it.
  *
  * host and out must be non-NULL and host must be live. Cheap when nothing changed. */
-RuuahHostResult ruuah_host_poll(RuuahHost *host, RuuahHostFrame *out);
+Mind2tHostResult mind2t_host_poll(Mind2tHost *host, Mind2tHostFrame *out);
 
 /* Writes bytes to the child's input. This is the Host::send seam: key encodings from the
  * GUI and (in slice 9) DSR/DA replies both travel through it.
  *
  * bytes may be NULL only when len is 0. */
-RuuahHostResult ruuah_host_send(RuuahHost *host, const uint8_t *bytes, size_t len);
+Mind2tHostResult mind2t_host_send(Mind2tHost *host, const uint8_t *bytes, size_t len);
 
 /* Encodes clipboard bytes for the child and writes them to the pty. Pass raw clipboard
  * bytes: unsafe control bytes become spaces (xterm's strip set), and the data is wrapped
@@ -148,24 +148,24 @@ RuuahHostResult ruuah_host_send(RuuahHost *host, const uint8_t *bytes, size_t le
  * poll at least once after the child enables it -- a rendering host does continuously.
  *
  * bytes may be NULL only when len is 0. */
-RuuahHostResult ruuah_host_paste(RuuahHost *host, const uint8_t *bytes, size_t len);
+Mind2tHostResult mind2t_host_paste(Mind2tHost *host, const uint8_t *bytes, size_t len);
 
 /* Sets the view geometry mouse encoding converts through: surface size and content
  * insets, in the same backing-pixel space the frame's pixels use. Call after layout
  * changes (resize, zoom, inset change); until the first call, pointer events answer
- * RUUAH_HOST_IGNORED. */
-RuuahHostResult ruuah_host_mouse_geometry(RuuahHost *host, uint32_t screen_width,
+ * MIND2T_HOST_IGNORED. */
+Mind2tHostResult mind2t_host_mouse_geometry(Mind2tHost *host, uint32_t screen_width,
                                           uint32_t screen_height, uint32_t padding_left,
                                           uint32_t padding_top, uint32_t padding_right,
                                           uint32_t padding_bottom);
 
-/* Feeds one pointer event to mouse reporting. action/button/mods use the RUUAH_MOUSE_*
+/* Feeds one pointer event to mouse reporting. action/button/mods use the MIND2T_MOUSE_*
  * constants (buttons 4..9 are the protocol's wheel/aux codes); x/y are surface pixels
  * from the view's top-left. Success means a report was written to the pty; IGNORED
  * means the protocol produced nothing and the event is the embedder's again
  * (selection, menus). Send press/release pairs even while reporting is off -- held-
  * button bookkeeping happens on every call. Modes ride the last polled frame. */
-RuuahHostResult ruuah_host_mouse(RuuahHost *host, uint32_t action, uint32_t button,
+Mind2tHostResult mind2t_host_mouse(Mind2tHost *host, uint32_t action, uint32_t button,
                                  uint32_t mods, float x, float y);
 
 /* Feeds one keyboard event to the key encoder and writes the result to the pty.
@@ -176,7 +176,7 @@ RuuahHostResult ruuah_host_mouse(RuuahHost *host, uint32_t action, uint32_t butt
  * unshifted_codepoint: the key with no modifiers, 0 if none. Encoding modes --
  * DECCKM, keypad, 1035/1036, modifyOtherKeys, the kitty flags -- ride the last
  * polled frame. Success = bytes written; IGNORED = the event encodes to nothing. */
-RuuahHostResult ruuah_host_key(RuuahHost *host, uint32_t action, uint32_t key,
+Mind2tHostResult mind2t_host_key(Mind2tHost *host, uint32_t action, uint32_t key,
                                uint32_t mods, uint32_t consumed_mods,
                                const uint8_t *text, size_t text_len,
                                uint32_t unshifted_codepoint);
@@ -188,41 +188,41 @@ RuuahHostResult ruuah_host_key(RuuahHost *host, uint32_t action, uint32_t key,
  * banking. Success includes a consumed wheel that encoded to nothing (X10 event mode
  * cannot name wheel buttons) -- a program holding the mouse must not also have the
  * view scrolled under it. */
-RuuahHostResult ruuah_host_wheel(RuuahHost *host, float x, float y, int32_t ticks,
+Mind2tHostResult mind2t_host_wheel(Mind2tHost *host, float x, float y, int32_t ticks,
                                  uint32_t mods);
 
 /* Workflow templates (~/.ruuah/workflows/*.toml, the cmd+K palette's data). All
  * string getters use the row_text buffer protocol: NULL out sizes the value into
  * out_len, a short buffer refuses with the needed length, no NUL is written.
  * Field selectors: 0 name, 1 description, 2 command (or 2 default for args). */
-typedef struct RuuahWorkflows RuuahWorkflows;
+typedef struct Mind2tWorkflows Mind2tWorkflows;
 
-#define RUUAH_WORKFLOW_NAME 0u
-#define RUUAH_WORKFLOW_DESCRIPTION 1u
-#define RUUAH_WORKFLOW_COMMAND 2u
-#define RUUAH_WORKFLOW_ARG_DEFAULT 2u
+#define MIND2T_WORKFLOW_NAME 0u
+#define MIND2T_WORKFLOW_DESCRIPTION 1u
+#define MIND2T_WORKFLOW_COMMAND 2u
+#define MIND2T_WORKFLOW_ARG_DEFAULT 2u
 
 /* dir NULL = ~/.ruuah/workflows. Broken files are skipped, their errors kept on the
  * handle; a missing directory is a valid empty handle. */
-RuuahHostResult ruuah_workflows_load(const char *dir, RuuahWorkflows **out);
-void ruuah_workflows_free(RuuahWorkflows *handle);
-uint32_t ruuah_workflows_count(const RuuahWorkflows *handle);
+Mind2tHostResult mind2t_workflows_load(const char *dir, Mind2tWorkflows **out);
+void mind2t_workflows_free(Mind2tWorkflows *handle);
+uint32_t mind2t_workflows_count(const Mind2tWorkflows *handle);
 /* Loader error lines, newline-joined; empty when every file parsed. Show loudly. */
-RuuahHostResult ruuah_workflows_errors(const RuuahWorkflows *handle, uint8_t *out,
+Mind2tHostResult mind2t_workflows_errors(const Mind2tWorkflows *handle, uint8_t *out,
                                        size_t cap, size_t *out_len);
-RuuahHostResult ruuah_workflow_field(const RuuahWorkflows *handle, uint32_t index,
+Mind2tHostResult mind2t_workflow_field(const Mind2tWorkflows *handle, uint32_t index,
                                      uint32_t field, uint8_t *out, size_t cap,
                                      size_t *out_len);
-uint32_t ruuah_workflow_arg_count(const RuuahWorkflows *handle, uint32_t index);
-/* A missing default answers RUUAH_HOST_IGNORED with length 0 -- distinct from an
+uint32_t mind2t_workflow_arg_count(const Mind2tWorkflows *handle, uint32_t index);
+/* A missing default answers MIND2T_HOST_IGNORED with length 0 -- distinct from an
  * empty-string default, so the palette prefills one and prompts bare for the other. */
-RuuahHostResult ruuah_workflow_arg(const RuuahWorkflows *handle, uint32_t index,
+Mind2tHostResult mind2t_workflow_arg(const Mind2tWorkflows *handle, uint32_t index,
                                    uint32_t arg_index, uint32_t field, uint8_t *out,
                                    size_t cap, size_t *out_len);
 /* args_blob: pairs of NUL-terminated strings (name, value, ...), blob_len total
  * bytes. An unresolved placeholder refuses with INVALID_VALUE -- a command with a
  * hole in it must never reach the paste path. */
-RuuahHostResult ruuah_workflow_render(const RuuahWorkflows *handle, uint32_t index,
+Mind2tHostResult mind2t_workflow_render(const Mind2tWorkflows *handle, uint32_t index,
                                       const uint8_t *args_blob, size_t blob_len,
                                       uint8_t *out, size_t cap, size_t *out_len);
 
@@ -230,16 +230,16 @@ RuuahHostResult ruuah_workflow_render(const RuuahWorkflows *handle, uint32_t ind
  * records one EXECUTED command and persists (blank/multiline/consecutive-duplicate
  * are dropped, answering IGNORED); suggest returns the most recent entry input is a
  * PROPER prefix of via the buffer protocol, IGNORED with length 0 when none. */
-typedef struct RuuahHistory RuuahHistory;
-RuuahHostResult ruuah_history_load(const char *path, RuuahHistory **out);
-void ruuah_history_free(RuuahHistory *handle);
+typedef struct Mind2tHistory Mind2tHistory;
+Mind2tHostResult mind2t_history_load(const char *path, Mind2tHistory **out);
+void mind2t_history_free(Mind2tHistory *handle);
 /* `cwd` is the RAW OSC 7 report (event kind 7), or NULL. The host normalizes it --
  * percent-escapes and the file:// host -- so an embedder passes the bytes through
  * untouched. A command is recorded against the directory it ran in, and a suggestion
  * PREFERS a match made in the current one, falling back to the newest match anywhere. */
-RuuahHostResult ruuah_history_append(RuuahHistory *handle, const uint8_t *command,
+Mind2tHostResult mind2t_history_append(Mind2tHistory *handle, const uint8_t *command,
                                      size_t len, const uint8_t *cwd, size_t cwd_len);
-RuuahHostResult ruuah_history_suggest(const RuuahHistory *handle, const uint8_t *input,
+Mind2tHostResult mind2t_history_suggest(const Mind2tHistory *handle, const uint8_t *input,
                                       size_t len, const uint8_t *cwd, size_t cwd_len,
                                       uint8_t *out, size_t cap, size_t *out_len);
 
@@ -251,7 +251,7 @@ RuuahHostResult ruuah_history_suggest(const RuuahHistory *handle, const uint8_t 
  *
  * Returns Ignored with *out_len = 0 when the report names no directory, which is
  * distinguishable from a buffer that was too small. Pass out = NULL to size first. */
-RuuahHostResult ruuah_cwd_path(const uint8_t *raw, size_t len, uint8_t *out, size_t cap,
+Mind2tHostResult mind2t_cwd_path(const uint8_t *raw, size_t len, uint8_t *out, size_t cap,
                                size_t *out_len);
 
 /* Scrolls the displayed view through scrollback: positive rows climbs into history,
@@ -259,26 +259,26 @@ RuuahHostResult ruuah_cwd_path(const uint8_t *raw, size_t len, uint8_t *out, siz
  * accumulate on the pump thread and are clamped against what history actually holds;
  * the landed position comes back in the next polled frame's viewport_offset. Typing
  * does not snap the view -- apply that policy in the embedder, via INT32_MIN. */
-RuuahHostResult ruuah_host_scroll(RuuahHost *host, int32_t rows);
+Mind2tHostResult mind2t_host_scroll(Mind2tHost *host, int32_t rows);
 
 /* Resizes the pty, the terminal and the render target. Refused (with no state change)
  * when the geometry exceeds the frame channel's capacity or either dimension is 0. */
-RuuahHostResult ruuah_host_resize(RuuahHost *host, uint16_t cols, uint16_t rows);
+Mind2tHostResult mind2t_host_resize(Mind2tHost *host, uint16_t cols, uint16_t rows);
 
 /* Reports the pixel cell size a renderer would use at font_size, without a host. The
  * zoom flow needs this BEFORE the new renderer exists: window pixels stay fixed, the
  * grid that fits them moves with the metrics. Pure query. */
-RuuahHostResult ruuah_host_cell_metrics(
+Mind2tHostResult mind2t_host_cell_metrics(
     float font_size, const char *font_family, uint32_t *out_width, uint32_t *out_height);
 
 /* Changes the font size live: pty resize to the new grid plus render-target rebuild at
- * the new metrics, in one call. Derive cols/rows from ruuah_host_cell_metrics and the
- * window's fixed pixel size. Refusal rules match ruuah_host_resize. */
-RuuahHostResult ruuah_host_set_font_size(
-    RuuahHost *host, float font_size, uint16_t cols, uint16_t rows);
+ * the new metrics, in one call. Derive cols/rows from mind2t_host_cell_metrics and the
+ * window's fixed pixel size. Refusal rules match mind2t_host_resize. */
+Mind2tHostResult mind2t_host_set_font_size(
+    Mind2tHost *host, float font_size, uint16_t cols, uint16_t rows);
 
 /* Copies one grid row's text as UTF-8 into out, trailing blanks trimmed. `semantic`
- * filters by the per-cell OSC 133 mark: RUUAH_TEXT_ALL takes every cell, the RUUAH_ROW_*
+ * filters by the per-cell OSC 133 mark: MIND2T_TEXT_ALL takes every cell, the MIND2T_ROW_*
  * values take only cells wearing that mark -- the input filter on a prompt row is what
  * makes "copy command" return `ls -la` out of `$ ls -la`. Reads the last POLLED frame --
  * poll at least once first. Writes at most cap bytes (no NUL added; a truncated copy
@@ -286,13 +286,13 @@ RuuahHostResult ruuah_host_set_font_size(
  * with INVALID_VALUE when the row is out of range or nothing has been polled. Size cap
  * from a first call's *len, then call again. The copy-command / copy-output seam for
  * blocks: group rows with row_semantics, then read the text. */
-RuuahHostResult ruuah_host_row_text(
-    RuuahHost *host, uint16_t row, uint8_t semantic, uint8_t *out, size_t cap, size_t *len);
+Mind2tHostResult mind2t_host_row_text(
+    Mind2tHost *host, uint16_t row, uint8_t semantic, uint8_t *out, size_t cap, size_t *len);
 
 /* Copies the OSC 8 URI under one cell (last POLLED frame). No link = SUCCESS with *len
- * 0 -- clicking plain text is not an error. Truncation contract as ruuah_host_row_text. */
-RuuahHostResult ruuah_host_link_at(
-    RuuahHost *host, uint16_t col, uint16_t row, uint8_t *out, size_t cap, size_t *len);
+ * 0 -- clicking plain text is not an error. Truncation contract as mind2t_host_row_text. */
+Mind2tHostResult mind2t_host_link_at(
+    Mind2tHost *host, uint16_t col, uint16_t row, uint8_t *out, size_t cap, size_t *len);
 
 /* Pops the next host-facing event, oldest first. *kind: 0 = none, 1 = set clipboard to
  * payload, 2 = notification (payload = title, '\n', body), 3 = bell. An event is
@@ -302,12 +302,12 @@ RuuahHostResult ruuah_host_link_at(
  * is NOT percent-decoded -- an empty payload means the child cleared it). An event is
  * consumed only when cap held its whole payload; a smaller cap reports kind + *len and
  * leaves it queued (size-then-fetch never loses an event). */
-RuuahHostResult ruuah_host_next_event(
-    RuuahHost *host, uint32_t *kind, uint8_t *out, size_t cap, size_t *len);
+Mind2tHostResult mind2t_host_next_event(
+    Mind2tHost *host, uint32_t *kind, uint8_t *out, size_t cap, size_t *len);
 
 /* Tears down the child, the pump thread and the renderer. NULL is a no-op. Any pixels
  * pointer previously returned for this handle is dead after this call. */
-void ruuah_host_free(RuuahHost *host);
+void mind2t_host_free(Mind2tHost *host);
 
 /* -- Settings (S1): dir/config.toml plus dir/themes/<name>.toml. --------------------------
  *
@@ -323,54 +323,54 @@ void ruuah_host_free(RuuahHost *host);
  *   palette = ["#rrggbb", x16]   the named system colors; the cube/ramp stay absolute
  *
  * Loading never fails into an unusable state: a missing file is the defaults, and a file
- * that could not be honoured is the defaults plus ruuah_config_error -- which a GUI must
+ * that could not be honoured is the defaults plus mind2t_config_error -- which a GUI must
  * show loudly. A bad theme applies NOTHING (never a half-theme). */
 
 /* Loads dir/config.toml into a new handle. dir NULL means ~/.ruuah. Fails only on a NULL
  * out-param or a non-UTF-8 dir; on failure writes NULL to *out. */
-RuuahHostResult ruuah_config_load(const char *dir, RuuahConfig **out);
+Mind2tHostResult mind2t_config_load(const char *dir, Mind2tConfig **out);
 
 /* Font size in logical pixels, 0 when the config does not set one. */
-float ruuah_config_font_size(const RuuahConfig *config);
+float mind2t_config_font_size(const Mind2tConfig *config);
 
 /* The configured auto-direction, or `fallback` when the config does not say. */
-bool ruuah_config_auto_direction(const RuuahConfig *config, bool fallback);
+bool mind2t_config_auto_direction(const Mind2tConfig *config, bool fallback);
 
 /* The configured shell command line, or NULL when unset. Borrowed: valid until
- * ruuah_config_free on the same handle. */
-const char *ruuah_config_shell(const RuuahConfig *config);
+ * mind2t_config_free on the same handle. */
+const char *mind2t_config_shell(const Mind2tConfig *config);
 
 /* Whether the operator granted screen-inspection replies -- DECRQCRA checksums and
  * the WINOPS 18 size report (config `reports = true`). FALSE by default and for a
  * NULL handle: these let a program read back what is on screen, the same posture
  * question as OSC 52 clipboard reads. The grant itself travels through
- * RuuahHostOptions.config at spawn; this is for showing the posture. */
-bool ruuah_config_reports(const RuuahConfig *config);
+ * Mind2tHostOptions.config at spawn; this is for showing the posture. */
+bool mind2t_config_reports(const Mind2tConfig *config);
 
 /* Whether the embedder may show web-rendered panels (config panels = true).
  * False for a NULL handle, and false unless the config says otherwise. */
-bool ruuah_config_panels(const RuuahConfig *config);
+bool mind2t_config_panels(const Mind2tConfig *config);
 
 /* The configured lead font family (config font-family), or NULL when unset.
- * Borrowed: valid until ruuah_config_free. */
-const char *ruuah_config_font_family(const RuuahConfig *config);
+ * Borrowed: valid until mind2t_config_free. */
+const char *mind2t_config_font_family(const Mind2tConfig *config);
 
 /* Everything that went wrong while loading, newline-joined; NULL when clean. Borrowed:
- * valid until ruuah_config_free on the same handle. */
-const char *ruuah_config_error(const RuuahConfig *config);
+ * valid until mind2t_config_free on the same handle. */
+const char *mind2t_config_error(const Mind2tConfig *config);
 
 /* Frees a config handle. NULL is a no-op. Strings lent by the getters die here. */
-void ruuah_config_free(RuuahConfig *config);
+void mind2t_config_free(Mind2tConfig *config);
 
 /* ---- Presenting into a window (macOS) -------------------------------------------
  *
- * Without a layer attached, ruuah_host_poll copies the finished frame back across the
- * bus and lends it through RuuahHostFrame.pixels, and the embedder draws it. That copy
+ * Without a layer attached, mind2t_host_poll copies the finished frame back across the
+ * bus and lends it through Mind2tHostFrame.pixels, and the embedder draws it. That copy
  * is a whole frame - 12.5 MB at 2240x1400 - on every draw.
  *
  * With a layer attached the frame is drawn straight into the window's swapchain on the
- * GPU and NEVER crosses to the CPU: RuuahHostFrame.pixels stays NULL, and the embedder
- * calls ruuah_host_present instead of building an image. Detaching restores the old
+ * GPU and NEVER crosses to the CPU: Mind2tHostFrame.pixels stays NULL, and the embedder
+ * calls mind2t_host_present instead of building an image. Detaching restores the old
  * behaviour on the next poll, so the two paths can be compared against each other.
  *
  * All sizes here are PHYSICAL pixels (layer.drawableSize), never points. Passing points
@@ -378,25 +378,25 @@ void ruuah_config_free(RuuahConfig *config);
  * than broken. */
 
 /* Attaches a CAMetalLayer. The layer must outlive the host or be removed with
- * ruuah_host_detach_layer first. Returns RENDER_FAILED rather than degrading when the
+ * mind2t_host_detach_layer first. Returns RENDER_FAILED rather than degrading when the
  * rasterizing adapter cannot drive that window or the window offers no usable format. */
-RuuahHostResult ruuah_host_attach_layer(
-    RuuahHost *host, void *layer, uint32_t width, uint32_t height);
+Mind2tHostResult mind2t_host_attach_layer(
+    Mind2tHost *host, void *layer, uint32_t width, uint32_t height);
 
-/* Drops the window. The next poll fills RuuahHostFrame.pixels again. */
-RuuahHostResult ruuah_host_detach_layer(RuuahHost *host);
+/* Drops the window. The next poll fills Mind2tHostFrame.pixels again. */
+Mind2tHostResult mind2t_host_detach_layer(Mind2tHost *host);
 
 /* Reconfigures the swapchain after the layer's drawableSize changed. */
-RuuahHostResult ruuah_host_resize_layer(RuuahHost *host, uint32_t width, uint32_t height);
+Mind2tHostResult mind2t_host_resize_layer(Mind2tHost *host, uint32_t width, uint32_t height);
 
 /* Draws the current frame into the window and presents it. Separate from poll on
  * purpose: poll advances the terminal, present puts a frame on screen, and an embedder
  * drives them at different rates - a resize presents without polling, and a quiet
  * terminal polls without needing to present. INVALID_VALUE when no layer is attached. */
-RuuahHostResult ruuah_host_present(RuuahHost *host);
+Mind2tHostResult mind2t_host_present(Mind2tHost *host);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* RUUAH_HOST_H */
+#endif /* MIND2T_HOST_H */

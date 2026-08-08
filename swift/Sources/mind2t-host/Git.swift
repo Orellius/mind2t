@@ -49,7 +49,7 @@ enum Git {
         var outData = Data()
         var errData = Data()
         let group = DispatchGroup()
-        let queue = DispatchQueue(label: "ruuah.git.drain", attributes: .concurrent)
+        let queue = DispatchQueue(label: "mind2t.git.drain", attributes: .concurrent)
         queue.async(group: group) { outData = outPipe.fileHandleForReading.readDataToEndOfFile() }
         queue.async(group: group) { errData = errPipe.fileHandleForReading.readDataToEndOfFile() }
 

@@ -216,7 +216,7 @@ impl State {
     /// colon subparameter form, and colours split palette<8 / bright<16 / indexed /
     /// direct exactly as it does.
     fn sgr_report(&self) -> String {
-        use ruuah_vt_snapshot::{Color, Underline};
+        use mind2t_vt_snapshot::{Color, Underline};
         use std::fmt::Write as _;
         let pen = &self.pen;
         let mut out = String::from("0");
@@ -722,7 +722,7 @@ mod tests {
         let snapshot = terminal.snapshot();
         assert_eq!(snapshot.row_text(0), "keepme X");
         let cell = &snapshot.grid[0].cells[7];
-        assert_eq!(cell.style, ruuah_vt_snapshot::Style::DEFAULT, "SGR was soft-reset");
+        assert_eq!(cell.style, mind2t_vt_snapshot::Style::DEFAULT, "SGR was soft-reset");
     }
 
     #[test]

@@ -7,9 +7,9 @@
 //! backstop. If this machine ever loses it, the first test SKIPS loudly rather than
 //! passing vacuously.
 
-use ruuah_vt_core::Terminal;
-use ruuah_vt_frame::{Frame, Publisher, channel};
-use ruuah_vt_render::{FontStack, Renderer};
+use mind2t_vt_core::Terminal;
+use mind2t_vt_frame::{Frame, Publisher, channel};
+use mind2t_vt_render::{FontStack, Renderer};
 
 const COLS: u16 = 12;
 const SIZE: f32 = 24.0;

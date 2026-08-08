@@ -422,11 +422,11 @@ fn decode(frame: &crate::frame::Frame, x: u16, y: u16) -> Option<Partial> {
 /// A palette index is that number; an RGB triple is its 24 bits. The default foreground
 /// is NOT an id -- a cell with no colour set names image 0, which never exists, so such a
 /// placeholder draws nothing instead of drawing whatever image happened to be first.
-fn color_to_id(color: ruuah_vt_snapshot::Color) -> u32 {
+fn color_to_id(color: mind2t_vt_snapshot::Color) -> u32 {
     match color {
-        ruuah_vt_snapshot::Color::Default => 0,
-        ruuah_vt_snapshot::Color::Palette(index) => u32::from(index),
-        ruuah_vt_snapshot::Color::Rgb { r, g, b } => {
+        mind2t_vt_snapshot::Color::Default => 0,
+        mind2t_vt_snapshot::Color::Palette(index) => u32::from(index),
+        mind2t_vt_snapshot::Color::Rgb { r, g, b } => {
             (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)
         }
     }
@@ -483,7 +483,7 @@ mod tests {
     use crate::frame::Frame;
     use crate::publish::Publisher;
     use crate::seqlock::{ReadOutcome, channel};
-    use ruuah_vt_core::Terminal;
+    use mind2t_vt_core::Terminal;
 
     const COLS: u16 = 10;
     const ROWS: u16 = 3;

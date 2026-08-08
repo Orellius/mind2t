@@ -1,9 +1,9 @@
 //! Purpose: the embedder C surface -- spawn a shell, poll rendered pixels, send bytes.
-//! Public surface: `ruuah_host_spawn/poll/send/resize/free` and their C types, mirrored
-//!   one-to-one by `include/ruuah_host.h`.
+//! Public surface: `mind2t_host_spawn/poll/send/resize/free` and their C types, mirrored
+//!   one-to-one by `include/mind2t_host.h`.
 //! Why this file: the GUI host (slice 8's Swift app) needs the pty -> core -> frame ->
 //!   renderer pipeline behind one C handle, and none of that belongs in the `ghostty_*`
-//!   mirror, which stays a pure VT readout. Depending on `ruuah-vt-abi` as an rlib puts
+//!   mirror, which stays a pure VT readout. Depending on `mind2t-vt-abi` as an rlib puts
 //!   both surfaces in one archive, because two Rust staticlibs cannot share a link.
 //! NOT responsible for: VT semantics (core), the handoff protocol (frame), I/O (pty),
 //!   rasterization (render). This crate only composes them and polices the boundary.
@@ -13,7 +13,7 @@
 //!   that proves the comparison can fail.
 
 // The rlib dependency is what carries the 13 `ghostty_*` exports into this staticlib.
-use ruuah_vt as _;
+use mind2t_vt as _;
 
 pub mod config;
 pub mod cwd;
@@ -32,18 +32,18 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use config::Config;
-use ruuah_vt_frame::{BaseDirection, Frame};
-use ruuah_vt_pty::{Geometry, Host, Options};
-use ruuah_vt_render::{FontStack, GpuSurface, Palette, Renderer, Surface};
+use mind2t_vt_frame::{BaseDirection, Frame};
+use mind2t_vt_pty::{Geometry, Host, Options};
+use mind2t_vt_render::{FontStack, GpuSurface, Palette, Renderer, Surface};
 
-/// The font size used when `RuuahHostOptions.font_size` is 0 -- the same size every
+/// The font size used when `Mind2tHostOptions.font_size` is 0 -- the same size every
 /// render-crate test measures with.
 pub const DEFAULT_FONT_SIZE: f32 = 16.0;
 
-/// Mirrors `RuuahHostResult` in `ruuah_host.h`.
+/// Mirrors `Mind2tHostResult` in `mind2t_host.h`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RuuahHostResult {
+pub enum Mind2tHostResult {
     Success = 0,
     InvalidValue = 1,
     SpawnFailed = 2,
@@ -56,19 +56,19 @@ pub enum RuuahHostResult {
     Ignored = 6,
 }
 
-/// Mirrors `RuuahHostOptions` in `ruuah_host.h`.
+/// Mirrors `Mind2tHostOptions` in `mind2t_host.h`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct RuuahHostOptions {
+pub struct Mind2tHostOptions {
     pub cols: u16,
     pub rows: u16,
     pub font_size: f32,
     pub command: *const c_char,
     pub auto_direction: bool,
     /// Contributes ONLY the theme palette; NULL keeps the built-in scheme. The scalar
-    /// settings are read by the embedder through the `ruuah_config_*` getters instead,
+    /// settings are read by the embedder through the `mind2t_config_*` getters instead,
     /// because the embedder owns their precedence (CLI flags, Retina scaling).
-    pub config: *const RuuahConfig,
+    pub config: *const Mind2tConfig,
     /// Working directory for the child, or NULL for the default (home for an interactive
     /// shell, the caller's cwd for an explicit command). A path that does not exist is
     /// ignored, not an error. S5 workspaces set it to a worktree.
@@ -77,17 +77,17 @@ pub struct RuuahHostOptions {
 
 /// The state behind the opaque config handle: one loaded `Config` plus the C strings
 /// its getters lend out.
-pub struct RuuahConfig {
+pub struct Mind2tConfig {
     config: Config,
     shell: Option<CString>,
     font_family: Option<CString>,
     error: Option<CString>,
 }
 
-/// Mirrors `RuuahHostFrame` in `ruuah_host.h`.
+/// Mirrors `Mind2tHostFrame` in `mind2t_host.h`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-pub struct RuuahHostFrame {
+pub struct Mind2tHostFrame {
     pub pixels: *const u8,
     pub width: u32,
     pub height: u32,
@@ -102,7 +102,7 @@ pub struct RuuahHostFrame {
     /// pixel belongs to the caret whenever the cursor sits at home.
     pub background: [u8; 4],
     /// One byte per grid row (`row_count` of them): the row's shell-semantic class per
-    /// OSC 133 -- `RUUAH_ROW_OUTPUT`, `RUUAH_ROW_PROMPT` or `RUUAH_ROW_INPUT`. This is
+    /// OSC 133 -- `MIND2T_ROW_OUTPUT`, `MIND2T_ROW_PROMPT` or `MIND2T_ROW_INPUT`. This is
     /// what a block gutter draws from (S2). Borrowed with the same lifetime as `pixels`:
     /// valid until the next poll, resize, or free. NULL before the first drawn frame.
     pub row_semantics: *const u8,
@@ -119,16 +119,16 @@ pub struct RuuahHostFrame {
     pub cursor_visible: bool,
 }
 
-pub const RUUAH_ROW_OUTPUT: u8 = 0;
-pub const RUUAH_ROW_PROMPT: u8 = 1;
-pub const RUUAH_ROW_INPUT: u8 = 2;
-/// `ruuah_host_row_text` filter value: every cell regardless of its OSC 133 mark.
-pub const RUUAH_TEXT_ALL: u8 = 255;
+pub const MIND2T_ROW_OUTPUT: u8 = 0;
+pub const MIND2T_ROW_PROMPT: u8 = 1;
+pub const MIND2T_ROW_INPUT: u8 = 2;
+/// `mind2t_host_row_text` filter value: every cell regardless of its OSC 133 mark.
+pub const MIND2T_TEXT_ALL: u8 = 255;
 
 /// The state behind the opaque handle: the whole pipeline, composed.
-pub struct RuuahHost {
+pub struct Mind2tHost {
     host: Host,
-    reader: ruuah_vt_frame::FrameReader,
+    reader: mind2t_vt_frame::FrameReader,
     renderer: Renderer<GpuSurface>,
     frame: Frame,
     /// Stable storage backing the borrowed `pixels` pointer handed across the boundary.
@@ -136,15 +136,15 @@ pub struct RuuahHost {
     ///
     /// Left EMPTY while a window is attached: presenting reads the pixels on the GPU, so
     /// filling this would reinstate the very 12.5 MB per frame readback the window exists to
-    /// avoid. `RuuahHostFrame::pixels` is then null and the embedder draws nothing itself.
+    /// avoid. `Mind2tHostFrame::pixels` is then null and the embedder draws nothing itself.
     pixels: Vec<u8>,
     /// The GPU context every renderer for this host is built on. Held so a rebuild lands on
     /// the same device an attached window's swapchain was created from.
-    gpu: ruuah_vt_render::GpuContext,
+    gpu: mind2t_vt_render::GpuContext,
     /// The window this host presents into, when one has been attached. `None` keeps the
     /// original CGImage path exactly as it was, which is what makes the swap reversible and
     /// keeps the old path available as the oracle.
-    window: Option<ruuah_vt_render::WindowTarget>,
+    window: Option<mind2t_vt_render::WindowTarget>,
     drawn_generation: u64,
     font_size: f32,
     /// The configured lead font and ligature switch, kept because every renderer
@@ -159,13 +159,13 @@ pub struct RuuahHost {
         std::sync::Mutex<std::collections::HashMap<u32, (u32, u32, std::sync::Arc<Vec<u8>>)>>,
     >,
     /// Events not yet handed to the embedder; refilled from the pump's queue whenever
-    /// `ruuah_host_next_event` finds it empty. One event per call, oldest first.
-    pending_events: std::collections::VecDeque<ruuah_vt_core::events::Event>,
+    /// `mind2t_host_next_event` finds it empty. One event per call, oldest first.
+    pending_events: std::collections::VecDeque<mind2t_vt_core::events::Event>,
     /// Stable storage backing the borrowed `row_semantics` pointer, one byte per row.
     /// Rebuilt on every draw, same lifetime contract as `pixels`.
     row_semantics: Vec<u8>,
     /// Mouse-reporting state the embedder cannot carry itself: view geometry (set via
-    /// `ruuah_host_mouse_geometry`), which buttons are down, and the motion-dedup cell.
+    /// `mind2t_host_mouse_geometry`), which buttons are down, and the motion-dedup cell.
     /// The type is shared with `session` so both surfaces route a pointer identically.
     mouse: crate::pointer::Pointer,
     exited: bool,
@@ -175,12 +175,12 @@ pub struct RuuahHost {
 /// tracks. Prompt wins over input: the row a prompt starts on usually also holds the
 /// typed command, and the gutter wants block STARTS.
 fn row_semantic(frame: &Frame, y: u16) -> u8 {
-    let mut class = RUUAH_ROW_OUTPUT;
+    let mut class = MIND2T_ROW_OUTPUT;
     for x in 0..frame.cols {
         match frame.cell(x, y).semantic() {
-            ruuah_vt_snapshot::Semantic::Prompt => return RUUAH_ROW_PROMPT,
-            ruuah_vt_snapshot::Semantic::Input => class = RUUAH_ROW_INPUT,
-            ruuah_vt_snapshot::Semantic::Output => {}
+            mind2t_vt_snapshot::Semantic::Prompt => return MIND2T_ROW_PROMPT,
+            mind2t_vt_snapshot::Semantic::Input => class = MIND2T_ROW_INPUT,
+            mind2t_vt_snapshot::Semantic::Output => {}
         }
     }
     class
@@ -193,7 +193,7 @@ enum DrawMode {
 }
 
 fn build_renderer(
-    context: &ruuah_vt_render::GpuContext,
+    context: &mind2t_vt_render::GpuContext,
     font_size: f32,
     cols: u16,
     rows: u16,
@@ -227,7 +227,7 @@ fn build_renderer(
     .flatten()
 }
 
-fn poll_impl(host: &mut RuuahHost, mode: DrawMode) -> RuuahHostFrame {
+fn poll_impl(host: &mut Mind2tHost, mode: DrawMode) -> Mind2tHostFrame {
     host.reader.read_into(&mut host.frame);
 
     let mut drew = false;
@@ -319,7 +319,7 @@ fn poll_impl(host: &mut RuuahHost, mode: DrawMode) -> RuuahHostFrame {
         host.exited = true;
     }
 
-    RuuahHostFrame {
+    Mind2tHostFrame {
         pixels: if host.pixels.is_empty() {
             std::ptr::null()
         } else {
@@ -361,7 +361,7 @@ fn poll_impl(host: &mut RuuahHost, mode: DrawMode) -> RuuahHostFrame {
 /// inherits none) and the Claude Code child-session markers are scrubbed -- a terminal
 /// window is a session boundary (seen live 2026-07-29). Returns None on a non-UTF-8
 /// command string.
-fn build_command(options: &RuuahHostOptions) -> Option<Command> {
+fn build_command(options: &Mind2tHostOptions) -> Option<Command> {
     let mut command = if options.command.is_null() {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
         let mut command = Command::new(shell);
@@ -417,22 +417,22 @@ fn build_command(options: &RuuahHostOptions) -> Option<Command> {
 /// `options` and `out` must be non-NULL and valid for the duration of the call;
 /// `options.command` must be NULL or a NUL-terminated string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_host_spawn(
-    options: *const RuuahHostOptions,
-    out: *mut *mut RuuahHost,
-) -> RuuahHostResult {
+pub unsafe extern "C" fn mind2t_host_spawn(
+    options: *const Mind2tHostOptions,
+    out: *mut *mut Mind2tHost,
+) -> Mind2tHostResult {
     if options.is_null() || out.is_null() {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     // The failure contract: the out-param never dangles.
     unsafe { out.write(std::ptr::null_mut()) };
     let options = unsafe { options.read() };
     if options.cols == 0 || options.rows == 0 {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
 
     let Some(mut command) = build_command(&options) else {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     };
     let _ = &mut command; // rebuilt per retry below; the binding must stay mutable
 
@@ -460,8 +460,8 @@ pub unsafe extern "C" fn ruuah_host_spawn(
     // One GPU context for this host's whole life. Every later rebuild - resize, zoom, font
     // change - is constructed on it, which is what keeps a window's swapchain valid across
     // rebuilds instead of orphaning it on a dead device.
-    let Ok(gpu) = ruuah_vt_render::GpuContext::new() else {
-        return RuuahHostResult::RenderFailed;
+    let Ok(gpu) = mind2t_vt_render::GpuContext::new() else {
+        return Mind2tHostResult::RenderFailed;
     };
 
     // The renderer is built before the child so a machine that cannot render never spawns
@@ -474,7 +474,7 @@ pub unsafe extern "C" fn ruuah_host_spawn(
         font_family.as_deref(),
         ligatures,
     ) else {
-        return RuuahHostResult::RenderFailed;
+        return Mind2tHostResult::RenderFailed;
     };
     renderer.set_palette(palette.clone());
 
@@ -498,10 +498,10 @@ pub unsafe extern "C" fn ruuah_host_spawn(
                 std::thread::sleep(std::time::Duration::from_millis(25));
                 command = match build_command(&options) {
                     Some(rebuilt) => rebuilt,
-                    None => return RuuahHostResult::InvalidValue,
+                    None => return Mind2tHostResult::InvalidValue,
                 };
             }
-            Err(_) => return RuuahHostResult::SpawnFailed,
+            Err(_) => return Mind2tHostResult::SpawnFailed,
         }
     };
 
@@ -515,7 +515,7 @@ pub unsafe extern "C" fn ruuah_host_spawn(
     }
 
     let images = host.image_store();
-    let handle = Box::new(RuuahHost {
+    let handle = Box::new(Mind2tHost {
         host,
         reader,
         renderer,
@@ -535,25 +535,25 @@ pub unsafe extern "C" fn ruuah_host_spawn(
         exited: false,
     });
     unsafe { out.write(Box::into_raw(handle)) };
-    RuuahHostResult::Success
+    Mind2tHostResult::Success
 }
 
 /// Reads the latest published frame and, if it is new, draws it.
 ///
 /// # Safety
-/// `host` must be a live handle from `ruuah_host_spawn`; `out` must be non-NULL and valid
+/// `host` must be a live handle from `mind2t_host_spawn`; `out` must be non-NULL and valid
 /// for the duration of the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_host_poll(
-    host: *mut RuuahHost,
-    out: *mut RuuahHostFrame,
-) -> RuuahHostResult {
+pub unsafe extern "C" fn mind2t_host_poll(
+    host: *mut Mind2tHost,
+    out: *mut Mind2tHostFrame,
+) -> Mind2tHostResult {
     if host.is_null() || out.is_null() {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let frame = poll_impl(unsafe { &mut *host }, DrawMode::Full);
     unsafe { out.write(frame) };
-    RuuahHostResult::Success
+    Mind2tHostResult::Success
 }
 
 /// Attaches a `CAMetalLayer` so polled frames are presented on the GPU instead of copied back.
@@ -562,7 +562,7 @@ pub unsafe extern "C" fn ruuah_host_poll(
 /// half-resolution swapchain, and the result looks soft rather than broken - the kind of wrong
 /// that ships.
 ///
-/// Attaching stops `RuuahHostFrame::pixels` being filled: with a window the frame reaches the
+/// Attaching stops `Mind2tHostFrame::pixels` being filled: with a window the frame reaches the
 /// screen without ever crossing to the CPU, which is the whole point. An embedder that still
 /// wants the bytes must detach first.
 ///
@@ -570,92 +570,92 @@ pub unsafe extern "C" fn ruuah_host_poll(
 /// offers no usable format, returns `RenderFailed` instead of a silently blank surface.
 ///
 /// # Safety
-/// `host` must be a live handle from `ruuah_host_spawn`. `layer` must be a live `CAMetalLayer`
-/// that outlives the host or is removed with `ruuah_host_detach_layer` first.
+/// `host` must be a live handle from `mind2t_host_spawn`. `layer` must be a live `CAMetalLayer`
+/// that outlives the host or is removed with `mind2t_host_detach_layer` first.
 #[cfg(target_os = "macos")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_host_attach_layer(
-    host: *mut RuuahHost,
+pub unsafe extern "C" fn mind2t_host_attach_layer(
+    host: *mut Mind2tHost,
     layer: *mut std::ffi::c_void,
     width: u32,
     height: u32,
-) -> RuuahHostResult {
+) -> Mind2tHostResult {
     if host.is_null() || layer.is_null() {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let host = unsafe { &mut *host };
     let context = host.renderer.surface_mut().context().clone();
     match unsafe {
-        ruuah_vt_render::WindowTarget::from_metal_layer(&context, layer, width, height)
+        mind2t_vt_render::WindowTarget::from_metal_layer(&context, layer, width, height)
     } {
         Ok(window) => {
             host.window = Some(window);
             // The next poll must repaint: the window has nothing in it yet, and the frame the
             // embedder already drew lives in a CGImage we are about to stop producing.
             host.drawn_generation = 0;
-            RuuahHostResult::Success
+            Mind2tHostResult::Success
         }
-        Err(_) => RuuahHostResult::RenderFailed,
+        Err(_) => Mind2tHostResult::RenderFailed,
     }
 }
 
 /// Drops the window, restoring the readback path on the next poll.
 ///
 /// # Safety
-/// `host` must be a live handle from `ruuah_host_spawn`.
+/// `host` must be a live handle from `mind2t_host_spawn`.
 #[cfg(target_os = "macos")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_host_detach_layer(host: *mut RuuahHost) -> RuuahHostResult {
+pub unsafe extern "C" fn mind2t_host_detach_layer(host: *mut Mind2tHost) -> Mind2tHostResult {
     if host.is_null() {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let host = unsafe { &mut *host };
     host.window = None;
     host.drawn_generation = 0;
-    RuuahHostResult::Success
+    Mind2tHostResult::Success
 }
 
 /// Reconfigures the swapchain after the layer's drawable size changed. PHYSICAL pixels.
 ///
 /// # Safety
-/// `host` must be a live handle from `ruuah_host_spawn`.
+/// `host` must be a live handle from `mind2t_host_spawn`.
 #[cfg(target_os = "macos")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_host_resize_layer(
-    host: *mut RuuahHost,
+pub unsafe extern "C" fn mind2t_host_resize_layer(
+    host: *mut Mind2tHost,
     width: u32,
     height: u32,
-) -> RuuahHostResult {
+) -> Mind2tHostResult {
     if host.is_null() {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let host = unsafe { &mut *host };
     match host.window.as_mut() {
         Some(window) => {
             window.resize(width, height);
-            RuuahHostResult::Success
+            Mind2tHostResult::Success
         }
-        None => RuuahHostResult::InvalidValue,
+        None => Mind2tHostResult::InvalidValue,
     }
 }
 
 /// Draws the current frame into the attached window and presents it.
 ///
-/// Separate from `ruuah_host_poll` on purpose: polling advances the terminal, presenting puts
+/// Separate from `mind2t_host_poll` on purpose: polling advances the terminal, presenting puts
 /// a frame on screen, and an embedder drives them at different rates - a resize presents
 /// without polling, and a quiet terminal polls without needing to present.
 ///
 /// # Safety
-/// `host` must be a live handle from `ruuah_host_spawn`.
+/// `host` must be a live handle from `mind2t_host_spawn`.
 #[cfg(target_os = "macos")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_host_present(host: *mut RuuahHost) -> RuuahHostResult {
+pub unsafe extern "C" fn mind2t_host_present(host: *mut Mind2tHost) -> Mind2tHostResult {
     if host.is_null() {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let host = unsafe { &mut *host };
     if host.window.is_none() {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     // The margin colour, resolved exactly the way the polled frame reports it: from the
     // top-left cell's STYLE, falling back to the palette default. A grid rounds to whole
@@ -673,31 +673,31 @@ pub unsafe extern "C" fn ruuah_host_present(host: *mut RuuahHost) -> RuuahHostRe
     };
     let window = host.window.as_mut().expect("checked above");
     match window.present(host.renderer.surface_mut(), clear) {
-        Ok(()) => RuuahHostResult::Success,
-        Err(_) => RuuahHostResult::RenderFailed,
+        Ok(()) => Mind2tHostResult::Success,
+        Err(_) => Mind2tHostResult::RenderFailed,
     }
 }
 
-/// The same as `ruuah_host_poll`, but every draw silently declines one row.
+/// The same as `mind2t_host_poll`, but every draw silently declines one row.
 ///
 /// This is a broken host on purpose: `tests/host_abi.rs` byte-compares polled pixels
 /// against a reference, and a comparison that has never been seen to fail is not evidence.
 /// Not part of the C surface, and it has no legitimate caller.
 ///
 /// # Safety
-/// Same contract as `ruuah_host_poll`.
+/// Same contract as `mind2t_host_poll`.
 #[doc(hidden)]
-pub unsafe fn ruuah_host_poll_skipping_row_for_testing(
-    host: *mut RuuahHost,
+pub unsafe fn mind2t_host_poll_skipping_row_for_testing(
+    host: *mut Mind2tHost,
     skip: u16,
-    out: *mut RuuahHostFrame,
-) -> RuuahHostResult {
+    out: *mut Mind2tHostFrame,
+) -> Mind2tHostResult {
     if host.is_null() || out.is_null() {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let frame = poll_impl(unsafe { &mut *host }, DrawMode::SkipRow(skip));
     unsafe { out.write(frame) };
-    RuuahHostResult::Success
+    Mind2tHostResult::Success
 }
 
 /// Writes bytes to the child's input -- the `Host::send` seam.
@@ -706,13 +706,13 @@ pub unsafe fn ruuah_host_poll_skipping_row_for_testing(
 /// `host` must be a live handle; `bytes` must point to `len` readable bytes, or be NULL
 /// when `len` is 0.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_host_send(
-    host: *mut RuuahHost,
+pub unsafe extern "C" fn mind2t_host_send(
+    host: *mut Mind2tHost,
     bytes: *const u8,
     len: usize,
-) -> RuuahHostResult {
+) -> Mind2tHostResult {
     if host.is_null() || (bytes.is_null() && len != 0) {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let host = unsafe { &mut *host };
     let bytes = if len == 0 {
@@ -721,14 +721,14 @@ pub unsafe extern "C" fn ruuah_host_send(
         unsafe { std::slice::from_raw_parts(bytes, len) }
     };
     match host.host.send(bytes) {
-        Ok(()) => RuuahHostResult::Success,
-        Err(_) => RuuahHostResult::SendFailed,
+        Ok(()) => Mind2tHostResult::Success,
+        Err(_) => Mind2tHostResult::SendFailed,
     }
 }
 
 /// Encodes clipboard bytes for the child and writes them to the pty.
 ///
-/// The transform is the oracle-measured paste encoding (`ruuah_vt_pty::paste`): xterm's
+/// The transform is the oracle-measured paste encoding (`mind2t_vt_pty::paste`): xterm's
 /// strip set becomes spaces always, then the data is wrapped in `ESC[200~`/`ESC[201~`
 /// when the child has bracketed paste (mode 2004) on, or has its newlines folded to
 /// carriage returns when it does not. Callers pass raw clipboard bytes and never build
@@ -742,13 +742,13 @@ pub unsafe extern "C" fn ruuah_host_send(
 /// `host` must be a live handle; `bytes` must point to `len` readable bytes, or be NULL
 /// when `len` is 0.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_host_paste(
-    host: *mut RuuahHost,
+pub unsafe extern "C" fn mind2t_host_paste(
+    host: *mut Mind2tHost,
     bytes: *const u8,
     len: usize,
-) -> RuuahHostResult {
+) -> Mind2tHostResult {
     if host.is_null() || (bytes.is_null() && len != 0) {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let host = unsafe { &mut *host };
     let bytes = if len == 0 {
@@ -756,16 +756,16 @@ pub unsafe extern "C" fn ruuah_host_paste(
     } else {
         unsafe { std::slice::from_raw_parts(bytes, len) }
     };
-    let encoded = ruuah_vt_pty::paste::encode(bytes, host.frame.bracketed_paste());
+    let encoded = mind2t_vt_pty::paste::encode(bytes, host.frame.bracketed_paste());
     match host.host.send(&encoded) {
-        Ok(()) => RuuahHostResult::Success,
-        Err(_) => RuuahHostResult::SendFailed,
+        Ok(()) => Mind2tHostResult::Success,
+        Err(_) => Mind2tHostResult::SendFailed,
     }
 }
 
 /// The state behind the opaque history handle: the store plus the path appends
 /// persist to.
-pub struct RuuahHistory {
+pub struct Mind2tHistory {
     history: suggest::History,
     path: PathBuf,
 }
@@ -775,17 +775,17 @@ pub struct RuuahHistory {
 /// # Safety
 /// `path`, if non-NULL, must be NUL-terminated; `out` must be valid for one write.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_history_load(
+pub unsafe extern "C" fn mind2t_history_load(
     path: *const c_char,
-    out: *mut *mut RuuahHistory,
-) -> RuuahHostResult {
+    out: *mut *mut Mind2tHistory,
+) -> Mind2tHostResult {
     if out.is_null() {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let path = if path.is_null() {
         let Some(home) = std::env::var_os("HOME") else {
             unsafe { out.write(std::ptr::null_mut()) };
-            return RuuahHostResult::InvalidValue;
+            return Mind2tHostResult::InvalidValue;
         };
         Path::new(&home).join(".ruuah").join("history")
     } else {
@@ -793,20 +793,20 @@ pub unsafe extern "C" fn ruuah_history_load(
             Ok(path) => Path::new(path).to_path_buf(),
             Err(_) => {
                 unsafe { out.write(std::ptr::null_mut()) };
-                return RuuahHostResult::InvalidValue;
+                return Mind2tHostResult::InvalidValue;
             }
         }
     };
     let handle =
-        Box::new(RuuahHistory { history: suggest::History::load(&path), path });
+        Box::new(Mind2tHistory { history: suggest::History::load(&path), path });
     unsafe { out.write(Box::into_raw(handle)) };
-    RuuahHostResult::Success
+    Mind2tHostResult::Success
 }
 
 /// # Safety
-/// `handle` must be NULL or a live handle from `ruuah_history_load`.
+/// `handle` must be NULL or a live handle from `mind2t_history_load`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_history_free(handle: *mut RuuahHistory) {
+pub unsafe extern "C" fn mind2t_history_free(handle: *mut Mind2tHistory) {
     if !handle.is_null() {
         drop(unsafe { Box::from_raw(handle) });
     }
@@ -824,15 +824,15 @@ pub unsafe extern "C" fn ruuah_history_free(handle: *mut RuuahHistory) {
 /// # Safety
 /// `handle` live; `command` readable for `len` bytes; `cwd` readable for `cwd_len`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_history_append(
-    handle: *mut RuuahHistory,
+pub unsafe extern "C" fn mind2t_history_append(
+    handle: *mut Mind2tHistory,
     command: *const u8,
     len: usize,
     cwd: *const u8,
     cwd_len: usize,
-) -> RuuahHostResult {
+) -> Mind2tHostResult {
     if handle.is_null() || (command.is_null() && len != 0) {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let cwd = unsafe { normalized_cwd(cwd, cwd_len) };
     let handle = unsafe { &mut *handle };
@@ -842,16 +842,16 @@ pub unsafe extern "C" fn ruuah_history_append(
         unsafe { std::slice::from_raw_parts(command, len) }
     };
     let Ok(command) = std::str::from_utf8(bytes) else {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     };
     let before = handle.history.len();
     handle.history.append(command, cwd.as_deref());
     if handle.history.len() == before {
-        return RuuahHostResult::Ignored;
+        return Mind2tHostResult::Ignored;
     }
     match handle.history.save(&handle.path) {
-        Ok(()) => RuuahHostResult::Success,
-        Err(_) => RuuahHostResult::SendFailed,
+        Ok(()) => Mind2tHostResult::Success,
+        Err(_) => Mind2tHostResult::SendFailed,
     }
 }
 
@@ -865,8 +865,8 @@ pub unsafe extern "C" fn ruuah_history_append(
 /// `handle` live; `input` readable for `len` bytes; `cwd` readable for `cwd_len`;
 /// `out`/`out_len` per the protocol.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_history_suggest(
-    handle: *const RuuahHistory,
+pub unsafe extern "C" fn mind2t_history_suggest(
+    handle: *const Mind2tHistory,
     input: *const u8,
     len: usize,
     cwd: *const u8,
@@ -874,9 +874,9 @@ pub unsafe extern "C" fn ruuah_history_suggest(
     out: *mut u8,
     cap: usize,
     out_len: *mut usize,
-) -> RuuahHostResult {
+) -> Mind2tHostResult {
     if handle.is_null() || (input.is_null() && len != 0) {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let cwd = unsafe { normalized_cwd(cwd, cwd_len) };
     let bytes = if len == 0 {
@@ -885,7 +885,7 @@ pub unsafe extern "C" fn ruuah_history_suggest(
         unsafe { std::slice::from_raw_parts(input, len) }
     };
     let Ok(input) = std::str::from_utf8(bytes) else {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     };
     match unsafe { &*handle }.history.suggest(input, cwd.as_deref()) {
         Some(suggestion) => copy_out(suggestion, out, cap, out_len),
@@ -893,7 +893,7 @@ pub unsafe extern "C" fn ruuah_history_suggest(
             if !out_len.is_null() {
                 unsafe { out_len.write(0) };
             }
-            RuuahHostResult::Ignored
+            Mind2tHostResult::Ignored
         }
     }
 }
@@ -913,20 +913,20 @@ pub unsafe extern "C" fn ruuah_history_suggest(
 /// `raw` readable for `len` bytes or NULL when `len` is 0; `out` writable for `cap`
 /// bytes or NULL; `out_len` writable or NULL.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_cwd_path(
+pub unsafe extern "C" fn mind2t_cwd_path(
     raw: *const u8,
     len: usize,
     out: *mut u8,
     cap: usize,
     out_len: *mut usize,
-) -> RuuahHostResult {
+) -> Mind2tHostResult {
     match unsafe { normalized_cwd(raw, len) } {
         Some(path) => copy_out(&path, out, cap, out_len),
         None => {
             if !out_len.is_null() {
                 unsafe { out_len.write(0) };
             }
-            RuuahHostResult::Ignored
+            Mind2tHostResult::Ignored
         }
     }
 }
@@ -942,8 +942,8 @@ unsafe fn normalized_cwd(raw: *const u8, len: usize) -> Option<String> {
     crate::cwd::normalize(unsafe { std::slice::from_raw_parts(raw, len) })
 }
 
-fn mouse_mods(mods: u32) -> ruuah_vt_pty::mouse::Mods {
-    ruuah_vt_pty::mouse::Mods {
+fn mouse_mods(mods: u32) -> mind2t_vt_pty::mouse::Mods {
+    mind2t_vt_pty::mouse::Mods {
         shift: mods & 1 != 0,
         ctrl: mods & 2 != 0,
         alt: mods & 4 != 0,
@@ -956,19 +956,19 @@ fn mouse_mods(mods: u32) -> ruuah_vt_pty::mouse::Mods {
 /// the first call, pointer events answer `Ignored`.
 ///
 /// # Safety
-/// `host` must be a live handle from `ruuah_host_spawn`.
+/// `host` must be a live handle from `mind2t_host_spawn`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_host_mouse_geometry(
-    host: *mut RuuahHost,
+pub unsafe extern "C" fn mind2t_host_mouse_geometry(
+    host: *mut Mind2tHost,
     screen_width: u32,
     screen_height: u32,
     padding_left: u32,
     padding_top: u32,
     padding_right: u32,
     padding_bottom: u32,
-) -> RuuahHostResult {
+) -> Mind2tHostResult {
     if host.is_null() || screen_width == 0 || screen_height == 0 {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let host = unsafe { &mut *host };
     host.mouse.set_geometry(
@@ -979,7 +979,7 @@ pub unsafe extern "C" fn ruuah_host_mouse_geometry(
         padding_right,
         padding_bottom,
     );
-    RuuahHostResult::Success
+    Mind2tHostResult::Success
 }
 
 /// Feeds one pointer event to the mouse-reporting protocol.
@@ -987,7 +987,7 @@ pub unsafe extern "C" fn ruuah_host_mouse_geometry(
 /// `action`: 0 press, 1 release, 2 motion. `button`: 0 none (motion with nothing
 /// held), 1 left, 2 middle, 3 right, 4..9 the protocol's wheel/aux buttons. `mods`:
 /// bit 0 shift, bit 1 ctrl, bit 2 alt. `x`/`y`: surface pixels from the view's
-/// top-left, the same space `ruuah_host_mouse_geometry` described.
+/// top-left, the same space `mind2t_host_mouse_geometry` described.
 ///
 /// Returns `Success` when a report was encoded and written to the pty, `Ignored` when
 /// the protocol produced nothing -- reporting off, motion deduplicated, position
@@ -996,25 +996,25 @@ pub unsafe extern "C" fn ruuah_host_mouse_geometry(
 /// bookkeeping happens on every call either way, so press/release pairs must reach
 /// this function even while reporting is off.
 ///
-/// The active modes ride the last polled frame, like `ruuah_host_paste`.
+/// The active modes ride the last polled frame, like `mind2t_host_paste`.
 ///
 /// # Safety
-/// `host` must be a live handle from `ruuah_host_spawn`.
+/// `host` must be a live handle from `mind2t_host_spawn`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_host_mouse(
-    host: *mut RuuahHost,
+pub unsafe extern "C" fn mind2t_host_mouse(
+    host: *mut Mind2tHost,
     action: u32,
     button: u32,
     mods: u32,
     x: f32,
     y: f32,
-) -> RuuahHostResult {
+) -> Mind2tHostResult {
     if host.is_null() || action > 2 {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let host = unsafe { &mut *host };
 
-    use ruuah_vt_pty::mouse::Action;
+    use mind2t_vt_pty::mouse::Action;
     let action = match action {
         0 => Action::Press,
         1 => Action::Release,
@@ -1032,10 +1032,10 @@ pub unsafe extern "C" fn ruuah_host_mouse(
     );
     match encoded {
         Some(bytes) => match host.host.send(&bytes) {
-            Ok(()) => RuuahHostResult::Success,
-            Err(_) => RuuahHostResult::SendFailed,
+            Ok(()) => Mind2tHostResult::Success,
+            Err(_) => Mind2tHostResult::SendFailed,
         },
-        None => RuuahHostResult::Ignored,
+        None => Mind2tHostResult::Ignored,
     }
 }
 
@@ -1057,11 +1057,11 @@ pub unsafe extern "C" fn ruuah_host_mouse(
 /// UTF-8.
 ///
 /// # Safety
-/// `host` must be a live handle from `ruuah_host_spawn`; `text`, if non-NULL, must
+/// `host` must be a live handle from `mind2t_host_spawn`; `text`, if non-NULL, must
 /// point to `text_len` readable bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_host_key(
-    host: *mut RuuahHost,
+pub unsafe extern "C" fn mind2t_host_key(
+    host: *mut Mind2tHost,
     action: u32,
     key: u32,
     mods: u32,
@@ -1069,10 +1069,10 @@ pub unsafe extern "C" fn ruuah_host_key(
     text: *const u8,
     text_len: usize,
     unshifted_codepoint: u32,
-) -> RuuahHostResult {
-    use ruuah_vt_pty::key::{Key, KeyAction, KeyEvent, KeyOptions, OptionAsAlt};
+) -> Mind2tHostResult {
+    use mind2t_vt_pty::key::{Key, KeyAction, KeyEvent, KeyOptions, OptionAsAlt};
     if host.is_null() || action > 2 {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let host = unsafe { &mut *host };
     let action = match action {
@@ -1082,18 +1082,18 @@ pub unsafe extern "C" fn ruuah_host_key(
     };
     // Key::ALL is in C declaration order by construction, so the C value indexes it.
     let Some(&key) = Key::ALL.get(key as usize) else {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     };
     let utf8 = if text.is_null() || text_len == 0 {
         ""
     } else {
         match std::str::from_utf8(unsafe { std::slice::from_raw_parts(text, text_len) }) {
             Ok(text) => text,
-            Err(_) => return RuuahHostResult::InvalidValue,
+            Err(_) => return Mind2tHostResult::InvalidValue,
         }
     };
 
-    let encoded = ruuah_vt_pty::key::encode(
+    let encoded = mind2t_vt_pty::key::encode(
         &KeyEvent {
             action,
             key,
@@ -1117,11 +1117,11 @@ pub unsafe extern "C" fn ruuah_host_key(
         },
     );
     if encoded.is_empty() {
-        return RuuahHostResult::Ignored;
+        return Mind2tHostResult::Ignored;
     }
     match host.host.send(&encoded) {
-        Ok(()) => RuuahHostResult::Success,
-        Err(_) => RuuahHostResult::SendFailed,
+        Ok(()) => Mind2tHostResult::Success,
+        Err(_) => Mind2tHostResult::SendFailed,
     }
 }
 
@@ -1138,21 +1138,21 @@ pub unsafe extern "C" fn ruuah_host_key(
 /// ALSO have the view scrolled under it.
 ///
 /// # Safety
-/// `host` must be a live handle from `ruuah_host_spawn`.
+/// `host` must be a live handle from `mind2t_host_spawn`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_host_wheel(
-    host: *mut RuuahHost,
+pub unsafe extern "C" fn mind2t_host_wheel(
+    host: *mut Mind2tHost,
     x: f32,
     y: f32,
     ticks: i32,
     mods: u32,
-) -> RuuahHostResult {
+) -> Mind2tHostResult {
     if host.is_null() {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let host = unsafe { &mut *host };
     if ticks == 0 {
-        return RuuahHostResult::Ignored;
+        return Mind2tHostResult::Ignored;
     }
 
     // `Viewport` is the C surface's `Ignored`: this ABI has no viewport of its own, so handing
@@ -1164,65 +1164,65 @@ pub unsafe extern "C" fn ruuah_host_wheel(
     {
         crate::pointer::Wheel::Send(bytes) => {
             if !bytes.is_empty() && host.host.send(&bytes).is_err() {
-                return RuuahHostResult::SendFailed;
+                return Mind2tHostResult::SendFailed;
             }
-            RuuahHostResult::Success
+            Mind2tHostResult::Success
         }
-        crate::pointer::Wheel::Viewport => RuuahHostResult::Ignored,
+        crate::pointer::Wheel::Viewport => Mind2tHostResult::Ignored,
     }
 }
 
 /// The state behind the opaque workflows handle: parsed templates plus the loader's
 /// error lines, joined for the one-string getter.
-pub struct RuuahWorkflows {
+pub struct Mind2tWorkflows {
     workflows: Vec<workflow::Workflow>,
     errors: String,
 }
 
-/// Field selectors for `ruuah_workflow_field` / `ruuah_workflow_arg`.
-pub const RUUAH_WORKFLOW_NAME: u32 = 0;
-pub const RUUAH_WORKFLOW_DESCRIPTION: u32 = 1;
-pub const RUUAH_WORKFLOW_COMMAND: u32 = 2;
-pub const RUUAH_WORKFLOW_ARG_DEFAULT: u32 = 2;
+/// Field selectors for `mind2t_workflow_field` / `mind2t_workflow_arg`.
+pub const MIND2T_WORKFLOW_NAME: u32 = 0;
+pub const MIND2T_WORKFLOW_DESCRIPTION: u32 = 1;
+pub const MIND2T_WORKFLOW_COMMAND: u32 = 2;
+pub const MIND2T_WORKFLOW_ARG_DEFAULT: u32 = 2;
 
 /// Copies `value` out through the row_text buffer protocol: NULL `out` sizes, a short
 /// buffer refuses with the needed length, and the copy carries no terminator.
-fn copy_out(value: &str, out: *mut u8, cap: usize, out_len: *mut usize) -> RuuahHostResult {
+fn copy_out(value: &str, out: *mut u8, cap: usize, out_len: *mut usize) -> Mind2tHostResult {
     if out_len.is_null() {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     unsafe { out_len.write(value.len()) };
     if out.is_null() || cap < value.len() {
         return if out.is_null() && cap == 0 {
-            RuuahHostResult::Success
+            Mind2tHostResult::Success
         } else {
-            RuuahHostResult::InvalidValue
+            Mind2tHostResult::InvalidValue
         };
     }
     unsafe { std::ptr::copy_nonoverlapping(value.as_ptr(), out, value.len()) };
-    RuuahHostResult::Success
+    Mind2tHostResult::Success
 }
 
 /// Loads the workflow templates from `dir`, or from `~/.ruuah/workflows` when NULL.
 /// Broken files are skipped and their errors kept on the handle
-/// (`ruuah_workflows_errors`) -- one bad template never hides the rest. Returns NULL
+/// (`mind2t_workflows_errors`) -- one bad template never hides the rest. Returns NULL
 /// only when the out-param itself is unusable; an empty or missing directory is a
 /// valid, empty handle.
 ///
 /// # Safety
 /// `dir`, if non-NULL, must be a NUL-terminated path; `out` must be valid for one write.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_workflows_load(
+pub unsafe extern "C" fn mind2t_workflows_load(
     dir: *const c_char,
-    out: *mut *mut RuuahWorkflows,
-) -> RuuahHostResult {
+    out: *mut *mut Mind2tWorkflows,
+) -> Mind2tHostResult {
     if out.is_null() {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let dir = if dir.is_null() {
         let Some(home) = std::env::var_os("HOME") else {
             unsafe { out.write(std::ptr::null_mut()) };
-            return RuuahHostResult::InvalidValue;
+            return Mind2tHostResult::InvalidValue;
         };
         Path::new(&home).join(".ruuah").join("workflows")
     } else {
@@ -1230,29 +1230,29 @@ pub unsafe extern "C" fn ruuah_workflows_load(
             Ok(path) => Path::new(path).to_path_buf(),
             Err(_) => {
                 unsafe { out.write(std::ptr::null_mut()) };
-                return RuuahHostResult::InvalidValue;
+                return Mind2tHostResult::InvalidValue;
             }
         }
     };
     let (workflows, errors) = workflow::load_dir(&dir);
-    let handle = Box::new(RuuahWorkflows { workflows, errors: errors.join("\n") });
+    let handle = Box::new(Mind2tWorkflows { workflows, errors: errors.join("\n") });
     unsafe { out.write(Box::into_raw(handle)) };
-    RuuahHostResult::Success
+    Mind2tHostResult::Success
 }
 
 /// # Safety
-/// `handle` must be NULL or a live handle from `ruuah_workflows_load`.
+/// `handle` must be NULL or a live handle from `mind2t_workflows_load`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_workflows_free(handle: *mut RuuahWorkflows) {
+pub unsafe extern "C" fn mind2t_workflows_free(handle: *mut Mind2tWorkflows) {
     if !handle.is_null() {
         drop(unsafe { Box::from_raw(handle) });
     }
 }
 
 /// # Safety
-/// `handle` must be a live handle from `ruuah_workflows_load`.
+/// `handle` must be a live handle from `mind2t_workflows_load`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_workflows_count(handle: *const RuuahWorkflows) -> u32 {
+pub unsafe extern "C" fn mind2t_workflows_count(handle: *const Mind2tWorkflows) -> u32 {
     if handle.is_null() {
         return 0;
     }
@@ -1265,14 +1265,14 @@ pub unsafe extern "C" fn ruuah_workflows_count(handle: *const RuuahWorkflows) ->
 /// # Safety
 /// `handle` live; `out`/`out_len` per the buffer protocol.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_workflows_errors(
-    handle: *const RuuahWorkflows,
+pub unsafe extern "C" fn mind2t_workflows_errors(
+    handle: *const Mind2tWorkflows,
     out: *mut u8,
     cap: usize,
     out_len: *mut usize,
-) -> RuuahHostResult {
+) -> Mind2tHostResult {
     if handle.is_null() {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     copy_out(&unsafe { &*handle }.errors, out, cap, out_len)
 }
@@ -1283,34 +1283,34 @@ pub unsafe extern "C" fn ruuah_workflows_errors(
 /// # Safety
 /// `handle` live; `out`/`out_len` per the buffer protocol.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_workflow_field(
-    handle: *const RuuahWorkflows,
+pub unsafe extern "C" fn mind2t_workflow_field(
+    handle: *const Mind2tWorkflows,
     index: u32,
     field: u32,
     out: *mut u8,
     cap: usize,
     out_len: *mut usize,
-) -> RuuahHostResult {
+) -> Mind2tHostResult {
     if handle.is_null() {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let Some(workflow) = unsafe { &*handle }.workflows.get(index as usize) else {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     };
     let value = match field {
-        RUUAH_WORKFLOW_NAME => &workflow.name,
-        RUUAH_WORKFLOW_DESCRIPTION => &workflow.description,
-        RUUAH_WORKFLOW_COMMAND => &workflow.command,
-        _ => return RuuahHostResult::InvalidValue,
+        MIND2T_WORKFLOW_NAME => &workflow.name,
+        MIND2T_WORKFLOW_DESCRIPTION => &workflow.description,
+        MIND2T_WORKFLOW_COMMAND => &workflow.command,
+        _ => return Mind2tHostResult::InvalidValue,
     };
     copy_out(value, out, cap, out_len)
 }
 
 /// # Safety
-/// `handle` must be a live handle from `ruuah_workflows_load`.
+/// `handle` must be a live handle from `mind2t_workflows_load`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_workflow_arg_count(
-    handle: *const RuuahWorkflows,
+pub unsafe extern "C" fn mind2t_workflow_arg_count(
+    handle: *const Mind2tWorkflows,
     index: u32,
 ) -> u32 {
     if handle.is_null() {
@@ -1329,38 +1329,38 @@ pub unsafe extern "C" fn ruuah_workflow_arg_count(
 /// # Safety
 /// `handle` live; `out`/`out_len` per the buffer protocol.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_workflow_arg(
-    handle: *const RuuahWorkflows,
+pub unsafe extern "C" fn mind2t_workflow_arg(
+    handle: *const Mind2tWorkflows,
     index: u32,
     arg_index: u32,
     field: u32,
     out: *mut u8,
     cap: usize,
     out_len: *mut usize,
-) -> RuuahHostResult {
+) -> Mind2tHostResult {
     if handle.is_null() {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let Some(arg) = unsafe { &*handle }
         .workflows
         .get(index as usize)
         .and_then(|workflow| workflow.args.get(arg_index as usize))
     else {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     };
     let value = match field {
-        RUUAH_WORKFLOW_NAME => &arg.name,
-        RUUAH_WORKFLOW_DESCRIPTION => &arg.description,
-        RUUAH_WORKFLOW_ARG_DEFAULT => match &arg.default {
+        MIND2T_WORKFLOW_NAME => &arg.name,
+        MIND2T_WORKFLOW_DESCRIPTION => &arg.description,
+        MIND2T_WORKFLOW_ARG_DEFAULT => match &arg.default {
             Some(default) => default,
             None => {
                 if !out_len.is_null() {
                     unsafe { out_len.write(0) };
                 }
-                return RuuahHostResult::Ignored;
+                return Mind2tHostResult::Ignored;
             }
         },
-        _ => return RuuahHostResult::InvalidValue,
+        _ => return Mind2tHostResult::InvalidValue,
     };
     copy_out(value, out, cap, out_len)
 }
@@ -1375,20 +1375,20 @@ pub unsafe extern "C" fn ruuah_workflow_arg(
 /// `handle` live; `args_blob` readable for `blob_len` bytes when non-NULL;
 /// `out`/`out_len` per the buffer protocol.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_workflow_render(
-    handle: *const RuuahWorkflows,
+pub unsafe extern "C" fn mind2t_workflow_render(
+    handle: *const Mind2tWorkflows,
     index: u32,
     args_blob: *const u8,
     blob_len: usize,
     out: *mut u8,
     cap: usize,
     out_len: *mut usize,
-) -> RuuahHostResult {
+) -> Mind2tHostResult {
     if handle.is_null() || (args_blob.is_null() && blob_len != 0) {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let Some(workflow) = unsafe { &*handle }.workflows.get(index as usize) else {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     };
     let blob = if blob_len == 0 {
         &[][..]
@@ -1401,13 +1401,13 @@ pub unsafe extern "C" fn ruuah_workflow_render(
         let (Ok(name), Ok(value)) =
             (std::str::from_utf8(name), std::str::from_utf8(value))
         else {
-            return RuuahHostResult::InvalidValue;
+            return Mind2tHostResult::InvalidValue;
         };
         values.push((name.to_string(), value.to_string()));
     }
     match workflow::render(&workflow.command, &values) {
         Ok(rendered) => copy_out(&rendered, out, cap, out_len),
-        Err(_) => RuuahHostResult::InvalidValue,
+        Err(_) => Mind2tHostResult::InvalidValue,
     }
 }
 
@@ -1419,11 +1419,11 @@ pub unsafe extern "C" fn ruuah_workflow_render(
 /// `INT32_MIN`, at whatever input seam it owns.
 ///
 /// # Safety
-/// `host` must be a live handle from `ruuah_host_spawn`.
+/// `host` must be a live handle from `mind2t_host_spawn`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_host_scroll(host: *mut RuuahHost, rows: i32) -> RuuahHostResult {
+pub unsafe extern "C" fn mind2t_host_scroll(host: *mut Mind2tHost, rows: i32) -> Mind2tHostResult {
     if host.is_null() {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let host = unsafe { &mut *host };
     if rows == i32::MIN {
@@ -1431,25 +1431,25 @@ pub unsafe extern "C" fn ruuah_host_scroll(host: *mut RuuahHost, rows: i32) -> R
     } else {
         host.host.scroll(rows);
     }
-    RuuahHostResult::Success
+    Mind2tHostResult::Success
 }
 
 /// Resizes the pty, the terminal and the render target.
 ///
 /// # Safety
-/// `host` must be a live handle from `ruuah_host_spawn`.
+/// `host` must be a live handle from `mind2t_host_spawn`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_host_resize(
-    host: *mut RuuahHost,
+pub unsafe extern "C" fn mind2t_host_resize(
+    host: *mut Mind2tHost,
     cols: u16,
     rows: u16,
-) -> RuuahHostResult {
+) -> Mind2tHostResult {
     if host.is_null() || cols == 0 || rows == 0 {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let host = unsafe { &mut *host };
     if host.host.resize(Geometry { cols, rows }).is_err() {
-        return RuuahHostResult::ResizeRefused;
+        return Mind2tHostResult::ResizeRefused;
     }
     let Some(mut renderer) = build_renderer(
         &host.gpu,
@@ -1459,7 +1459,7 @@ pub unsafe extern "C" fn ruuah_host_resize(
         host.font_family.as_deref(),
         host.ligatures,
     ) else {
-        return RuuahHostResult::RenderFailed;
+        return Mind2tHostResult::RenderFailed;
     };
     // The rebuild starts from the built-in scheme; the theme must survive it.
     renderer.set_palette(host.palette.clone());
@@ -1469,27 +1469,27 @@ pub unsafe extern "C" fn ruuah_host_resize(
     host.drawn_generation = 0;
     host.pixels = Vec::new();
     host.row_semantics = Vec::new();
-    RuuahHostResult::Success
+    Mind2tHostResult::Success
 }
 
 /// Reports the pixel cell size a renderer would use at `font_size`, without a host.
 ///
 /// The GUI's zoom flow needs this BEFORE any renderer at the new size exists: the window
 /// keeps its pixel size, so the new grid is window-pixels over these metrics, and only
-/// then is `ruuah_host_set_font_size` called with both. Pure query; builds a font stack
+/// then is `mind2t_host_set_font_size` called with both. Pure query; builds a font stack
 /// and throws it away.
 ///
 /// # Safety
 /// `out_width` and `out_height` must be non-NULL and valid for the duration of the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_host_cell_metrics(
+pub unsafe extern "C" fn mind2t_host_cell_metrics(
     font_size: f32,
     font_family: *const c_char,
     out_width: *mut u32,
     out_height: *mut u32,
-) -> RuuahHostResult {
+) -> Mind2tHostResult {
     if out_width.is_null() || out_height.is_null() || !(font_size > 0.0) {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let family = if font_family.is_null() {
         None
@@ -1497,14 +1497,14 @@ pub unsafe extern "C" fn ruuah_host_cell_metrics(
         unsafe { CStr::from_ptr(font_family) }.to_str().ok()
     };
     let Ok(fonts) = FontStack::with_primary(family, font_size) else {
-        return RuuahHostResult::RenderFailed;
+        return Mind2tHostResult::RenderFailed;
     };
     let metrics = fonts.metrics();
     unsafe {
         out_width.write(metrics.width);
         out_height.write(metrics.height);
     }
-    RuuahHostResult::Success
+    Mind2tHostResult::Success
 }
 
 /// Changes the font size live: resizes the pty to the new grid and rebuilds the render
@@ -1512,24 +1512,24 @@ pub unsafe extern "C" fn ruuah_host_cell_metrics(
 ///
 /// A font change IS a geometry change -- the window keeps its pixel size, so the grid
 /// that fits it moves with the cell metrics. The caller derives `cols`/`rows` from
-/// `ruuah_host_cell_metrics` and passes both here; splitting this into set-size plus
-/// `ruuah_host_resize` would rebuild the renderer twice and race a poll in between.
+/// `mind2t_host_cell_metrics` and passes both here; splitting this into set-size plus
+/// `mind2t_host_resize` would rebuild the renderer twice and race a poll in between.
 ///
 /// # Safety
-/// `host` must be a live handle from `ruuah_host_spawn`.
+/// `host` must be a live handle from `mind2t_host_spawn`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_host_set_font_size(
-    host: *mut RuuahHost,
+pub unsafe extern "C" fn mind2t_host_set_font_size(
+    host: *mut Mind2tHost,
     font_size: f32,
     cols: u16,
     rows: u16,
-) -> RuuahHostResult {
+) -> Mind2tHostResult {
     if host.is_null() || cols == 0 || rows == 0 || !(font_size > 0.0) {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let host = unsafe { &mut *host };
     if host.host.resize(Geometry { cols, rows }).is_err() {
-        return RuuahHostResult::ResizeRefused;
+        return Mind2tHostResult::ResizeRefused;
     }
     let Some(mut renderer) = build_renderer(
         &host.gpu,
@@ -1539,7 +1539,7 @@ pub unsafe extern "C" fn ruuah_host_set_font_size(
         host.font_family.as_deref(),
         host.ligatures,
     ) else {
-        return RuuahHostResult::RenderFailed;
+        return Mind2tHostResult::RenderFailed;
     };
     renderer.set_palette(host.palette.clone());
     host.renderer = renderer;
@@ -1547,13 +1547,13 @@ pub unsafe extern "C" fn ruuah_host_set_font_size(
     host.drawn_generation = 0;
     host.pixels = Vec::new();
     host.row_semantics = Vec::new();
-    RuuahHostResult::Success
+    Mind2tHostResult::Success
 }
 
 /// Copies one grid row's text as UTF-8 into `out`, trailing blanks trimmed.
 ///
-/// `semantic` filters by the per-cell OSC 133 mark: `RUUAH_TEXT_ALL` (255) takes every
-/// cell; `RUUAH_ROW_OUTPUT`/`RUUAH_ROW_PROMPT`/`RUUAH_ROW_INPUT` take only cells wearing
+/// `semantic` filters by the per-cell OSC 133 mark: `MIND2T_TEXT_ALL` (255) takes every
+/// cell; `MIND2T_ROW_OUTPUT`/`MIND2T_ROW_PROMPT`/`MIND2T_ROW_INPUT` take only cells wearing
 /// that mark (a filtered-out cell contributes nothing, not a space). This is what makes
 /// "copy command" exact: the prompt row holds `$ ls -la`, and the input filter returns
 /// `ls -la` alone.
@@ -1585,17 +1585,17 @@ pub unsafe extern "C" fn ruuah_host_set_font_size(
 /// `host` must be a live handle; `kind` and `len` must be non-NULL; `out` must point to
 /// `cap` writable bytes or be NULL when `cap` is 0.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_host_next_event(
-    host: *mut RuuahHost,
+pub unsafe extern "C" fn mind2t_host_next_event(
+    host: *mut Mind2tHost,
     kind: *mut u32,
     out: *mut u8,
     cap: usize,
     len: *mut usize,
-) -> RuuahHostResult {
-    use ruuah_vt_core::events::Event;
+) -> Mind2tHostResult {
+    use mind2t_vt_core::events::Event;
 
     if host.is_null() || kind.is_null() || len.is_null() || (out.is_null() && cap != 0) {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     unsafe {
         kind.write(0);
@@ -1606,7 +1606,7 @@ pub unsafe extern "C" fn ruuah_host_next_event(
         host.pending_events.extend(host.host.take_events());
     }
     let Some(event) = host.pending_events.front() else {
-        return RuuahHostResult::Success;
+        return Mind2tHostResult::Success;
     };
 
     let (code, payload): (u32, Vec<u8>) = match event {
@@ -1632,45 +1632,45 @@ pub unsafe extern "C" fn ruuah_host_next_event(
     }
     if payload.len() > cap {
         // Sizing call: the event stays queued for the fetch that fits it.
-        return RuuahHostResult::Success;
+        return Mind2tHostResult::Success;
     }
     if !payload.is_empty() {
         unsafe { std::ptr::copy_nonoverlapping(payload.as_ptr(), out, payload.len()) };
     }
     host.pending_events.pop_front();
-    RuuahHostResult::Success
+    Mind2tHostResult::Success
 }
 
 /// Copies the OSC 8 URI under one cell into `out`, if the cell was printed inside a
 /// hyperlink.
 ///
-/// Reads the last POLLED frame, like `ruuah_host_row_text`. A cell with no link is
+/// Reads the last POLLED frame, like `mind2t_host_row_text`. A cell with no link is
 /// SUCCESS with `*len` 0 -- a click on plain text is not an error. INVALID_VALUE only
 /// for an out-of-range cell or a host that has never polled. Truncation contract
-/// matches `ruuah_host_row_text` (size `cap` from a first call's `*len`).
+/// matches `mind2t_host_row_text` (size `cap` from a first call's `*len`).
 ///
 /// # Safety
 /// `host` must be a live handle; `out` must point to `cap` writable bytes or be NULL
 /// when `cap` is 0; `len` must be non-NULL.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_host_link_at(
-    host: *mut RuuahHost,
+pub unsafe extern "C" fn mind2t_host_link_at(
+    host: *mut Mind2tHost,
     col: u16,
     row: u16,
     out: *mut u8,
     cap: usize,
     len: *mut usize,
-) -> RuuahHostResult {
+) -> Mind2tHostResult {
     if host.is_null() || len.is_null() || (out.is_null() && cap != 0) {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     unsafe { len.write(0) };
     let host = unsafe { &mut *host };
     if !host.frame.is_valid() || row >= host.frame.rows || col >= host.frame.cols {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     let Some(uri) = host.frame.link(col, row) else {
-        return RuuahHostResult::Success;
+        return Mind2tHostResult::Success;
     };
     let bytes = uri.as_bytes();
     unsafe { len.write(bytes.len()) };
@@ -1681,43 +1681,43 @@ pub unsafe extern "C" fn ruuah_host_link_at(
         }
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), out, take) };
     }
-    RuuahHostResult::Success
+    Mind2tHostResult::Success
 }
 
 /// # Safety
 /// `host` must be a live handle; `out` must point to `cap` writable bytes or be NULL when
 /// `cap` is 0; `len` must be non-NULL.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_host_row_text(
-    host: *mut RuuahHost,
+pub unsafe extern "C" fn mind2t_host_row_text(
+    host: *mut Mind2tHost,
     row: u16,
     semantic: u8,
     out: *mut u8,
     cap: usize,
     len: *mut usize,
-) -> RuuahHostResult {
+) -> Mind2tHostResult {
     if host.is_null() || len.is_null() || (out.is_null() && cap != 0) {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     unsafe { len.write(0) };
     let host = unsafe { &mut *host };
     if !host.frame.is_valid() || row >= host.frame.rows {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
 
-    let wanted = |cell_semantic: ruuah_vt_snapshot::Semantic| match semantic {
-        RUUAH_TEXT_ALL => true,
-        RUUAH_ROW_OUTPUT => cell_semantic == ruuah_vt_snapshot::Semantic::Output,
-        RUUAH_ROW_PROMPT => cell_semantic == ruuah_vt_snapshot::Semantic::Prompt,
-        RUUAH_ROW_INPUT => cell_semantic == ruuah_vt_snapshot::Semantic::Input,
+    let wanted = |cell_semantic: mind2t_vt_snapshot::Semantic| match semantic {
+        MIND2T_TEXT_ALL => true,
+        MIND2T_ROW_OUTPUT => cell_semantic == mind2t_vt_snapshot::Semantic::Output,
+        MIND2T_ROW_PROMPT => cell_semantic == mind2t_vt_snapshot::Semantic::Prompt,
+        MIND2T_ROW_INPUT => cell_semantic == mind2t_vt_snapshot::Semantic::Input,
         _ => false,
     };
 
     let mut text = String::new();
-    let mut scratch = [0u8; ruuah_vt_frame::CLUSTER_BYTES];
+    let mut scratch = [0u8; mind2t_vt_frame::CLUSTER_BYTES];
     for x in 0..host.frame.cols {
         let cell = host.frame.cell(x, row);
-        if ruuah_vt_frame::cell_width(cell) == 0 || !wanted(cell.semantic()) {
+        if mind2t_vt_frame::cell_width(cell) == 0 || !wanted(cell.semantic()) {
             continue;
         }
         let cluster = cell.cluster(&mut scratch);
@@ -1737,16 +1737,16 @@ pub unsafe extern "C" fn ruuah_host_row_text(
         let boundary = (0..=copy).rev().find(|i| trimmed.is_char_boundary(*i)).unwrap_or(0);
         unsafe { std::ptr::copy_nonoverlapping(trimmed.as_ptr(), out, boundary) };
     }
-    RuuahHostResult::Success
+    Mind2tHostResult::Success
 }
 
 /// Tears down the child, the pump thread and the renderer. NULL is a no-op.
 ///
 /// # Safety
-/// `host` must be NULL or a live handle from `ruuah_host_spawn`, and must not be used
+/// `host` must be NULL or a live handle from `mind2t_host_spawn`, and must not be used
 /// again after this call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_host_free(host: *mut RuuahHost) {
+pub unsafe extern "C" fn mind2t_host_free(host: *mut Mind2tHost) {
     if host.is_null() {
         return;
     }
@@ -1756,19 +1756,19 @@ pub unsafe extern "C" fn ruuah_host_free(host: *mut RuuahHost) {
 /// Loads `dir/config.toml` (and the theme it names) into a new handle.
 ///
 /// Always yields a usable config: a missing file is the defaults, and a file that could
-/// not be honoured is the defaults plus `ruuah_config_error`. `dir` NULL means `~/.ruuah`.
+/// not be honoured is the defaults plus `mind2t_config_error`. `dir` NULL means `~/.ruuah`.
 /// Fails only on a NULL out-param or a non-UTF-8 dir.
 ///
 /// # Safety
 /// `dir` must be NULL or a NUL-terminated string; `out` must be non-NULL and valid for
 /// the duration of the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_config_load(
+pub unsafe extern "C" fn mind2t_config_load(
     dir: *const c_char,
-    out: *mut *mut RuuahConfig,
-) -> RuuahHostResult {
+    out: *mut *mut Mind2tConfig,
+) -> Mind2tHostResult {
     if out.is_null() {
-        return RuuahHostResult::InvalidValue;
+        return Mind2tHostResult::InvalidValue;
     }
     unsafe { out.write(std::ptr::null_mut()) };
     let dir = if dir.is_null() {
@@ -1776,7 +1776,7 @@ pub unsafe extern "C" fn ruuah_config_load(
     } else {
         match unsafe { CStr::from_ptr(dir) }.to_str() {
             Ok(text) => Some(Path::new(text).to_path_buf()),
-            Err(_) => return RuuahHostResult::InvalidValue,
+            Err(_) => return Mind2tHostResult::InvalidValue,
         }
     };
 
@@ -1789,18 +1789,18 @@ pub unsafe extern "C" fn ruuah_config_load(
         .as_deref()
         .and_then(|text| CString::new(text).ok());
     let error = config.error.as_deref().and_then(|text| CString::new(text).ok());
-    let handle = Box::new(RuuahConfig { config, shell, font_family, error });
+    let handle = Box::new(Mind2tConfig { config, shell, font_family, error });
     unsafe { out.write(Box::into_raw(handle)) };
-    RuuahHostResult::Success
+    Mind2tHostResult::Success
 }
 
 /// Font size in logical pixels, 0 when the config does not set one. The embedder applies
 /// its own default and backing-scale factor.
 ///
 /// # Safety
-/// `config` must be a live handle from `ruuah_config_load`.
+/// `config` must be a live handle from `mind2t_config_load`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_config_font_size(config: *const RuuahConfig) -> f32 {
+pub unsafe extern "C" fn mind2t_config_font_size(config: *const Mind2tConfig) -> f32 {
     if config.is_null() {
         return 0.0;
     }
@@ -1810,10 +1810,10 @@ pub unsafe extern "C" fn ruuah_config_font_size(config: *const RuuahConfig) -> f
 /// The configured auto-direction, or `fallback` when the config does not say.
 ///
 /// # Safety
-/// `config` must be a live handle from `ruuah_config_load`.
+/// `config` must be a live handle from `mind2t_config_load`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_config_auto_direction(
-    config: *const RuuahConfig,
+pub unsafe extern "C" fn mind2t_config_auto_direction(
+    config: *const Mind2tConfig,
     fallback: bool,
 ) -> bool {
     if config.is_null() {
@@ -1826,12 +1826,12 @@ pub unsafe extern "C" fn ruuah_config_auto_direction(
 ///
 /// FALSE unless `config.toml` says `reports = true`, and false for a NULL handle.
 /// Exposed so an embedder can show the posture rather than guess it; the grant
-/// itself travels through `RuuahHostOptions.config` at spawn, not through this.
+/// itself travels through `Mind2tHostOptions.config` at spawn, not through this.
 ///
 /// # Safety
-/// `config` must be NULL or a live handle from `ruuah_config_load`.
+/// `config` must be NULL or a live handle from `mind2t_config_load`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_config_reports(config: *const RuuahConfig) -> bool {
+pub unsafe extern "C" fn mind2t_config_reports(config: *const Mind2tConfig) -> bool {
     if config.is_null() {
         return false;
     }
@@ -1845,9 +1845,9 @@ pub unsafe extern "C" fn ruuah_config_reports(config: *const RuuahConfig) -> boo
 /// allowed.
 ///
 /// # Safety
-/// `config` must be NULL or a live handle from `ruuah_config_load`.
+/// `config` must be NULL or a live handle from `mind2t_config_load`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_config_panels(config: *const RuuahConfig) -> bool {
+pub unsafe extern "C" fn mind2t_config_panels(config: *const Mind2tConfig) -> bool {
     if config.is_null() {
         return false;
     }
@@ -1855,12 +1855,12 @@ pub unsafe extern "C" fn ruuah_config_panels(config: *const RuuahConfig) -> bool
 }
 
 /// The configured lead font family, or NULL when unset. Borrowed: valid until
-/// `ruuah_config_free`.
+/// `mind2t_config_free`.
 ///
 /// # Safety
-/// `config` must be NULL or a live handle from `ruuah_config_load`.
+/// `config` must be NULL or a live handle from `mind2t_config_load`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_config_font_family(config: *const RuuahConfig) -> *const c_char {
+pub unsafe extern "C" fn mind2t_config_font_family(config: *const Mind2tConfig) -> *const c_char {
     if config.is_null() {
         return std::ptr::null();
     }
@@ -1871,12 +1871,12 @@ pub unsafe extern "C" fn ruuah_config_font_family(config: *const RuuahConfig) ->
 }
 
 /// The configured shell command line, or NULL when unset. Borrowed: valid until
-/// `ruuah_config_free` on the same handle.
+/// `mind2t_config_free` on the same handle.
 ///
 /// # Safety
-/// `config` must be a live handle from `ruuah_config_load`.
+/// `config` must be a live handle from `mind2t_config_load`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_config_shell(config: *const RuuahConfig) -> *const c_char {
+pub unsafe extern "C" fn mind2t_config_shell(config: *const Mind2tConfig) -> *const c_char {
     if config.is_null() {
         return std::ptr::null();
     }
@@ -1887,13 +1887,13 @@ pub unsafe extern "C" fn ruuah_config_shell(config: *const RuuahConfig) -> *cons
 }
 
 /// Everything that went wrong while loading, newline-joined -- or NULL when the load was
-/// clean. Borrowed: valid until `ruuah_config_free` on the same handle. A GUI shows this
+/// clean. Borrowed: valid until `mind2t_config_free` on the same handle. A GUI shows this
 /// loudly; a config that silently half-applies is worse than one that errors.
 ///
 /// # Safety
-/// `config` must be a live handle from `ruuah_config_load`.
+/// `config` must be a live handle from `mind2t_config_load`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_config_error(config: *const RuuahConfig) -> *const c_char {
+pub unsafe extern "C" fn mind2t_config_error(config: *const Mind2tConfig) -> *const c_char {
     if config.is_null() {
         return std::ptr::null();
     }
@@ -1906,10 +1906,10 @@ pub unsafe extern "C" fn ruuah_config_error(config: *const RuuahConfig) -> *cons
 /// Frees a config handle. NULL is a no-op. Strings lent by the getters die here.
 ///
 /// # Safety
-/// `config` must be NULL or a live handle from `ruuah_config_load`, and must not be used
+/// `config` must be NULL or a live handle from `mind2t_config_load`, and must not be used
 /// again after this call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ruuah_config_free(config: *mut RuuahConfig) {
+pub unsafe extern "C" fn mind2t_config_free(config: *mut Mind2tConfig) {
     if config.is_null() {
         return;
     }

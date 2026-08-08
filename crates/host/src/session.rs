@@ -18,15 +18,15 @@
 use std::process::Command;
 
 use crate::pointer::{Input, Pointer, Wheel};
-use ruuah_vt_core::events::Event;
-use ruuah_vt_core::selection;
-use ruuah_vt_frame::{BaseDirection, Frame, FrameReader, FrameSelection};
-use ruuah_vt_pty::key::{KeyOptions, OptionAsAlt};
+use mind2t_vt_core::events::Event;
+use mind2t_vt_core::selection;
+use mind2t_vt_frame::{BaseDirection, Frame, FrameReader, FrameSelection};
+use mind2t_vt_pty::key::{KeyOptions, OptionAsAlt};
 // Re-exported under host-facing names: a caller wiring a window should not have to learn that
 // the mouse encoder lives in the pty crate to name a click.
-pub use ruuah_vt_pty::mouse::{Action as MouseAction, Mods as MouseMods};
-use ruuah_vt_pty::{Geometry, Host, Options, SpawnError};
-use ruuah_vt_render::{
+pub use mind2t_vt_pty::mouse::{Action as MouseAction, Mods as MouseMods};
+use mind2t_vt_pty::{Geometry, Host, Options, SpawnError};
+use mind2t_vt_render::{
     CellMetrics, FontStack, GpuContext, GpuSurface, Palette, PresentError, Renderer, WindowTarget,
 };
 
@@ -46,7 +46,7 @@ pub const MAX_FONT_SIZE: f32 = 72.0;
 /// this frame: the conversion is an unwrap of two `Point`s, and the seam that used to be
 /// dangerous - absolute scrollback rows against viewport rows - no longer exists on this path
 /// because the probe was fed viewport rows to begin with.
-fn into_frame_selection(found: &ruuah_vt_snapshot::Selection) -> FrameSelection {
+fn into_frame_selection(found: &mind2t_vt_snapshot::Selection) -> FrameSelection {
     FrameSelection {
         start: (found.start.x, found.start.y),
         end: (found.end.x, found.end.y),
@@ -127,7 +127,7 @@ impl Session {
     /// A composited frame is one render pass, and a bind group can only carry buffers belonging
     /// to the device that pass runs on. So N panes on N devices is not a slow path, it is a wgpu
     /// validation failure at the first frame that draws more than one of them
-    /// ([`ruuah_vt_render::WindowTarget::present_all`]).
+    /// ([`mind2t_vt_render::WindowTarget::present_all`]).
     ///
     /// It cannot be caught by any test that never presents, which is exactly what happened: the
     /// canvas landed with real children, correct geometry and a green suite, and could not have
@@ -232,7 +232,7 @@ impl Session {
 
     /// What the visible grid says, rows joined by newlines.
     ///
-    /// The Rust twin of `ruuah_host_row_text`, and the same idea the product is built on: agent
+    /// The Rust twin of `mind2t_host_row_text`, and the same idea the product is built on: agent
     /// state comes from a TYPED GRID, not from regexing ANSI out of a byte stream. A wide cell's
     /// spacer tail contributes nothing (its glyph already came from the head), while a cell with
     /// no text is a space - so column positions in the result line up with columns on screen.
@@ -240,14 +240,14 @@ impl Session {
     /// Reads the last POLLED frame, exactly like every other reader here: a caller that has not
     /// polled gets what it last saw, not a fresh scrape of the child.
     pub fn visible_text(&self) -> String {
-        let mut scratch = [0u8; ruuah_vt_frame::CLUSTER_BYTES];
+        let mut scratch = [0u8; mind2t_vt_frame::CLUSTER_BYTES];
         let mut out = String::new();
         for y in 0..self.frame.rows {
             for x in 0..self.frame.cols {
                 let cell = self.frame.cell(x, y);
                 if cell.has_text() {
                     out.push_str(cell.cluster(&mut scratch));
-                } else if cell.wide() != ruuah_vt_snapshot::Wide::SpacerTail {
+                } else if cell.wide() != mind2t_vt_snapshot::Wide::SpacerTail {
                     out.push(' ');
                 }
             }
@@ -296,7 +296,7 @@ impl Session {
     ///
     /// `Event::Pwd` is decoded HERE, through [`crate::cwd::normalize`], because that is the one
     /// decoder in this workspace. The core stores the report raw (as the oracle does), the C
-    /// path decodes it in `ruuah_cwd_path`, and a Rust host that percent-decoded a `file://`
+    /// path decodes it in `mind2t_cwd_path`, and a Rust host that percent-decoded a `file://`
     /// URI for itself would be the second implementation of a rule that has already been wrong
     /// once (`path` is a special variable in zsh, tied to $PATH as an array).
     pub fn take_events(&mut self) -> Vec<Event> {
@@ -382,7 +382,7 @@ impl Session {
     ///
     /// Public because a canvas clears ONCE for the whole window and then blits N panes into it,
     /// so the colour has to be askable from outside the session that owns it.
-    pub fn clear_color(&self) -> ruuah_vt_render::Rgba {
+    pub fn clear_color(&self) -> mind2t_vt_render::Rgba {
         let palette = self.renderer.palette();
         if self.frame.is_valid() {
             let style = self.frame.style(self.frame.cell(0, 0).style_id());
@@ -626,7 +626,7 @@ impl Session {
 
     /// The clipboard text for the current highlight, or `None` when nothing is selected.
     ///
-    /// Formatted by `ruuah_vt_core::selection::format`, which is the function the differential
+    /// Formatted by `mind2t_vt_core::selection::format`, which is the function the differential
     /// corpus measures against the oracle - trailing whitespace, soft-wrap joining and all. A
     /// host that walked the grid itself would produce text that looks right and pastes wrong.
     pub fn selection_text(&self) -> Option<String> {
@@ -636,9 +636,9 @@ impl Session {
         Some(selection::format(
             &rows,
             self.frame.cols,
-            &ruuah_vt_snapshot::Selection {
-                start: ruuah_vt_snapshot::Point { x: sx, y: sy },
-                end: ruuah_vt_snapshot::Point { x: ex, y: ey },
+            &mind2t_vt_snapshot::Selection {
+                start: mind2t_vt_snapshot::Point { x: sx, y: sy },
+                end: mind2t_vt_snapshot::Point { x: ex, y: ey },
                 rectangle: false,
             },
         ))
@@ -650,16 +650,16 @@ impl Session {
         x: f32,
         y: f32,
         probe: fn(
-            &[ruuah_vt_snapshot::Row],
+            &[mind2t_vt_snapshot::Row],
             u16,
-            ruuah_vt_snapshot::Point,
-        ) -> Option<ruuah_vt_snapshot::Selection>,
+            mind2t_vt_snapshot::Point,
+        ) -> Option<mind2t_vt_snapshot::Selection>,
     ) -> bool {
         let Some((col, row)) = self.cell_at(x, y) else {
             return false;
         };
         let rows = self.frame.viewport_rows();
-        match probe(&rows, self.frame.cols, ruuah_vt_snapshot::Point { x: col, y: row }) {
+        match probe(&rows, self.frame.cols, mind2t_vt_snapshot::Point { x: col, y: row }) {
             Some(found) => {
                 self.set_selection(Some(into_frame_selection(&found)));
                 true

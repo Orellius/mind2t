@@ -13,9 +13,9 @@
 //! The controls at the bottom prove the comparison can fail and the matrix is not
 //! vacuously silent.
 
-use ruuah_vt_core::mouse::{MouseEvent, MouseFormat};
-use ruuah_vt_ghostty::sys;
-use ruuah_vt_pty::mouse::{self, Action, Button, Event, Mods, Options, Size};
+use mind2t_vt_core::mouse::{MouseEvent, MouseFormat};
+use mind2t_vt_ghostty::sys;
+use mind2t_vt_pty::mouse::{self, Action, Button, Event, Mods, Options, Size};
 
 /// One geometry shared with the Rust side.
 #[derive(Clone, Copy)]
@@ -167,7 +167,7 @@ impl OracleEncoder {
     }
 
     /// From the oracle TERMINAL's state -- the derived-mapping comparison.
-    fn set_from_terminal(&self, terminal: &ruuah_vt_ghostty::Terminal) {
+    fn set_from_terminal(&self, terminal: &mind2t_vt_ghostty::Terminal) {
         unsafe {
             sys::ghostty_mouse_encoder_setopt_from_terminal(self.raw, terminal.raw());
         }
@@ -406,14 +406,14 @@ fn terminal_derived_state_encodes_identically_after_every_mode_sequence() {
     let mut agreed_nonempty = 0;
     for bytes in sequences {
         let mut oracle_terminal =
-            ruuah_vt_ghostty::Terminal::new(20, 5).expect("oracle terminal");
+            mind2t_vt_ghostty::Terminal::new(20, 5).expect("oracle terminal");
         oracle_terminal.write(bytes.as_bytes());
         let oracle = OracleEncoder::new(geometry, false);
         oracle.set_from_terminal(&oracle_terminal);
         oracle.set_any_button(true);
         let expected = oracle.encode(&probe);
 
-        let mut terminal = ruuah_vt_core::terminal::Terminal::new(20, 5);
+        let mut terminal = mind2t_vt_core::terminal::Terminal::new(20, 5);
         terminal.write(bytes.as_bytes());
         let got = mouse::encode(
             probe,

@@ -2,7 +2,7 @@
 //!
 //! The tenth blind spot in a row. Every earlier harness stops at a Rust API: vim.rs proves
 //! the pty -> frame -> renderer chain, backend.rs proves CPU == GPU, differential.rs proves
-//! the `ghostty_*` readout -- and a `ruuah_host_*` surface that returned a black buffer, or
+//! the `ghostty_*` readout -- and a `mind2t_host_*` surface that returned a black buffer, or
 //! never polled, or drew with the wrong font size, would fail none of them.
 //!
 //! The oracle: spawn a child through the C surface whose output is a known byte sequence,
@@ -18,23 +18,23 @@ use std::ffi::CString;
 use std::ptr;
 use std::time::{Duration, Instant};
 
-use ruuah_vt_core::Terminal;
-use ruuah_vt_frame::{BaseDirection, Frame, Publisher, channel};
-use ruuah_vt_host::{
-    DEFAULT_FONT_SIZE, RuuahConfig, RuuahHost, RuuahHostFrame, RuuahHostOptions, RuuahHostResult,
-    ruuah_config_error, ruuah_config_free, ruuah_config_load, ruuah_host_free, ruuah_host_key,
-    ruuah_host_mouse, ruuah_host_mouse_geometry, ruuah_host_paste, ruuah_host_poll,
-    ruuah_host_poll_skipping_row_for_testing, ruuah_host_resize, ruuah_host_row_text,
-    ruuah_host_scroll, ruuah_host_send, ruuah_host_spawn, ruuah_host_wheel,
+use mind2t_vt_core::Terminal;
+use mind2t_vt_frame::{BaseDirection, Frame, Publisher, channel};
+use mind2t_vt_host::{
+    DEFAULT_FONT_SIZE, Mind2tConfig, Mind2tHost, Mind2tHostFrame, Mind2tHostOptions, Mind2tHostResult,
+    mind2t_config_error, mind2t_config_free, mind2t_config_load, mind2t_host_free, mind2t_host_key,
+    mind2t_host_mouse, mind2t_host_mouse_geometry, mind2t_host_paste, mind2t_host_poll,
+    mind2t_host_poll_skipping_row_for_testing, mind2t_host_resize, mind2t_host_row_text,
+    mind2t_host_scroll, mind2t_host_send, mind2t_host_spawn, mind2t_host_wheel,
 };
-use ruuah_vt_render::{FontStack, Renderer};
+use mind2t_vt_render::{FontStack, Renderer};
 
 const COLS: u16 = 80;
 const ROWS: u16 = 24;
 const PATIENCE: Duration = Duration::from_secs(10);
 
 /// What the child's printf produces on the wire: the pty's ONLCR turns `\n` into `\r\n`.
-const WIRE: &[u8] = b"RUUAH-VT-HOST\r\n";
+const WIRE: &[u8] = b"MIND2T-VT-HOST\r\n";
 
 /// The pixels a correct host must produce for WIRE, rendered through the Rust API.
 fn reference_pixels() -> (Vec<u8>, u32, u32) {
@@ -73,8 +73,8 @@ fn first_difference(a: &[u8], b: &[u8]) -> Option<usize> {
 fn host_pixels_match_a_reference_renderer_fed_the_same_bytes() {
     let (want, want_width, want_height) = reference_pixels();
 
-    let command = CString::new("printf 'RUUAH-VT-HOST\\n'").expect("command");
-    let options = RuuahHostOptions {
+    let command = CString::new("printf 'MIND2T-VT-HOST\\n'").expect("command");
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -83,27 +83,27 @@ fn host_pixels_match_a_reference_renderer_fed_the_same_bytes() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
-    let result = unsafe { ruuah_host_spawn(&options, &mut host) };
+    let mut host: *mut Mind2tHost = ptr::null_mut();
+    let result = unsafe { mind2t_host_spawn(&options, &mut host) };
     assert_eq!(
         result,
-        RuuahHostResult::Success,
+        Mind2tHostResult::Success,
         "spawn through the C surface failed: {result:?}"
     );
 
-    let mut last: Option<RuuahHostFrame> = None;
+    let mut last: Option<Mind2tHostFrame> = None;
     let deadline = Instant::now() + PATIENCE;
     while Instant::now() < deadline {
         let mut polled = empty_frame();
-        let result = unsafe { ruuah_host_poll(host, &mut polled) };
-        assert_eq!(result, RuuahHostResult::Success, "poll failed: {result:?}");
+        let result = unsafe { mind2t_host_poll(host, &mut polled) };
+        assert_eq!(result, Mind2tHostResult::Success, "poll failed: {result:?}");
 
         if !polled.pixels.is_null() {
             assert_eq!((polled.width, polled.height), (want_width, want_height));
             let len = polled.width as usize * polled.height as usize * 4;
             let got = unsafe { std::slice::from_raw_parts(polled.pixels, len) };
             if got == want.as_slice() {
-                unsafe { ruuah_host_free(host) };
+                unsafe { mind2t_host_free(host) };
                 return;
             }
             last = Some(polled);
@@ -131,7 +131,7 @@ fn host_pixels_match_a_reference_renderer_fed_the_same_bytes() {
         }
         None => "no poll ever returned pixels".to_string(),
     };
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
     panic!("no polled frame matched the reference within {PATIENCE:?}: {verdict}");
 }
 
@@ -139,7 +139,7 @@ fn host_pixels_match_a_reference_renderer_fed_the_same_bytes() {
 /// (the same rule finding 5 pinned on `ghostty_terminal_new`).
 #[test]
 fn a_refused_spawn_nulls_the_out_param() {
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: 0,
         rows: ROWS,
         font_size: 0.0,
@@ -148,9 +148,9 @@ fn a_refused_spawn_nulls_the_out_param() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::dangling_mut();
-    let result = unsafe { ruuah_host_spawn(&options, &mut host) };
-    assert_eq!(result, RuuahHostResult::InvalidValue);
+    let mut host: *mut Mind2tHost = ptr::dangling_mut();
+    let result = unsafe { mind2t_host_spawn(&options, &mut host) };
+    assert_eq!(result, Mind2tHostResult::InvalidValue);
     assert!(
         host.is_null(),
         "a failed spawn must not leave *out dangling"
@@ -163,8 +163,8 @@ fn a_refused_spawn_nulls_the_out_param() {
 fn a_host_that_skips_a_row_is_caught() {
     let (want, _, _) = reference_pixels();
 
-    let command = CString::new("printf 'RUUAH-VT-HOST\\n'").expect("command");
-    let options = RuuahHostOptions {
+    let command = CString::new("printf 'MIND2T-VT-HOST\\n'").expect("command");
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -173,9 +173,9 @@ fn a_host_that_skips_a_row_is_caught() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
-    let result = unsafe { ruuah_host_spawn(&options, &mut host) };
-    assert_eq!(result, RuuahHostResult::Success);
+    let mut host: *mut Mind2tHost = ptr::null_mut();
+    let result = unsafe { mind2t_host_spawn(&options, &mut host) };
+    assert_eq!(result, Mind2tHostResult::Success);
 
     // Drain until the child is gone and its final frame has been drawn, exactly as the
     // passing test would -- except every draw declines row 0, where the text lives.
@@ -183,8 +183,8 @@ fn a_host_that_skips_a_row_is_caught() {
     let mut frame = None;
     while Instant::now() < deadline {
         let mut polled = empty_frame();
-        let result = unsafe { ruuah_host_poll_skipping_row_for_testing(host, 0, &mut polled) };
-        assert_eq!(result, RuuahHostResult::Success);
+        let result = unsafe { mind2t_host_poll_skipping_row_for_testing(host, 0, &mut polled) };
+        assert_eq!(result, Mind2tHostResult::Success);
         if polled.child_exited && !polled.pixels.is_null() && !polled.drew {
             frame = Some(polled);
             break;
@@ -207,7 +207,7 @@ fn a_host_that_skips_a_row_is_caught() {
         index < row_band,
         "the difference must lie in the skipped row's band, not at byte {index}"
     );
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
 }
 
 /// The send seam, end to end: bytes written through the C surface reach the child's input,
@@ -232,7 +232,7 @@ fn send_reaches_the_child_and_comes_back_as_pixels() {
     };
 
     let command = CString::new("cat").expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -241,16 +241,16 @@ fn send_reaches_the_child_and_comes_back_as_pixels() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
 
     let line = b"ping\r";
     assert_eq!(
-        unsafe { ruuah_host_send(host, line.as_ptr(), line.len()) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_send(host, line.as_ptr(), line.len()) },
+        Mind2tHostResult::Success
     );
 
     let deadline = Instant::now() + PATIENCE;
@@ -258,8 +258,8 @@ fn send_reaches_the_child_and_comes_back_as_pixels() {
     while Instant::now() < deadline {
         let mut polled = empty_frame();
         assert_eq!(
-            unsafe { ruuah_host_poll(host, &mut polled) },
-            RuuahHostResult::Success
+            unsafe { mind2t_host_poll(host, &mut polled) },
+            Mind2tHostResult::Success
         );
         if !polled.pixels.is_null() {
             let len = polled.width as usize * polled.height as usize * 4;
@@ -271,7 +271,7 @@ fn send_reaches_the_child_and_comes_back_as_pixels() {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
     assert!(
         matched,
         "the sent line never came back as the expected pixels"
@@ -295,7 +295,7 @@ fn auto_direction_reorders_a_hebrew_row_through_the_c_boundary() {
     );
 
     let command = CString::new("printf 'שלום עולם\\n'").expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -304,17 +304,17 @@ fn auto_direction_reorders_a_hebrew_row_through_the_c_boundary() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
-    let result = unsafe { ruuah_host_spawn(&options, &mut host) };
-    assert_eq!(result, RuuahHostResult::Success, "spawn failed: {result:?}");
+    let mut host: *mut Mind2tHost = ptr::null_mut();
+    let result = unsafe { mind2t_host_spawn(&options, &mut host) };
+    assert_eq!(result, Mind2tHostResult::Success, "spawn failed: {result:?}");
 
     let mut matched = false;
     let deadline = Instant::now() + PATIENCE;
     while Instant::now() < deadline {
         let mut polled = empty_frame();
         assert_eq!(
-            unsafe { ruuah_host_poll(host, &mut polled) },
-            RuuahHostResult::Success
+            unsafe { mind2t_host_poll(host, &mut polled) },
+            Mind2tHostResult::Success
         );
         if !polled.pixels.is_null() {
             assert_eq!((polled.width, polled.height), (want_width, want_height));
@@ -327,7 +327,7 @@ fn auto_direction_reorders_a_hebrew_row_through_the_c_boundary() {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
     assert!(
         matched,
         "a host spawned with auto_direction never produced the Auto-base layout"
@@ -335,13 +335,13 @@ fn auto_direction_reorders_a_hebrew_row_through_the_c_boundary() {
 }
 
 /// Waits until the host's polled pixels byte-match `want`, or the patience runs out.
-fn poll_until_pixels(host: *mut RuuahHost, want: &[u8]) -> bool {
+fn poll_until_pixels(host: *mut Mind2tHost, want: &[u8]) -> bool {
     let deadline = Instant::now() + PATIENCE;
     while Instant::now() < deadline {
         let mut polled = empty_frame();
         assert_eq!(
-            unsafe { ruuah_host_poll(host, &mut polled) },
-            RuuahHostResult::Success
+            unsafe { mind2t_host_poll(host, &mut polled) },
+            Mind2tHostResult::Success
         );
         if !polled.pixels.is_null() {
             let len = polled.width as usize * polled.height as usize * 4;
@@ -370,7 +370,7 @@ fn a_paste_is_fenced_when_the_child_enabled_2004() {
     let (want, ..) = reference_pixels_for(after_paste, BaseDirection::LeftToRight);
 
     let command = CString::new("printf '\\033[?2004hREADY\\n'; exec cat").expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -379,25 +379,25 @@ fn a_paste_is_fenced_when_the_child_enabled_2004() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
 
     let saw_ready = poll_until_pixels(host, &ready);
     if !saw_ready {
-        unsafe { ruuah_host_free(host) };
+        unsafe { mind2t_host_free(host) };
         panic!("the child's READY line never appeared, so the mode bit was never polled");
     }
 
     let paste = b"hi";
     assert_eq!(
-        unsafe { ruuah_host_paste(host, paste.as_ptr(), paste.len()) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_paste(host, paste.as_ptr(), paste.len()) },
+        Mind2tHostResult::Success
     );
     let matched = poll_until_pixels(host, &want);
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
     assert!(matched, "the fenced paste never echoed back as pixels");
 }
 
@@ -411,7 +411,7 @@ fn a_paste_is_bare_when_the_child_did_not_enable_2004() {
     let (want, ..) = reference_pixels_for(b"READY\r\nhi", BaseDirection::LeftToRight);
 
     let command = CString::new("printf 'READY\\n'; exec cat").expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -420,25 +420,25 @@ fn a_paste_is_bare_when_the_child_did_not_enable_2004() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
 
     let saw_ready = poll_until_pixels(host, &ready);
     if !saw_ready {
-        unsafe { ruuah_host_free(host) };
+        unsafe { mind2t_host_free(host) };
         panic!("the child's READY line never appeared");
     }
 
     let paste = b"hi";
     assert_eq!(
-        unsafe { ruuah_host_paste(host, paste.as_ptr(), paste.len()) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_paste(host, paste.as_ptr(), paste.len()) },
+        Mind2tHostResult::Success
     );
     let matched = poll_until_pixels(host, &want);
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
     assert!(matched, "the bare paste never echoed back as pixels");
 }
 
@@ -456,7 +456,7 @@ fn a_click_is_reported_when_the_child_enabled_sgr_mouse() {
 
     let command =
         CString::new("printf '\\033[?1000h\\033[?1006hREADY\\n'; exec cat").expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -465,35 +465,35 @@ fn a_click_is_reported_when_the_child_enabled_sgr_mouse() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
 
     if !poll_until_pixels(host, &ready) {
-        unsafe { ruuah_host_free(host) };
+        unsafe { mind2t_host_free(host) };
         panic!("the child's READY line never appeared, so the mode bits were never polled");
     }
 
     // Any generous screen works: only the CELL comes from the renderer's metrics, and
     // pixel (1,1) is inside cell (0,0) at every font size.
     assert_eq!(
-        unsafe { ruuah_host_mouse_geometry(host, 10_000, 10_000, 0, 0, 0, 0) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_mouse_geometry(host, 10_000, 10_000, 0, 0, 0, 0) },
+        Mind2tHostResult::Success
     );
     assert_eq!(
-        unsafe { ruuah_host_mouse(host, 0, 1, 0, 1.0, 1.0) },
-        RuuahHostResult::Success,
+        unsafe { mind2t_host_mouse(host, 0, 1, 0, 1.0, 1.0) },
+        Mind2tHostResult::Success,
         "press"
     );
     assert_eq!(
-        unsafe { ruuah_host_mouse(host, 1, 1, 0, 1.0, 1.0) },
-        RuuahHostResult::Success,
+        unsafe { mind2t_host_mouse(host, 1, 1, 0, 1.0, 1.0) },
+        Mind2tHostResult::Success,
         "release"
     );
     let matched = poll_until_pixels(host, &want);
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
     assert!(matched, "the SGR press/release pair never echoed back as pixels");
 }
 
@@ -506,7 +506,7 @@ fn a_click_is_ignored_when_the_child_never_asked_for_mouse() {
     let (ready, ..) = reference_pixels_for(b"READY\r\n", BaseDirection::LeftToRight);
 
     let command = CString::new("printf 'READY\\n'; exec cat").expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -515,22 +515,22 @@ fn a_click_is_ignored_when_the_child_never_asked_for_mouse() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
     if !poll_until_pixels(host, &ready) {
-        unsafe { ruuah_host_free(host) };
+        unsafe { mind2t_host_free(host) };
         panic!("the child's READY line never appeared");
     }
     assert_eq!(
-        unsafe { ruuah_host_mouse_geometry(host, 10_000, 10_000, 0, 0, 0, 0) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_mouse_geometry(host, 10_000, 10_000, 0, 0, 0, 0) },
+        Mind2tHostResult::Success
     );
-    let verdict = unsafe { ruuah_host_mouse(host, 0, 1, 0, 1.0, 1.0) };
-    unsafe { ruuah_host_free(host) };
-    assert_eq!(verdict, RuuahHostResult::Ignored);
+    let verdict = unsafe { mind2t_host_mouse(host, 0, 1, 0, 1.0, 1.0) };
+    unsafe { mind2t_host_free(host) };
+    assert_eq!(verdict, Mind2tHostResult::Ignored);
 }
 
 /// Wheel precedence, both live branches: on the alternate screen with 1007 at its
@@ -546,7 +546,7 @@ fn a_wheel_becomes_arrows_on_the_alternate_screen() {
     let (want_csi, ..) = reference_pixels_for(after_csi, BaseDirection::LeftToRight);
 
     let command = CString::new("printf '\\033[?1049hREADY\\n'; exec cat").expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -555,25 +555,25 @@ fn a_wheel_becomes_arrows_on_the_alternate_screen() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
     if !poll_until_pixels(host, &ready) {
-        unsafe { ruuah_host_free(host) };
+        unsafe { mind2t_host_free(host) };
         panic!("the child's READY line never appeared");
     }
     assert_eq!(
-        unsafe { ruuah_host_mouse_geometry(host, 10_000, 10_000, 0, 0, 0, 0) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_mouse_geometry(host, 10_000, 10_000, 0, 0, 0, 0) },
+        Mind2tHostResult::Success
     );
     assert_eq!(
-        unsafe { ruuah_host_wheel(host, 1.0, 1.0, 2, 0) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_wheel(host, 1.0, 1.0, 2, 0) },
+        Mind2tHostResult::Success
     );
     let matched = poll_until_pixels(host, &want_csi);
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
     assert!(matched, "the wheel's CSI A arrows never echoed back as pixels");
 }
 
@@ -590,7 +590,7 @@ fn a_wheel_takes_the_application_form_under_decckm() {
 
     let command =
         CString::new("printf '\\033[?1049h\\033[?1hREADY\\n'; exec cat").expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -599,25 +599,25 @@ fn a_wheel_takes_the_application_form_under_decckm() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
     if !poll_until_pixels(host, &ready) {
-        unsafe { ruuah_host_free(host) };
+        unsafe { mind2t_host_free(host) };
         panic!("the child's READY line never appeared");
     }
     assert_eq!(
-        unsafe { ruuah_host_mouse_geometry(host, 10_000, 10_000, 0, 0, 0, 0) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_mouse_geometry(host, 10_000, 10_000, 0, 0, 0, 0) },
+        Mind2tHostResult::Success
     );
     assert_eq!(
-        unsafe { ruuah_host_wheel(host, 1.0, 1.0, -1, 0) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_wheel(host, 1.0, 1.0, -1, 0) },
+        Mind2tHostResult::Success
     );
     let matched = poll_until_pixels(host, &want);
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
     assert!(matched, "the DECCKM wheel never took the ESC O form");
 }
 
@@ -628,7 +628,7 @@ fn a_wheel_takes_the_application_form_under_decckm() {
 fn a_wheel_on_the_primary_screen_is_the_embedders() {
     let (ready, ..) = reference_pixels_for(b"READY\r\n", BaseDirection::LeftToRight);
     let command = CString::new("printf 'READY\\n'; exec cat").expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -637,22 +637,22 @@ fn a_wheel_on_the_primary_screen_is_the_embedders() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
     if !poll_until_pixels(host, &ready) {
-        unsafe { ruuah_host_free(host) };
+        unsafe { mind2t_host_free(host) };
         panic!("the child's READY line never appeared");
     }
     assert_eq!(
-        unsafe { ruuah_host_mouse_geometry(host, 10_000, 10_000, 0, 0, 0, 0) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_mouse_geometry(host, 10_000, 10_000, 0, 0, 0, 0) },
+        Mind2tHostResult::Success
     );
-    let verdict = unsafe { ruuah_host_wheel(host, 1.0, 1.0, 1, 0) };
-    unsafe { ruuah_host_free(host) };
-    assert_eq!(verdict, RuuahHostResult::Ignored);
+    let verdict = unsafe { mind2t_host_wheel(host, 1.0, 1.0, 1, 0) };
+    unsafe { mind2t_host_free(host) };
+    assert_eq!(verdict, Mind2tHostResult::Ignored);
 }
 
 /// The key path through the C boundary, kitty half: the child pushes disambiguate
@@ -667,7 +667,7 @@ fn a_key_takes_the_kitty_form_when_the_child_pushed_flags() {
     let (want, ..) = reference_pixels_for(after, BaseDirection::LeftToRight);
 
     let command = CString::new("printf '\\033[>1uREADY\\n'; exec cat").expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -676,22 +676,22 @@ fn a_key_takes_the_kitty_form_when_the_child_pushed_flags() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
     if !poll_until_pixels(host, &ready) {
-        unsafe { ruuah_host_free(host) };
+        unsafe { mind2t_host_free(host) };
         panic!("the child's READY line never appeared, so the kitty bits were never polled");
     }
     assert_eq!(
-        unsafe { ruuah_host_key(host, 1, 120, 0, 0, ptr::null(), 0, 27) },
-        RuuahHostResult::Success,
+        unsafe { mind2t_host_key(host, 1, 120, 0, 0, ptr::null(), 0, 27) },
+        Mind2tHostResult::Success,
         "escape press"
     );
     let matched = poll_until_pixels(host, &want);
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
     assert!(matched, "the kitty-form escape never echoed back as pixels");
 }
 
@@ -704,7 +704,7 @@ fn a_key_takes_the_legacy_form_without_negotiation() {
     let (want, ..) = reference_pixels_for(b"READY\r\n^[", BaseDirection::LeftToRight);
 
     let command = CString::new("printf 'READY\\n'; exec cat").expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -713,22 +713,22 @@ fn a_key_takes_the_legacy_form_without_negotiation() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
     if !poll_until_pixels(host, &ready) {
-        unsafe { ruuah_host_free(host) };
+        unsafe { mind2t_host_free(host) };
         panic!("the child's READY line never appeared");
     }
     assert_eq!(
-        unsafe { ruuah_host_key(host, 1, 120, 0, 0, ptr::null(), 0, 27) },
-        RuuahHostResult::Success,
+        unsafe { mind2t_host_key(host, 1, 120, 0, 0, ptr::null(), 0, 27) },
+        Mind2tHostResult::Success,
         "escape press"
     );
     let matched = poll_until_pixels(host, &want);
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
     assert!(matched, "the legacy escape never echoed back as pixels");
 }
 
@@ -738,71 +738,71 @@ fn a_key_takes_the_legacy_form_without_negotiation() {
 /// handle. Deterministic -- the fixture IS the oracle the backlog names.
 #[test]
 fn history_appends_suggests_and_persists_through_the_c_surface() {
-    use ruuah_vt_host::{
-        RuuahHistory, ruuah_history_append, ruuah_history_free, ruuah_history_load,
-        ruuah_history_suggest,
+    use mind2t_vt_host::{
+        Mind2tHistory, mind2t_history_append, mind2t_history_free, mind2t_history_load,
+        mind2t_history_suggest,
     };
-    let dir = std::env::temp_dir().join(format!("ruuah-hist-abi-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("mind2t-hist-abi-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("mkdir");
     let path = CString::new(dir.join("history").to_str().expect("utf8")).expect("cstr");
 
-    let mut handle: *mut RuuahHistory = ptr::null_mut();
+    let mut handle: *mut Mind2tHistory = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_history_load(path.as_ptr(), &mut handle) },
-        RuuahHostResult::Success
+        unsafe { mind2t_history_load(path.as_ptr(), &mut handle) },
+        Mind2tHostResult::Success
     );
-    let append = |handle: *mut RuuahHistory, text: &str| unsafe {
-        ruuah_history_append(handle, text.as_ptr(), text.len(), ptr::null(), 0)
+    let append = |handle: *mut Mind2tHistory, text: &str| unsafe {
+        mind2t_history_append(handle, text.as_ptr(), text.len(), ptr::null(), 0)
     };
-    assert_eq!(append(handle, "git status"), RuuahHostResult::Success);
-    assert_eq!(append(handle, "git status"), RuuahHostResult::Ignored, "consecutive dupe");
-    assert_eq!(append(handle, "  "), RuuahHostResult::Ignored, "blank");
-    assert_eq!(append(handle, "a\nb"), RuuahHostResult::Ignored, "multiline");
-    assert_eq!(append(handle, "git stash"), RuuahHostResult::Success);
+    assert_eq!(append(handle, "git status"), Mind2tHostResult::Success);
+    assert_eq!(append(handle, "git status"), Mind2tHostResult::Ignored, "consecutive dupe");
+    assert_eq!(append(handle, "  "), Mind2tHostResult::Ignored, "blank");
+    assert_eq!(append(handle, "a\nb"), Mind2tHostResult::Ignored, "multiline");
+    assert_eq!(append(handle, "git stash"), Mind2tHostResult::Success);
 
     // Sizing call, then the copy; the most recent match must win.
     let input = b"git s";
     let mut length = 0usize;
     assert_eq!(
         unsafe {
-            ruuah_history_suggest(handle, input.as_ptr(), input.len(), ptr::null(), 0, ptr::null_mut(), 0, &mut length)
+            mind2t_history_suggest(handle, input.as_ptr(), input.len(), ptr::null(), 0, ptr::null_mut(), 0, &mut length)
         },
-        RuuahHostResult::Success
+        Mind2tHostResult::Success
     );
     let mut out = vec![0u8; length];
     assert_eq!(
         unsafe {
-            ruuah_history_suggest(handle, input.as_ptr(), input.len(), ptr::null(), 0, out.as_mut_ptr(), length, &mut length)
+            mind2t_history_suggest(handle, input.as_ptr(), input.len(), ptr::null(), 0, out.as_mut_ptr(), length, &mut length)
         },
-        RuuahHostResult::Success
+        Mind2tHostResult::Success
     );
     assert_eq!(&out, b"git stash");
     // No match answers Ignored with length 0 -- the ghost-hidden signal.
     let miss = b"cargo";
     assert_eq!(
         unsafe {
-            ruuah_history_suggest(handle, miss.as_ptr(), miss.len(), ptr::null(), 0, ptr::null_mut(), 0, &mut length)
+            mind2t_history_suggest(handle, miss.as_ptr(), miss.len(), ptr::null(), 0, ptr::null_mut(), 0, &mut length)
         },
-        RuuahHostResult::Ignored
+        Mind2tHostResult::Ignored
     );
     assert_eq!(length, 0);
-    unsafe { ruuah_history_free(handle) };
+    unsafe { mind2t_history_free(handle) };
 
     // A second handle on the same path sees the persisted store.
-    let mut reopened: *mut RuuahHistory = ptr::null_mut();
+    let mut reopened: *mut Mind2tHistory = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_history_load(path.as_ptr(), &mut reopened) },
-        RuuahHostResult::Success
+        unsafe { mind2t_history_load(path.as_ptr(), &mut reopened) },
+        Mind2tHostResult::Success
     );
     let mut length = 0usize;
     assert_eq!(
         unsafe {
-            ruuah_history_suggest(reopened, input.as_ptr(), input.len(), ptr::null(), 0, ptr::null_mut(), 0, &mut length)
+            mind2t_history_suggest(reopened, input.as_ptr(), input.len(), ptr::null(), 0, ptr::null_mut(), 0, &mut length)
         },
-        RuuahHostResult::Success,
+        Mind2tHostResult::Success,
         "appends persisted across handles"
     );
-    unsafe { ruuah_history_free(reopened) };
+    unsafe { mind2t_history_free(reopened) };
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -823,19 +823,19 @@ fn a_theme_background_reaches_the_pixels_and_survives_a_resize() {
     std::fs::write(dir.join("themes/deep.toml"), "background = \"#204060\"\n").expect("theme");
 
     let dir_c = CString::new(dir.to_str().expect("utf-8 tempdir")).expect("dir");
-    let mut config: *mut RuuahConfig = ptr::null_mut();
+    let mut config: *mut Mind2tConfig = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_config_load(dir_c.as_ptr(), &mut config) },
-        RuuahHostResult::Success
+        unsafe { mind2t_config_load(dir_c.as_ptr(), &mut config) },
+        Mind2tHostResult::Success
     );
     assert!(
-        unsafe { ruuah_config_error(config) }.is_null(),
+        unsafe { mind2t_config_error(config) }.is_null(),
         "this config must load clean"
     );
 
     // A child that keeps producing output, so frames keep arriving after the resize.
     let command = CString::new("while :; do printf X; sleep 0.2; done").expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -844,13 +844,13 @@ fn a_theme_background_reaches_the_pixels_and_survives_a_resize() {
         config,
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
     // The config contributes at spawn/resize only; freeing it here pins that lifetime.
-    unsafe { ruuah_config_free(config) };
+    unsafe { mind2t_config_free(config) };
 
     let polled = poll_until_background(host, THEME_BG)
         .unwrap_or_else(|got| die(host, format!("themed background never appeared; last {got:?}")));
@@ -858,14 +858,14 @@ fn a_theme_background_reaches_the_pixels_and_survives_a_resize() {
 
     // The trap this test exists for: resize rebuilds the renderer.
     assert_eq!(
-        unsafe { ruuah_host_resize(host, COLS - 20, ROWS - 4) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_resize(host, COLS - 20, ROWS - 4) },
+        Mind2tHostResult::Success
     );
     let polled = poll_until_background(host, THEME_BG).unwrap_or_else(|got| {
         die(host, format!("the theme did not survive the resize; last {got:?}"))
     });
     assert_corner_pixel(&polled, THEME_BG, "after resize");
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
 }
 
 /// The pair's control: the identical child with a NULL config wears the built-in
@@ -873,10 +873,10 @@ fn a_theme_background_reaches_the_pixels_and_survives_a_resize() {
 /// the two tests would fail.
 #[test]
 fn a_null_config_keeps_the_builtin_scheme() {
-    let builtin = ruuah_vt_render::Palette::default().default_background;
+    let builtin = mind2t_vt_render::Palette::default().default_background;
 
     let command = CString::new("while :; do printf X; sleep 0.2; done").expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -885,29 +885,29 @@ fn a_null_config_keeps_the_builtin_scheme() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
     let polled = poll_until_background(host, builtin)
         .unwrap_or_else(|got| die(host, format!("builtin background never appeared; got {got:?}")));
     assert_corner_pixel(&polled, builtin, "with a NULL config");
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
 }
 
 /// Polls until a drawn frame reports the wanted margin background. Ok carries the frame
 /// for further pixel assertions; Err carries the last background seen.
 fn poll_until_background(
-    host: *mut RuuahHost,
+    host: *mut Mind2tHost,
     want: [u8; 4],
-) -> Result<RuuahHostFrame, [u8; 4]> {
+) -> Result<Mind2tHostFrame, [u8; 4]> {
     let deadline = Instant::now() + PATIENCE;
     let mut last = [0; 4];
     while Instant::now() < deadline {
         let mut polled = empty_frame();
-        let result = unsafe { ruuah_host_poll(host, &mut polled) };
-        assert_eq!(result, RuuahHostResult::Success, "poll failed: {result:?}");
+        let result = unsafe { mind2t_host_poll(host, &mut polled) };
+        assert_eq!(result, Mind2tHostResult::Success, "poll failed: {result:?}");
         if !polled.pixels.is_null() {
             if polled.background == want {
                 return Ok(polled);
@@ -921,7 +921,7 @@ fn poll_until_background(
 
 /// The bottom-right pixel belongs to a cell no child in these tests ever touches, so it
 /// must wear the default background -- which is where a theme shows up as actual ink.
-fn assert_corner_pixel(frame: &RuuahHostFrame, want: [u8; 4], when: &str) {
+fn assert_corner_pixel(frame: &Mind2tHostFrame, want: [u8; 4], when: &str) {
     let len = frame.width as usize * frame.height as usize * 4;
     let pixels = unsafe { std::slice::from_raw_parts(frame.pixels, len) };
     let corner = &pixels[len - 4..];
@@ -932,14 +932,14 @@ fn assert_corner_pixel(frame: &RuuahHostFrame, want: [u8; 4], when: &str) {
     );
 }
 
-fn die(host: *mut RuuahHost, message: String) -> ! {
-    unsafe { ruuah_host_free(host) };
+fn die(host: *mut Mind2tHost, message: String) -> ! {
+    unsafe { mind2t_host_free(host) };
     panic!("{message}");
 }
 
-/// A zeroed out-param for polls, matching the C caller's `RuuahHostFrame frame = {0}`.
-fn empty_frame() -> RuuahHostFrame {
-    RuuahHostFrame {
+/// A zeroed out-param for polls, matching the C caller's `Mind2tHostFrame frame = {0}`.
+fn empty_frame() -> Mind2tHostFrame {
+    Mind2tHostFrame {
         pixels: ptr::null(),
         width: 0,
         height: 0,
@@ -972,7 +972,7 @@ fn osc133_rows_cross_the_c_surface_with_their_text() {
         "printf '\\033]133;A\\007$ \\033]133;B\\007ls -la\\n\\033]133;C\\007total 42\\n'; sleep 8",
     )
     .expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -981,10 +981,10 @@ fn osc133_rows_cross_the_c_surface_with_their_text() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
 
     // Poll until the prompt row classifies -- the child's output arrives when it arrives.
@@ -993,8 +993,8 @@ fn osc133_rows_cross_the_c_surface_with_their_text() {
     while Instant::now() < deadline {
         let mut polled = empty_frame();
         assert_eq!(
-            unsafe { ruuah_host_poll(host, &mut polled) },
-            RuuahHostResult::Success
+            unsafe { mind2t_host_poll(host, &mut polled) },
+            Mind2tHostResult::Success
         );
         if !polled.row_semantics.is_null() {
             let all = unsafe {
@@ -1008,7 +1008,7 @@ fn osc133_rows_cross_the_c_surface_with_their_text() {
         std::thread::sleep(Duration::from_millis(10));
     }
     if classes.is_empty() {
-        die(host, "the prompt row never classified as RUUAH_ROW_PROMPT".into());
+        die(host, "the prompt row never classified as MIND2T_ROW_PROMPT".into());
     }
     assert_eq!(classes.len(), ROWS as usize, "one class per grid row");
     assert_eq!(classes[0], 1, "row 0 starts a prompt (and holds the input)");
@@ -1017,15 +1017,15 @@ fn osc133_rows_cross_the_c_surface_with_their_text() {
     let text_of = |row: u16, semantic: u8| -> String {
         let mut len = 0usize;
         assert_eq!(
-            unsafe { ruuah_host_row_text(host, row, semantic, ptr::null_mut(), 0, &mut len) },
-            RuuahHostResult::Success
+            unsafe { mind2t_host_row_text(host, row, semantic, ptr::null_mut(), 0, &mut len) },
+            Mind2tHostResult::Success
         );
         let mut buffer = vec![0u8; len];
         assert_eq!(
             unsafe {
-                ruuah_host_row_text(host, row, semantic, buffer.as_mut_ptr(), len, &mut len)
+                mind2t_host_row_text(host, row, semantic, buffer.as_mut_ptr(), len, &mut len)
             },
-            RuuahHostResult::Success
+            Mind2tHostResult::Success
         );
         String::from_utf8(buffer).expect("row text is UTF-8")
     };
@@ -1038,11 +1038,11 @@ fn osc133_rows_cross_the_c_surface_with_their_text() {
 
     let mut len = 0usize;
     assert_eq!(
-        unsafe { ruuah_host_row_text(host, ROWS + 5, 255, ptr::null_mut(), 0, &mut len) },
-        RuuahHostResult::InvalidValue,
+        unsafe { mind2t_host_row_text(host, ROWS + 5, 255, ptr::null_mut(), 0, &mut len) },
+        Mind2tHostResult::InvalidValue,
         "an out-of-range row is refused, not clamped"
     );
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
 }
 
 /// The pair's control: the same shape of child with NO marks must classify every row as
@@ -1050,7 +1050,7 @@ fn osc133_rows_cross_the_c_surface_with_their_text() {
 #[test]
 fn rows_without_osc133_all_read_as_output() {
     let command = CString::new("printf '$ ls -la\\ntotal 42\\n'; sleep 8").expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -1059,10 +1059,10 @@ fn rows_without_osc133_all_read_as_output() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
 
     let deadline = Instant::now() + PATIENCE;
@@ -1070,8 +1070,8 @@ fn rows_without_osc133_all_read_as_output() {
     while Instant::now() < deadline {
         let mut polled = empty_frame();
         assert_eq!(
-            unsafe { ruuah_host_poll(host, &mut polled) },
-            RuuahHostResult::Success
+            unsafe { mind2t_host_poll(host, &mut polled) },
+            Mind2tHostResult::Success
         );
         if !polled.row_semantics.is_null() {
             let classes = unsafe {
@@ -1079,18 +1079,18 @@ fn rows_without_osc133_all_read_as_output() {
             };
             assert!(
                 classes.iter().all(|class| *class == 0),
-                "unmarked rows must all be RUUAH_ROW_OUTPUT, got {classes:?}"
+                "unmarked rows must all be MIND2T_ROW_OUTPUT, got {classes:?}"
             );
             let mut len = 0usize;
-            let ok = unsafe { ruuah_host_row_text(host, 1, 255, ptr::null_mut(), 0, &mut len) };
-            if ok == RuuahHostResult::Success && len > 0 {
+            let ok = unsafe { mind2t_host_row_text(host, 1, 255, ptr::null_mut(), 0, &mut len) };
+            if ok == Mind2tHostResult::Success && len > 0 {
                 seen_text = true;
                 break;
             }
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
     assert!(seen_text, "the child's second line never arrived");
 }
 
@@ -1100,7 +1100,7 @@ fn tempdir() -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU32, Ordering};
     static COUNTER: AtomicU32 = AtomicU32::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "ruuah-host-abi-{}-{}",
+        "mind2t-host-abi-{}-{}",
         std::process::id(),
         COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
@@ -1114,30 +1114,30 @@ fn tempdir() -> std::path::PathBuf {
 /// set_font_size that silently kept the old renderer passes neither.
 #[test]
 fn a_live_font_size_change_reaches_the_polled_pixels() {
-    use ruuah_vt_host::{ruuah_host_cell_metrics, ruuah_host_set_font_size};
+    use mind2t_vt_host::{mind2t_host_cell_metrics, mind2t_host_set_font_size};
 
     let (mut small_w, mut small_h) = (0u32, 0u32);
     let (mut large_w, mut large_h) = (0u32, 0u32);
     assert_eq!(
-        unsafe { ruuah_host_cell_metrics(14.0, ptr::null(), &mut small_w, &mut small_h) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_cell_metrics(14.0, ptr::null(), &mut small_w, &mut small_h) },
+        Mind2tHostResult::Success
     );
     assert_eq!(
-        unsafe { ruuah_host_cell_metrics(28.0, ptr::null(), &mut large_w, &mut large_h) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_cell_metrics(28.0, ptr::null(), &mut large_w, &mut large_h) },
+        Mind2tHostResult::Success
     );
     assert!(
         large_w > small_w && large_h > small_h,
         "cell metrics must grow with the font size: {small_w}x{small_h} -> {large_w}x{large_h}"
     );
     assert_eq!(
-        unsafe { ruuah_host_cell_metrics(0.0, ptr::null(), &mut small_w, &mut small_h) },
-        RuuahHostResult::InvalidValue,
+        unsafe { mind2t_host_cell_metrics(0.0, ptr::null(), &mut small_w, &mut small_h) },
+        Mind2tHostResult::InvalidValue,
         "a zero size is refused, not defaulted"
     );
 
     let command = CString::new("printf 'ZOOM'; sleep 8").expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: 20,
         rows: 4,
         font_size: 14.0,
@@ -1146,10 +1146,10 @@ fn a_live_font_size_change_reaches_the_polled_pixels() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
 
     let deadline = Instant::now() + PATIENCE;
@@ -1157,8 +1157,8 @@ fn a_live_font_size_change_reaches_the_polled_pixels() {
     while Instant::now() < deadline {
         let mut polled = empty_frame();
         assert_eq!(
-            unsafe { ruuah_host_poll(host, &mut polled) },
-            RuuahHostResult::Success
+            unsafe { mind2t_host_poll(host, &mut polled) },
+            Mind2tHostResult::Success
         );
         if polled.drew && polled.width > 0 {
             before = (polled.width, polled.height);
@@ -1172,16 +1172,16 @@ fn a_live_font_size_change_reaches_the_polled_pixels() {
     assert_eq!(before.0, 20 * small_w, "width is cols * cell width");
 
     assert_eq!(
-        unsafe { ruuah_host_set_font_size(host, 28.0, 20, 4) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_set_font_size(host, 28.0, 20, 4) },
+        Mind2tHostResult::Success
     );
     let deadline = Instant::now() + PATIENCE;
     let mut after = (0u32, 0u32);
     while Instant::now() < deadline {
         let mut polled = empty_frame();
         assert_eq!(
-            unsafe { ruuah_host_poll(host, &mut polled) },
-            RuuahHostResult::Success
+            unsafe { mind2t_host_poll(host, &mut polled) },
+            Mind2tHostResult::Success
         );
         if polled.drew && polled.width > before.0 {
             after = (polled.width, polled.height);
@@ -1194,20 +1194,20 @@ fn a_live_font_size_change_reaches_the_polled_pixels() {
     }
     assert_eq!(after.0, 20 * large_w, "the new width wears the 28px metrics");
     assert!(after.1 > before.1, "height grew with the font");
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
 }
 
 /// OSC 8 through the C boundary: the URI a child printed under comes back from
-/// ruuah_host_link_at at the linked cell, an unlinked cell answers SUCCESS with len 0,
+/// mind2t_host_link_at at the linked cell, an unlinked cell answers SUCCESS with len 0,
 /// and out-of-range is refused. The child emits the marks itself, no shell involved.
 #[test]
 fn a_hyperlink_is_readable_at_its_cell_through_the_c_surface() {
-    use ruuah_vt_host::ruuah_host_link_at;
+    use mind2t_vt_host::mind2t_host_link_at;
 
     let command =
         CString::new("printf 'a\\033]8;;https://x.il/p\\033\\\\bc\\033]8;;\\033\\\\d'; sleep 8")
             .expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -1216,21 +1216,21 @@ fn a_hyperlink_is_readable_at_its_cell_through_the_c_surface() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
 
-    let link = |host, col, row| -> Option<(RuuahHostResult, String)> {
+    let link = |host, col, row| -> Option<(Mind2tHostResult, String)> {
         let mut len = 0usize;
-        let result = unsafe { ruuah_host_link_at(host, col, row, ptr::null_mut(), 0, &mut len) };
-        if result != RuuahHostResult::Success {
+        let result = unsafe { mind2t_host_link_at(host, col, row, ptr::null_mut(), 0, &mut len) };
+        if result != Mind2tHostResult::Success {
             return Some((result, String::new()));
         }
         let mut buffer = vec![0u8; len];
         let result = unsafe {
-            ruuah_host_link_at(host, col, row, buffer.as_mut_ptr(), len, &mut len)
+            mind2t_host_link_at(host, col, row, buffer.as_mut_ptr(), len, &mut len)
         };
         Some((result, String::from_utf8(buffer).ok()?))
     };
@@ -1240,10 +1240,10 @@ fn a_hyperlink_is_readable_at_its_cell_through_the_c_surface() {
     while Instant::now() < deadline {
         let mut polled = empty_frame();
         assert_eq!(
-            unsafe { ruuah_host_poll(host, &mut polled) },
-            RuuahHostResult::Success
+            unsafe { mind2t_host_poll(host, &mut polled) },
+            Mind2tHostResult::Success
         );
-        if let Some((RuuahHostResult::Success, uri)) = link(host, 1, 0) {
+        if let Some((Mind2tHostResult::Success, uri)) = link(host, 1, 0) {
             if !uri.is_empty() {
                 found = uri;
                 break;
@@ -1257,23 +1257,23 @@ fn a_hyperlink_is_readable_at_its_cell_through_the_c_surface() {
     assert_eq!(found, "https://x.il/p");
     assert_eq!(
         link(host, 2, 0),
-        Some((RuuahHostResult::Success, "https://x.il/p".into())),
+        Some((Mind2tHostResult::Success, "https://x.il/p".into())),
         "the second linked cell"
     );
 
     // The control half: cell 0 was printed before the link and must answer len 0.
     let mut len = 5usize;
     assert_eq!(
-        unsafe { ruuah_host_link_at(host, 0, 0, ptr::null_mut(), 0, &mut len) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_link_at(host, 0, 0, ptr::null_mut(), 0, &mut len) },
+        Mind2tHostResult::Success
     );
     assert_eq!(len, 0, "an unlinked cell is SUCCESS with no bytes");
     assert_eq!(
-        unsafe { ruuah_host_link_at(host, COLS + 1, 0, ptr::null_mut(), 0, &mut len) },
-        RuuahHostResult::InvalidValue,
+        unsafe { mind2t_host_link_at(host, COLS + 1, 0, ptr::null_mut(), 0, &mut len) },
+        Mind2tHostResult::InvalidValue,
         "out of range is refused"
     );
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
 }
 
 /// The event seam through the C boundary: OSC 52 lands as a clipboard event with its
@@ -1282,13 +1282,13 @@ fn a_hyperlink_is_readable_at_its_cell_through_the_c_surface() {
 /// answering kind 0 both before and after.
 #[test]
 fn host_events_cross_in_order_and_exactly_once() {
-    use ruuah_vt_host::ruuah_host_next_event;
+    use mind2t_vt_host::mind2t_host_next_event;
 
     let command = CString::new(
         "printf '\\033]52;c;aGVsbG8=\\007\\033]777;notify;T;B\\007\\007'; sleep 8",
     )
     .expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -1297,17 +1297,17 @@ fn host_events_cross_in_order_and_exactly_once() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
 
     let next = |host| -> (u32, Vec<u8>) {
         let (mut kind, mut len) = (0u32, 0usize);
         assert_eq!(
-            unsafe { ruuah_host_next_event(host, &mut kind, ptr::null_mut(), 0, &mut len) },
-            RuuahHostResult::Success
+            unsafe { mind2t_host_next_event(host, &mut kind, ptr::null_mut(), 0, &mut len) },
+            Mind2tHostResult::Success
         );
         if kind == 0 {
             return (0, Vec::new());
@@ -1320,9 +1320,9 @@ fn host_events_cross_in_order_and_exactly_once() {
         let mut fetched = 0u32;
         assert_eq!(
             unsafe {
-                ruuah_host_next_event(host, &mut fetched, buffer.as_mut_ptr(), len, &mut len)
+                mind2t_host_next_event(host, &mut fetched, buffer.as_mut_ptr(), len, &mut len)
             },
-            RuuahHostResult::Success
+            Mind2tHostResult::Success
         );
         assert_eq!(fetched, kind, "the sizing call must not have consumed it");
         (kind, buffer)
@@ -1365,7 +1365,7 @@ fn host_events_cross_in_order_and_exactly_once() {
 
     let (kind, _) = next(host);
     assert_eq!(kind, 0, "drained: exactly once means nothing repeats");
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
 }
 
 /// OSC 7 crosses as event kind 7, carrying the RAW report.
@@ -1378,13 +1378,13 @@ fn host_events_cross_in_order_and_exactly_once() {
 /// this ABI can say it.
 #[test]
 fn a_pwd_report_crosses_the_c_boundary_raw() {
-    use ruuah_vt_host::ruuah_host_next_event;
+    use mind2t_vt_host::mind2t_host_next_event;
 
     let command = CString::new(
         "printf '\\033]7;file:///tmp/My%%20Code\\033\\\\'; sleep 1; printf '\\033]7;\\007'; sleep 8",
     )
     .expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -1393,17 +1393,17 @@ fn a_pwd_report_crosses_the_c_boundary_raw() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
 
     let next = |host| -> (u32, Vec<u8>) {
         let (mut kind, mut len) = (0u32, 0usize);
         assert_eq!(
-            unsafe { ruuah_host_next_event(host, &mut kind, ptr::null_mut(), 0, &mut len) },
-            RuuahHostResult::Success
+            unsafe { mind2t_host_next_event(host, &mut kind, ptr::null_mut(), 0, &mut len) },
+            Mind2tHostResult::Success
         );
         if kind == 0 || len == 0 {
             return (kind, Vec::new());
@@ -1412,9 +1412,9 @@ fn a_pwd_report_crosses_the_c_boundary_raw() {
         let mut fetched = 0u32;
         assert_eq!(
             unsafe {
-                ruuah_host_next_event(host, &mut fetched, buffer.as_mut_ptr(), len, &mut len)
+                mind2t_host_next_event(host, &mut fetched, buffer.as_mut_ptr(), len, &mut len)
             },
-            RuuahHostResult::Success
+            Mind2tHostResult::Success
         );
         assert_eq!(fetched, kind, "the sizing call must not have consumed it");
         (kind, buffer)
@@ -1444,7 +1444,7 @@ fn a_pwd_report_crosses_the_c_boundary_raw() {
     assert_eq!(cleared.0, 7, "a clear is a pwd event too");
     assert_eq!(cleared.1, Vec::<u8>::new(), "and it says so with an empty payload");
 
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
 }
 
 /// Slice 9's seam end to end: a DSR from the child produces reply bytes that travel
@@ -1454,7 +1454,7 @@ fn a_pwd_report_crosses_the_c_boundary_raw() {
 #[test]
 fn a_dsr_reply_travels_back_down_the_pty() {
     let command = CString::new("printf 'Q\\033[5n\\n'; sleep 8").expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -1463,22 +1463,22 @@ fn a_dsr_reply_travels_back_down_the_pty() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
 
     let text_of = |host, row: u16| -> String {
         let mut len = 0usize;
-        if unsafe { ruuah_host_row_text(host, row, 255, ptr::null_mut(), 0, &mut len) }
-            != RuuahHostResult::Success
+        if unsafe { mind2t_host_row_text(host, row, 255, ptr::null_mut(), 0, &mut len) }
+            != Mind2tHostResult::Success
         {
             return String::new();
         }
         let mut buffer = vec![0u8; len];
-        if unsafe { ruuah_host_row_text(host, row, 255, buffer.as_mut_ptr(), len, &mut len) }
-            != RuuahHostResult::Success
+        if unsafe { mind2t_host_row_text(host, row, 255, buffer.as_mut_ptr(), len, &mut len) }
+            != Mind2tHostResult::Success
         {
             return String::new();
         }
@@ -1490,8 +1490,8 @@ fn a_dsr_reply_travels_back_down_the_pty() {
     while Instant::now() < deadline {
         let mut polled = empty_frame();
         assert_eq!(
-            unsafe { ruuah_host_poll(host, &mut polled) },
-            RuuahHostResult::Success
+            unsafe { mind2t_host_poll(host, &mut polled) },
+            Mind2tHostResult::Success
         );
         let mut all = String::new();
         for row in 0..4 {
@@ -1508,7 +1508,7 @@ fn a_dsr_reply_travels_back_down_the_pty() {
         seen.contains("^[[0n"),
         "the DSR 5 reply never echoed back through the pty"
     );
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
 }
 
 /// Kitty graphics through the whole pipeline: an APC G transmit-and-display from the
@@ -1524,7 +1524,7 @@ fn a_kitty_image_lands_as_pixels_through_the_c_surface() {
         "printf '\\033_Ga=T,f=32,s=4,v=4,i=1,c=1,r=1,q=2;{RED_4X4}\\033\\\\'; sleep 8"
     ))
     .expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -1533,10 +1533,10 @@ fn a_kitty_image_lands_as_pixels_through_the_c_surface() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
 
     let deadline = Instant::now() + PATIENCE;
@@ -1545,8 +1545,8 @@ fn a_kitty_image_lands_as_pixels_through_the_c_surface() {
     while Instant::now() < deadline {
         let mut polled = empty_frame();
         assert_eq!(
-            unsafe { ruuah_host_poll(host, &mut polled) },
-            RuuahHostResult::Success
+            unsafe { mind2t_host_poll(host, &mut polled) },
+            Mind2tHostResult::Success
         );
         if polled.drew && polled.width > 0 && !polled.pixels.is_null() {
             let width = polled.width as usize;
@@ -1574,7 +1574,7 @@ fn a_kitty_image_lands_as_pixels_through_the_c_surface() {
         [255, 0, 0, 255],
         "a cell outside the placement stays background"
     );
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
 }
 
 /// The viewport through the C boundary, both directions. The reference for the scrolled
@@ -1626,7 +1626,7 @@ fn scrolling_through_the_c_surface_shows_scrollback_pixels() {
         "i=0; while [ $i -lt {LINES} ]; do echo scroll-$i; i=$((i+1)); done; cat"
     ))
     .expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -1635,10 +1635,10 @@ fn scrolling_through_the_c_surface_shows_scrollback_pixels() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
 
     if !poll_until_pixels(host, &bottom_want) {
@@ -1646,8 +1646,8 @@ fn scrolling_through_the_c_surface_shows_scrollback_pixels() {
     }
 
     assert_eq!(
-        unsafe { ruuah_host_scroll(host, OFFSET as i32) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_scroll(host, OFFSET as i32) },
+        Mind2tHostResult::Success
     );
     if !poll_until_pixels(host, &scrolled_want) {
         die(
@@ -1659,21 +1659,21 @@ fn scrolling_through_the_c_surface_shows_scrollback_pixels() {
     // The polled frame reports where the view landed, for scroll indicators.
     let mut polled = empty_frame();
     assert_eq!(
-        unsafe { ruuah_host_poll(host, &mut polled) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_poll(host, &mut polled) },
+        Mind2tHostResult::Success
     );
     assert_eq!(polled.viewport_offset, OFFSET);
 
     // INT32_MIN snaps back to the live bottom.
     assert_eq!(
-        unsafe { ruuah_host_scroll(host, i32::MIN) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_scroll(host, i32::MIN) },
+        Mind2tHostResult::Success
     );
     if !poll_until_pixels(host, &bottom_want) {
         die(host, "snapping to the bottom never restored the live view".to_string());
     }
 
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
 }
 
 /// Unicode placeholders reach the window, through the C surface.
@@ -1703,7 +1703,7 @@ fn a_unicode_placeholder_reaches_the_polled_pixels() {
         "sleep 8"
     ))
     .expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -1712,10 +1712,10 @@ fn a_unicode_placeholder_reaches_the_polled_pixels() {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
 
     let deadline = Instant::now() + PATIENCE;
@@ -1723,8 +1723,8 @@ fn a_unicode_placeholder_reaches_the_polled_pixels() {
     while Instant::now() < deadline {
         let mut polled = empty_frame();
         assert_eq!(
-            unsafe { ruuah_host_poll(host, &mut polled) },
-            RuuahHostResult::Success
+            unsafe { mind2t_host_poll(host, &mut polled) },
+            Mind2tHostResult::Success
         );
         if !polled.pixels.is_null() {
             let len = polled.width as usize * polled.height as usize * 4;
@@ -1735,7 +1735,7 @@ fn a_unicode_placeholder_reaches_the_polled_pixels() {
                 reddest = reddest.max(score);
             }
             if reddest > 150 {
-                unsafe { ruuah_host_free(host) };
+                unsafe { mind2t_host_free(host) };
                 return;
             }
         }
@@ -1756,25 +1756,25 @@ fn a_unicode_placeholder_reaches_the_polled_pixels() {
 /// had to decode it itself would be the second copy of that logic.
 #[test]
 fn history_prefers_the_directory_a_command_was_run_in() {
-    use ruuah_vt_host::{
-        RuuahHistory, ruuah_history_append, ruuah_history_free, ruuah_history_load,
-        ruuah_history_suggest,
+    use mind2t_vt_host::{
+        Mind2tHistory, mind2t_history_append, mind2t_history_free, mind2t_history_load,
+        mind2t_history_suggest,
     };
-    let dir = std::env::temp_dir().join(format!("ruuah-hist-cwd-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("mind2t-hist-cwd-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("mkdir");
     let path = CString::new(dir.join("history").to_str().expect("utf8")).expect("cstr");
 
-    let mut handle: *mut RuuahHistory = ptr::null_mut();
+    let mut handle: *mut Mind2tHistory = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_history_load(path.as_ptr(), &mut handle) },
-        RuuahHostResult::Success
+        unsafe { mind2t_history_load(path.as_ptr(), &mut handle) },
+        Mind2tHostResult::Success
     );
 
     // Two directories, and the one we will ask from holds the OLDER command.
-    let here = b"file://mac.local/tmp/ruuah%20work";
+    let here = b"file://mac.local/tmp/mind2t%20work";
     let there = b"file:///tmp/other";
     let append = |command: &str, cwd: &[u8]| unsafe {
-        ruuah_history_append(
+        mind2t_history_append(
             handle,
             command.as_ptr(),
             command.len(),
@@ -1782,14 +1782,14 @@ fn history_prefers_the_directory_a_command_was_run_in() {
             cwd.len(),
         )
     };
-    assert_eq!(append("cargo test --workspace", here), RuuahHostResult::Success);
-    assert_eq!(append("cargo build --release", there), RuuahHostResult::Success);
+    assert_eq!(append("cargo test --workspace", here), Mind2tHostResult::Success);
+    assert_eq!(append("cargo build --release", there), Mind2tHostResult::Success);
 
     let suggest = |cwd: &[u8]| -> Option<String> {
         let input = b"cargo ";
         let mut length = 0usize;
         let sized = unsafe {
-            ruuah_history_suggest(
+            mind2t_history_suggest(
                 handle,
                 input.as_ptr(),
                 input.len(),
@@ -1800,13 +1800,13 @@ fn history_prefers_the_directory_a_command_was_run_in() {
                 &mut length,
             )
         };
-        if sized != RuuahHostResult::Success {
+        if sized != Mind2tHostResult::Success {
             return None;
         }
         let mut out = vec![0u8; length];
         assert_eq!(
             unsafe {
-                ruuah_history_suggest(
+                mind2t_history_suggest(
                     handle,
                     input.as_ptr(),
                     input.len(),
@@ -1817,7 +1817,7 @@ fn history_prefers_the_directory_a_command_was_run_in() {
                     &mut length,
                 )
             },
-            RuuahHostResult::Success
+            Mind2tHostResult::Success
         );
         Some(String::from_utf8(out).expect("utf8"))
     };
@@ -1838,11 +1838,11 @@ fn history_prefers_the_directory_a_command_was_run_in() {
         "no local match falls back to the newest anywhere"
     );
 
-    unsafe { ruuah_history_free(handle) };
+    unsafe { mind2t_history_free(handle) };
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// `RuuahHostOptions.cwd` actually places the child, and NULL actually does not.
+/// `Mind2tHostOptions.cwd` actually places the child, and NULL actually does not.
 ///
 /// Both directions in one test, because the failure mode is silent: a session spawned
 /// for a workspace whose cwd was quietly dropped starts in the wrong repository and
@@ -1855,7 +1855,7 @@ fn history_prefers_the_directory_a_command_was_run_in() {
 /// the plain form reports the wrong answer for a correct implementation.
 #[test]
 fn an_explicit_cwd_places_the_child_and_null_leaves_it_alone() {
-    let target = std::env::temp_dir().join(format!("ruuah-cwd-{}", std::process::id()));
+    let target = std::env::temp_dir().join(format!("mind2t-cwd-{}", std::process::id()));
     std::fs::create_dir_all(&target).expect("target directory");
     let target = std::fs::canonicalize(&target).expect("canonical target");
     let here = std::fs::canonicalize(std::env::current_dir().expect("cwd")).expect("canonical cwd");
@@ -1865,7 +1865,7 @@ fn an_explicit_cwd_places_the_child_and_null_leaves_it_alone() {
     let target_c = CString::new(target.to_str().expect("utf-8 target")).expect("cwd");
 
     let first_row = |cwd: *const std::ffi::c_char| -> String {
-        let options = RuuahHostOptions {
+        let options = Mind2tHostOptions {
             cols: COLS,
             rows: ROWS,
             font_size: 0.0,
@@ -1874,10 +1874,10 @@ fn an_explicit_cwd_places_the_child_and_null_leaves_it_alone() {
             config: ptr::null(),
             cwd,
         };
-        let mut host: *mut RuuahHost = ptr::null_mut();
+        let mut host: *mut Mind2tHost = ptr::null_mut();
         assert_eq!(
-            unsafe { ruuah_host_spawn(&options, &mut host) },
-            RuuahHostResult::Success
+            unsafe { mind2t_host_spawn(&options, &mut host) },
+            Mind2tHostResult::Success
         );
 
         // Drain until the child has exited and its last frame is drawn, so the row is
@@ -1886,8 +1886,8 @@ fn an_explicit_cwd_places_the_child_and_null_leaves_it_alone() {
         loop {
             let mut frame = empty_frame();
             assert_eq!(
-                unsafe { ruuah_host_poll(host, &mut frame) },
-                RuuahHostResult::Success
+                unsafe { mind2t_host_poll(host, &mut frame) },
+                Mind2tHostResult::Success
             );
             if frame.child_exited && !frame.drew {
                 break;
@@ -1898,15 +1898,15 @@ fn an_explicit_cwd_places_the_child_and_null_leaves_it_alone() {
 
         let mut len = 0usize;
         assert_eq!(
-            unsafe { ruuah_host_row_text(host, 0, 0, ptr::null_mut(), 0, &mut len) },
-            RuuahHostResult::Success
+            unsafe { mind2t_host_row_text(host, 0, 0, ptr::null_mut(), 0, &mut len) },
+            Mind2tHostResult::Success
         );
         let mut buffer = vec![0u8; len];
         assert_eq!(
-            unsafe { ruuah_host_row_text(host, 0, 0, buffer.as_mut_ptr(), len, &mut len) },
-            RuuahHostResult::Success
+            unsafe { mind2t_host_row_text(host, 0, 0, buffer.as_mut_ptr(), len, &mut len) },
+            Mind2tHostResult::Success
         );
-        unsafe { ruuah_host_free(host) };
+        unsafe { mind2t_host_free(host) };
         String::from_utf8_lossy(&buffer).trim().to_string()
     };
 

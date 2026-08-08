@@ -1,7 +1,7 @@
 # esctest2 tests asserted to PASS today, within the gate's include (the whole suite).
 # The corpus law in both directions: a line here failing is a regression; a test
 # passing without a line here must be promoted by adding it. Re-triage after suite
-# updates: cargo test -p ruuah-vt-pty --test esctest -- --ignored print_esctest --nocapture
+# updates: cargo test -p mind2t-vt-pty --test esctest -- --ignored print_esctest --nocapture
 # Suite pin: esctest.lock. Baseline 2026-08-01 (DECCOLM slice): 373 pass of 568. The
 # DECCOLM slice promoted 5: the two DECRQM answers it targeted (DEC_DECCOLM,
 # DEC_DECLRMM), DECSET_Allow80To132 and DECSET_DECCOLM (the full 80/132 sequence:

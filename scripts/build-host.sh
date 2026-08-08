@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Builds the embedder artifact: libruuah-vt-host.a.
+# Builds the embedder artifact: libmind2t-vt-host.a.
 #
-# One archive, both surfaces: the host crate depends on ruuah-vt-abi as an rlib, which
-# carries the 13 `ghostty_*` exports in alongside the 5 `ruuah_host_*` ones. Two Rust
+# One archive, both surfaces: the host crate depends on mind2t-vt-abi as an rlib, which
+# carries the 13 `ghostty_*` exports in alongside the 5 `mind2t_host_*` ones. Two Rust
 # staticlibs cannot share a link (each would bring its own copy of the Rust runtime), so
-# the Swift host links this single archive. The pure drop-in `libruuah-vt.a` remains
+# the Swift host links this single archive. The pure drop-in `libmind2t-vt.a` remains
 # `scripts/build-lib.sh`'s separate, slim artifact.
 #
 # The rename exists for the same reason as in build-lib.sh: cargo cannot emit a hyphenated
@@ -17,14 +17,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 case "$PROFILE" in
-  release) cargo build --release -p ruuah-vt-host ;;
-  debug)   cargo build -p ruuah-vt-host ;;
+  release) cargo build --release -p mind2t-vt-host ;;
+  debug)   cargo build -p mind2t-vt-host ;;
   *) echo "usage: $0 [release|debug]" >&2; exit 2 ;;
 esac
 
 OUT="target/$PROFILE"
-SRC="$OUT/libruuah_vt_host.a"
-DST="$OUT/libruuah-vt-host.a"
+SRC="$OUT/libmind2t_vt_host.a"
+DST="$OUT/libmind2t-vt-host.a"
 
 if [ ! -f "$SRC" ]; then
   echo "cargo did not produce $SRC" >&2
@@ -33,7 +33,7 @@ fi
 cp "$SRC" "$DST"
 
 # Both surfaces, by name. A host archive that lost a ghostty_* symbol has silently stopped
-# carrying the VT readout; one that lost a ruuah_host_* symbol fails at the Swift link,
+# carrying the VT readout; one that lost a mind2t_host_* symbol fails at the Swift link,
 # which is the worst place to find out.
 EXPECTED=(
   ghostty_terminal_new
@@ -50,48 +50,48 @@ EXPECTED=(
   ghostty_cell_get
   ghostty_row_get
   ghostty_style_default
-  ruuah_host_spawn
-  ruuah_host_poll
-  ruuah_host_send
-  ruuah_host_paste
-  ruuah_host_mouse_geometry
-  ruuah_host_mouse
-  ruuah_host_wheel
-  ruuah_host_key
-  ruuah_host_scroll
-  ruuah_host_resize
-  ruuah_host_cell_metrics
-  ruuah_host_set_font_size
-  ruuah_host_row_text
-  ruuah_host_link_at
-  ruuah_host_next_event
-  ruuah_host_free
-  ruuah_history_load
-  ruuah_history_free
-  ruuah_history_append
-  ruuah_history_suggest
-  ruuah_cwd_path
-  ruuah_workflows_load
-  ruuah_workflows_free
-  ruuah_workflows_count
-  ruuah_workflows_errors
-  ruuah_workflow_field
-  ruuah_workflow_arg_count
-  ruuah_workflow_arg
-  ruuah_workflow_render
-  ruuah_config_load
-  ruuah_config_font_size
-  ruuah_config_auto_direction
-  ruuah_config_shell
-  ruuah_config_reports
-  ruuah_config_panels
-  ruuah_config_font_family
-  ruuah_config_error
-  ruuah_config_free
-  ruuah_host_attach_layer
-  ruuah_host_detach_layer
-  ruuah_host_resize_layer
-  ruuah_host_present
+  mind2t_host_spawn
+  mind2t_host_poll
+  mind2t_host_send
+  mind2t_host_paste
+  mind2t_host_mouse_geometry
+  mind2t_host_mouse
+  mind2t_host_wheel
+  mind2t_host_key
+  mind2t_host_scroll
+  mind2t_host_resize
+  mind2t_host_cell_metrics
+  mind2t_host_set_font_size
+  mind2t_host_row_text
+  mind2t_host_link_at
+  mind2t_host_next_event
+  mind2t_host_free
+  mind2t_history_load
+  mind2t_history_free
+  mind2t_history_append
+  mind2t_history_suggest
+  mind2t_cwd_path
+  mind2t_workflows_load
+  mind2t_workflows_free
+  mind2t_workflows_count
+  mind2t_workflows_errors
+  mind2t_workflow_field
+  mind2t_workflow_arg_count
+  mind2t_workflow_arg
+  mind2t_workflow_render
+  mind2t_config_load
+  mind2t_config_font_size
+  mind2t_config_auto_direction
+  mind2t_config_shell
+  mind2t_config_reports
+  mind2t_config_panels
+  mind2t_config_font_family
+  mind2t_config_error
+  mind2t_config_free
+  mind2t_host_attach_layer
+  mind2t_host_detach_layer
+  mind2t_host_resize_layer
+  mind2t_host_present
 )
 
 # Captured once, not piped per symbol: `nm` exits non-zero on members with no symbols, and

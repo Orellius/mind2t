@@ -12,7 +12,7 @@
 //!     Tauri cannot hand us the terminal's keystrokes. They must NOT come through the webview:
 //!     project law 2 says no terminal bytes there, and routing keys through React would be
 //!     xterm.js's mistake by another road. So this host reads `NSEvent` itself.
-//! NOT responsible for: VT semantics, rendering, or the pipeline - `ruuah_vt_host::session` owns
+//! NOT responsible for: VT semantics, rendering, or the pipeline - `mind2t_vt_host::session` owns
 //!   all of it. This file is a window, an event monitor, and a clock.
 //! Test strategy: what can be checked by a machine is checked where it lives (session pipeline,
 //!   blit origin, keycode tables, key encoding). What is left is a GUI and gets a live tap. The
@@ -25,10 +25,10 @@ use std::rc::Rc;
 
 use mind2t::canvas::{Canvas, PaneSpec};
 use mind2t::layout::{Canvas as Grid, Rect};
-use ruuah_vt_host::session::{MouseAction, MouseMods, Session};
-use ruuah_vt_frame::BaseDirection;
-use ruuah_vt_host::config::Config;
-use ruuah_vt_render::{Fill, GpuContext, GpuSurface, WindowTarget};
+use mind2t_vt_host::session::{MouseAction, MouseMods, Session};
+use mind2t_vt_frame::BaseDirection;
+use mind2t_vt_host::config::Config;
+use mind2t_vt_render::{Fill, GpuContext, GpuSurface, WindowTarget};
 use tauri::webview::WebviewBuilder;
 use tauri::window::WindowBuilder;
 use tauri::{Emitter, Listener, LogicalPosition, LogicalSize, Manager, RunEvent, WebviewUrl};
@@ -112,7 +112,7 @@ const HEADLESS_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
 /// Deliberately carries a HOST (`localhost`) that is discarded by `cwd::normalize`, and
 /// deliberately names a directory that need not exist: what is under test is the report's
 /// journey, not the filesystem.
-const CWD_PROBE: &str = "/tmp/ruuah-cwd-probe";
+const CWD_PROBE: &str = "/tmp/mind2t-cwd-probe";
 
 /// What the smoke pastes. No newline: it must sit on the prompt as text, not execute.
 const PASTE_PROBE: &str = "mind2t-paste-probe";
@@ -993,7 +993,7 @@ fn config_dir() -> Option<std::path::PathBuf> {
 /// the failure is silent and cosmetic in the worst way: a pane that skipped it wears the default
 /// xterm scheme beside its themed neighbour, which reads as a rendering bug in the new pane
 /// rather than as a line of setup nobody called.
-fn dress(session: &mut ruuah_vt_host::session::Session, config: &Config) {
+fn dress(session: &mut mind2t_vt_host::session::Session, config: &Config) {
     session.set_palette(config.palette.clone());
     // Hebrew-first by default, matching the `.app`. `Auto` flips a row's flow only when that
     // row's own text resolves right-to-left, so column-addressed TUI output stays where the
@@ -1641,17 +1641,17 @@ mod input {
 
     use mind2t::canvas::Canvas;
     use mind2t::{clipboard, wheel};
-    use ruuah_vt_render::GpuContext;
+    use mind2t_vt_render::GpuContext;
     use block2::RcBlock;
     use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
     use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags};
-    use ruuah_vt_host::session::{MouseAction, MouseMods};
-    use ruuah_vt_pty::key::{
+    use mind2t_vt_host::session::{MouseAction, MouseMods};
+    use mind2t_vt_pty::key::{
         KEY_MODS_ALT, KEY_MODS_CTRL, KEY_MODS_SHIFT, KEY_MODS_SUPER, Key, KeyAction, KeyEvent,
         KeyMods, encode,
     };
-    use ruuah_vt_pty::keycode::key_from_macos_keycode;
+    use mind2t_vt_pty::keycode::key_from_macos_keycode;
 
     use super::Focus;
 
@@ -1905,7 +1905,7 @@ mod input {
         spawn: impl Fn() -> (GpuContext, std::process::Command, f32) + 'static,
         // Applies the operator's appearance settings to a pane the chord just made. A closure
         // rather than a `Config` so this module never learns what a config is - it reads input.
-        dress_pane: impl Fn(&mut ruuah_vt_host::session::Session) + 'static,
+        dress_pane: impl Fn(&mut mind2t_vt_host::session::Session) + 'static,
     ) -> Option<Retained<AnyObject>> {
         // Captured once: the monitor and its handler both run on the main thread, and proving
         // that here is cheaper than proving it at every AppKit call inside the block.

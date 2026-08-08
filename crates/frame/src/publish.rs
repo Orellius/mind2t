@@ -11,7 +11,7 @@
 //!   `tests/viewport.rs` proves a scrolled publish shows scrollback, against controls a
 //!   publisher that ignores the offset was seen to fail.
 
-use ruuah_vt_core::Terminal;
+use mind2t_vt_core::Terminal;
 
 use crate::packed::{PackedCell, pack_style};
 use crate::seqlock::{CapacityExceeded, FrameWriter};

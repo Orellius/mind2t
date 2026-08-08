@@ -20,8 +20,8 @@
 
 use std::path::{Path, PathBuf};
 
-use ruuah_vt_frame::{BaseDirection, Direction, PackedCell, visual_spans};
-use ruuah_vt_snapshot::{Semantic, Wide};
+use mind2t_vt_frame::{BaseDirection, Direction, PackedCell, visual_spans};
+use mind2t_vt_snapshot::{Semantic, Wide};
 
 fn ucd(name: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -124,7 +124,7 @@ fn visual_spans_match_the_unicode_conformance_suite() {
             .chars
             .iter()
             .copied()
-            .any(ruuah_vt_frame::bidi::is_layout)
+            .any(mind2t_vt_frame::bidi::is_layout)
     });
 
     let mut failures = Vec::new();

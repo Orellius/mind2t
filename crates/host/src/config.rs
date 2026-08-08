@@ -14,7 +14,7 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use ruuah_vt_render::Palette;
+use mind2t_vt_render::Palette;
 use serde::Deserialize;
 
 /// The resolved settings: defaults, overridden by whatever parsed cleanly.
@@ -152,7 +152,7 @@ impl Config {
         config.reports = raw.reports.unwrap_or(false);
         config.panels = raw.panels.unwrap_or(false);
         if let Some(family) = raw.font_family.filter(|family| !family.is_empty()) {
-            if ruuah_vt_render::FontStack::family_resolves(&family) {
+            if mind2t_vt_render::FontStack::family_resolves(&family) {
                 config.font_family = Some(family);
             } else {
                 if !errors.is_empty() {
@@ -436,7 +436,7 @@ mod tests {
             .map(|since| since.as_nanos())
             .unwrap_or(0);
         let dir = std::env::temp_dir().join(format!(
-            "ruuah-config-test-{}-{stamp}-{}",
+            "mind2t-config-test-{}-{stamp}-{}",
             std::process::id(),
             COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
@@ -447,7 +447,7 @@ mod tests {
 
     #[test]
     fn font_keys_parse_and_a_missing_family_is_loud() {
-        let dir = std::env::temp_dir().join(format!("ruuah-config-fonts-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mind2t-config-fonts-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("config.toml"),

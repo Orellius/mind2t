@@ -70,7 +70,7 @@ native test run passing proves nothing about undefined behaviour. Miri is the ga
 class:
 
 ```sh
-cargo +nightly miri test -p ruuah-vt-abi --test soundness
+cargo +nightly miri test -p mind2t-vt-abi --test soundness
 ```
 
 Run it whenever the handle model changes. Two real defects in this repository were only ever

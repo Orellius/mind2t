@@ -11,7 +11,7 @@
 use std::mem::{offset_of, size_of};
 
 use serde_json::Value;
-use ruuah_vt_ghostty::{sys, type_layout_json};
+use mind2t_vt_ghostty::{sys, type_layout_json};
 
 /// Every struct this crate reads or writes across the ABI, with the offset of each field
 /// it actually touches. If a field is listed here, the harness depends on it.

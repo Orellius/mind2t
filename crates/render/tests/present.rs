@@ -9,7 +9,7 @@
 //! passes just as happily with the channels reversed, which would make this whole file theatre;
 //! `the_fixture_can_detect_a_channel_swap` is the control that proves it cannot.
 
-use ruuah_vt_render::{Blitter, GpuContext, GpuSurface, PresentError, Surface};
+use mind2t_vt_render::{Blitter, GpuContext, GpuSurface, PresentError, Surface};
 
 /// 64 pixels wide so a row is exactly 256 bytes, which is the texture-to-buffer copy alignment
 /// wgpu requires. The real present path never copies back at all; this is test scaffolding.
@@ -364,7 +364,7 @@ fn a_fill_paints_its_rect_and_leaves_the_panes_alone() {
 
     // The rule fills the gap exactly, and starts at a non-zero x and y so an implementation that
     // ignored the origin would land somewhere visibly different rather than by luck in place.
-    let fill = ruuah_vt_render::Fill { x: PANE, y: 2, width: GAP, height: HEIGHT - 4, color: RULE };
+    let fill = mind2t_vt_render::Fill { x: PANE, y: 2, width: GAP, height: HEIGHT - 4, color: RULE };
     blitter.blit_all(
         &mut [(&mut left, (0, 0)), (&mut right, (RIGHT, 0))],
         &[fill],

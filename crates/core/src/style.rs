@@ -5,12 +5,12 @@
 //!   80-column grid with 10k scrollback that is roughly 6 MB against 19 MB, for a grid that
 //!   is mostly blank. The C ABI also exposes the style as a `uint16_t` ID, so this is forced.
 //! NOT responsible for: the meaning of the attributes -- `Style` is the shared comparison
-//!   type from `ruuah-vt-snapshot`, so neither the core nor the oracle owns its definition.
+//!   type from `mind2t-vt-snapshot`, so neither the core nor the oracle owns its definition.
 //! Test strategy: unit tests below; end to end via the differential corpus.
 
 use std::collections::HashMap;
 
-use ruuah_vt_snapshot::Style;
+use mind2t_vt_snapshot::Style;
 
 /// Index into a `StyleTable`. Matches the C ABI's `GHOSTTY_CELL_DATA_STYLE_ID` width.
 pub type StyleId = u16;
@@ -112,7 +112,7 @@ impl Default for StyleTable {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ruuah_vt_snapshot::Color;
+    use mind2t_vt_snapshot::Color;
 
     fn bold() -> Style {
         Style {

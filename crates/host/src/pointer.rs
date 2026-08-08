@@ -1,7 +1,7 @@
 //! Purpose: the host side of mouse reporting - geometry, held buttons, motion dedup, and the
 //!   routing decision a wheel needs.
 //! Public surface (crate): `Pointer`, `Wheel`.
-//! Why this file: the ENCODER is pure and lives in `ruuah_vt_pty::mouse`, measured byte for byte
+//! Why this file: the ENCODER is pure and lives in `mind2t_vt_pty::mouse`, measured byte for byte
 //!   against the oracle. What it cannot own is the state around it - which buttons the operator
 //!   is holding, which cell was last reported, how big the view is - and that state has to live
 //!   in the host. It lived in the C ABI only, so a Rust host wanting mouse support had two
@@ -17,9 +17,9 @@
 //!   extraction changed nothing. `tests/session.rs` proves the same paths through the Rust
 //!   surface, so both callers are covered by tests that share no code.
 
-use ruuah_vt_frame::Frame;
-use ruuah_vt_pty::mouse::{Action, Button, Event, Mods, Options, Size};
-use ruuah_vt_render::CellMetrics;
+use mind2t_vt_frame::Frame;
+use mind2t_vt_pty::mouse::{Action, Button, Event, Mods, Options, Size};
+use mind2t_vt_render::CellMetrics;
 
 /// What a wheel tick should become. The caller decides nothing except how to act on it.
 #[derive(Debug, PartialEq, Eq)]
@@ -124,7 +124,7 @@ impl Pointer {
     /// and at the last column, which is exactly where a person notices.
     pub fn cell_at(&self, cell: CellMetrics, x: f32, y: f32) -> Option<(u16, u16)> {
         let size = self.size(cell)?;
-        let (col, row) = ruuah_vt_pty::mouse::pos_to_cell(x, y, &size);
+        let (col, row) = mind2t_vt_pty::mouse::pos_to_cell(x, y, &size);
         Some((col.min(u32::from(u16::MAX)) as u16, row.min(u32::from(u16::MAX)) as u16))
     }
 
@@ -164,7 +164,7 @@ impl Pointer {
         }
 
         let size = self.size(cell)?;
-        ruuah_vt_pty::mouse::encode(
+        mind2t_vt_pty::mouse::encode(
             Event { action, button, mods, x, y },
             Options {
                 event_mode: frame.mouse_event(),
@@ -199,14 +199,14 @@ impl Pointer {
         // every one of them would become bytes on the pty.
         let repeats = ticks.unsigned_abs().min(64);
 
-        if frame.mouse_event() != ruuah_vt_core::mouse::MouseEvent::None {
+        if frame.mouse_event() != mind2t_vt_core::mouse::MouseEvent::None {
             let Some(size) = self.size(cell) else {
                 return Wheel::Viewport;
             };
             let button = if ticks > 0 { Button::Four } else { Button::Five };
             let mut out = Vec::new();
             for _ in 0..repeats {
-                if let Some(bytes) = ruuah_vt_pty::mouse::encode(
+                if let Some(bytes) = mind2t_vt_pty::mouse::encode(
                     Event { action: Action::Press, button: Some(button), mods, x, y },
                     Options {
                         event_mode: frame.mouse_event(),

@@ -8,7 +8,7 @@
 //! with the bracketed flag inverted must disagree on every fixture that has a fence
 //! or a newline.
 
-use ruuah_vt_ghostty::sys;
+use mind2t_vt_ghostty::sys;
 
 /// Every rule from `src/input/paste.zig`, plus the shapes that mix them.
 const FIXTURES: &[&[u8]] = &[
@@ -71,7 +71,7 @@ fn oracle_encode(data: &[u8], bracketed: bool) -> Vec<u8> {
 fn the_encoder_matches_the_oracle_byte_for_byte() {
     for &fixture in FIXTURES {
         for bracketed in [false, true] {
-            let ours = ruuah_vt_pty::paste::encode(fixture, bracketed);
+            let ours = mind2t_vt_pty::paste::encode(fixture, bracketed);
             let oracle = oracle_encode(fixture, bracketed);
             assert_eq!(
                 ours, oracle,
@@ -90,7 +90,7 @@ fn an_encoder_with_the_flag_inverted_is_caught() {
     let mut disagreements = 0;
     for &fixture in FIXTURES {
         for bracketed in [false, true] {
-            let wrong = ruuah_vt_pty::paste::encode(fixture, !bracketed);
+            let wrong = mind2t_vt_pty::paste::encode(fixture, !bracketed);
             if wrong != oracle_encode(fixture, bracketed) {
                 disagreements += 1;
             }

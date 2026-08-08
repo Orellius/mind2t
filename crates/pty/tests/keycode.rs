@@ -13,13 +13,13 @@
 
 use std::collections::BTreeMap;
 
-use ruuah_vt_pty::key::Key;
-use ruuah_vt_pty::keycode::{MACOS_KEYCODES, key_from_macos_keycode};
+use mind2t_vt_pty::key::Key;
+use mind2t_vt_pty::keycode::{MACOS_KEYCODES, key_from_macos_keycode};
 
 fn swift_table() -> BTreeMap<u16, u16> {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../swift/Sources/ruuah-host/KeyMap.swift"
+        "/../../swift/Sources/mind2t-host/KeyMap.swift"
     );
     let text = std::fs::read_to_string(path).expect("the Swift keymap is where it has always been");
     text.lines()

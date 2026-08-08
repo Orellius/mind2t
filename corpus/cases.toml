@@ -1,7 +1,7 @@
-# Differential corpus: byte streams fed identically to libghostty-vt and to ruuah-vt.
+# Differential corpus: byte streams fed identically to libghostty-vt and to mind2t-vt.
 #
 # `expect` is the verdict the case is asserted to produce today, not the verdict it
-# should eventually produce. A `diff` case is a to-do list entry: when ruuah-vt implements
+# should eventually produce. A `diff` case is a to-do list entry: when mind2t-vt implements
 # the behaviour, this file fails and the case gets promoted to `match`. That is the
 # point -- the harness is only evidence if it can be wrong.
 #

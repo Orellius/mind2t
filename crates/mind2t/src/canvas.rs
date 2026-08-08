@@ -14,8 +14,8 @@
 
 use std::process::Command;
 
-use ruuah_vt_host::session::{Session, SessionError, SessionGeometry};
-use ruuah_vt_render::{CellMetrics, GpuContext};
+use mind2t_vt_host::session::{Session, SessionError, SessionGeometry};
+use mind2t_vt_render::{CellMetrics, GpuContext};
 
 use crate::layout::{Canvas as Grid, Rect};
 

@@ -1,12 +1,12 @@
 // Blocks (S2): command + output grouped by the shell's own OSC 133 marks.
 //
-// The grid's row classes arrive from the C surface (RuuahHostFrame.row_semantics); a
+// The grid's row classes arrive from the C surface (Mind2tHostFrame.row_semantics); a
 // block starts at each run of prompt rows and owns everything until the next one. The
 // grouping is pure -- the gutter, the click mapping and the copy actions all read from
 // the same [Block], so they cannot disagree about where a block begins.
 
 import AppKit
-import CRuuahHost
+import CMind2tHost
 
 struct Block: Equatable {
     /// Every row of the block: the prompt run and the rows below it.
@@ -19,7 +19,7 @@ struct Block: Equatable {
 /// without integration there are no marks at all, and a gutter over unmarked scrollback
 /// would be guessing.
 func computeBlocks(_ classes: [UInt8]) -> [Block] {
-    let prompt = UInt8(RUUAH_ROW_PROMPT)
+    let prompt = UInt8(MIND2T_ROW_PROMPT)
     var blocks: [Block] = []
     var index = 0
     while index < classes.count {
@@ -46,7 +46,7 @@ extension Session {
     /// wrap was visual, not typed.
     func command(of block: Block) -> String {
         block.promptRows
-            .map { rowText(UInt16($0), semantic: UInt8(RUUAH_ROW_INPUT)) }
+            .map { rowText(UInt16($0), semantic: UInt8(MIND2T_ROW_INPUT)) }
             .joined()
             .trimmingCharacters(in: .whitespaces)
     }
@@ -56,7 +56,7 @@ extension Session {
     func output(of block: Block) -> String {
         var lines = block.rows
             .filter { !block.promptRows.contains($0) }
-            .map { rowText(UInt16($0), semantic: UInt8(RUUAH_TEXT_ALL)) }
+            .map { rowText(UInt16($0), semantic: UInt8(MIND2T_TEXT_ALL)) }
         while lines.last?.isEmpty == true {
             lines.removeLast()
         }

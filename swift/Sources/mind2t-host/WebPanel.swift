@@ -9,7 +9,7 @@
 // their way to a pty, no frame data. The panel is a sibling of the grid, never a layer
 // over it.
 //
-// Everything here is off unless `panels = true` in config.toml (ruuah_config_panels).
+// Everything here is off unless `panels = true` in config.toml (mind2t_config_panels).
 
 import AppKit
 import WebKit
@@ -194,7 +194,7 @@ final class WebPanel: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     ///
     /// The bundle is an ES module, and module scripts are deferred: WKWebView's
     /// `didFinish` can fire BEFORE the module has evaluated, so at that moment
-    /// `window.__ruuahReceive` may not exist yet and delivering to it throws
+    /// `window.__mind2tReceive` may not exist yet and delivering to it throws
     /// "undefined is not a function". Flushing on the panel's own `ready` message
     /// removes the race by construction -- the panel cannot send it before its bridge
     /// module ran, because the bridge is what sends it. (Caught by --smoke-panel,
@@ -252,7 +252,7 @@ final class WebPanel: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init(frame: .zero)
 
-        controller.add(self, name: "ruuah")
+        controller.add(self, name: "mind2t")
         webView.navigationDelegate = self
         webView.translatesAutoresizingMaskIntoConstraints = false
         // Opaque on purpose. Transparency behind a WKWebView needs a KVC poke at a
@@ -272,7 +272,7 @@ final class WebPanel: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         // Web Inspector only when explicitly asked for. It is how the panel gets
         // debugged during development and it has no business being reachable otherwise.
         if #available(macOS 13.3, *),
-            ProcessInfo.processInfo.environment["RUUAH_PANEL_INSPECT"] == "1"
+            ProcessInfo.processInfo.environment["MIND2T_PANEL_INSPECT"] == "1"
         {
             webView.isInspectable = true
         }
@@ -309,7 +309,7 @@ final class WebPanel: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     required init?(coder: NSCoder) { nil }
 
     deinit {
-        webView.configuration.userContentController.removeScriptMessageHandler(forName: "ruuah")
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "mind2t")
     }
 
     /// Whether the document is on screen yet. False means the container's own colour is
@@ -339,7 +339,7 @@ final class WebPanel: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         let safe = json
             .replacingOccurrences(of: "\u{2028}", with: "\\u2028")
             .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
-        webView.evaluateJavaScript("window.__ruuahReceive(\(safe))") { [weak self] _, error in
+        webView.evaluateJavaScript("window.__mind2tReceive(\(safe))") { [weak self] _, error in
             if let error {
                 self?.onProtocolError?("delivering \(message.json["kind"] ?? "?"): \(error)")
             }

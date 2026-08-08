@@ -4,7 +4,7 @@
 //!   lets the core stay a pure state machine. The `Terminal` itself lives on the pump thread
 //!   and is never shared -- the thread boundary is crossed by published frames alone, so
 //!   there is nothing to lock and no way for a renderer to observe a half-parsed sequence.
-//! NOT responsible for: parsing (`ruuah-vt-core`), the frame handoff (`ruuah-vt-frame`), or
+//! NOT responsible for: parsing (`mind2t-vt-core`), the frame handoff (`mind2t-vt-frame`), or
 //!   drawing anything.
 //! Test strategy: `tests/child.rs` runs real programs on a real pty and asserts the frame a
 //!   renderer would draw, including that the pty is a controlling terminal (a child that
@@ -27,11 +27,11 @@ use rustix::fs::{Mode, OFlags};
 use rustix::io::{Errno, FdFlags, fcntl_setfd};
 use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
 use rustix::termios::{Winsize, tcsetwinsize};
-use ruuah_vt_core::Terminal;
-use ruuah_vt_core::events::Event;
-use ruuah_vt_core::graphics::ImageOp;
+use mind2t_vt_core::Terminal;
+use mind2t_vt_core::events::Event;
+use mind2t_vt_core::graphics::ImageOp;
 use std::collections::HashMap;
-use ruuah_vt_frame::{FrameReader, Publisher, channel};
+use mind2t_vt_frame::{FrameReader, Publisher, channel};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Geometry {
@@ -285,7 +285,7 @@ impl Host {
             Arc::new(Mutex::new(HashMap::new()));
         let scroll = Arc::new(AtomicI64::new(0));
         let pump = thread::Builder::new()
-            .name("ruuah-vt-pty".to_string())
+            .name("mind2t-vt-pty".to_string())
             .spawn({
                 let master = Arc::clone(&master);
                 let stop = Arc::clone(&stop);

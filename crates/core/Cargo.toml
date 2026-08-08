@@ -1,12 +1,12 @@
 [package]
-name = "ruuah-vt-core"
+name = "mind2t-vt-core"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-ruuah-vt-snapshot.workspace = true
+mind2t-vt-snapshot.workspace = true
 unicode-width = "0.2"
 vte = { path = "../vte" }
 # Kitty graphics f=100: icat's default wire format is PNG. Weighed under GATE 01 --

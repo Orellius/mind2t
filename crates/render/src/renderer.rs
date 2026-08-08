@@ -11,7 +11,7 @@
 //! Test strategy: `tests/redraw.rs` compares incremental against full and proves the
 //!   comparison can fail; `tests/vim.rs` runs the real editor through the real pty.
 
-use ruuah_vt_frame::{Frame, PackedCell, cell_width};
+use mind2t_vt_frame::{Frame, PackedCell, cell_width};
 
 use crate::atlas::Atlas;
 use crate::canvas::Canvas;
@@ -338,7 +338,7 @@ impl<S: Surface> Renderer<S> {
                         .iter()
                         .any(|(start, count, _)| covers_index(start, count));
                 if drawn.ink && !planned {
-                    let mirrored = run.direction == ruuah_vt_frame::Direction::RightToLeft;
+                    let mirrored = run.direction == mind2t_vt_frame::Direction::RightToLeft;
                     self.draw_cell(*glyph_cell, left, top, width, drawn.foreground, mirrored);
                 }
                 self.draw_decorations(&drawn, left, top, width);
@@ -406,11 +406,11 @@ impl<S: Surface> Renderer<S> {
     /// which is exactly what the per-cell path already draws.
     fn joining_plan(
         &mut self,
-        run: &ruuah_vt_frame::Run<'_>,
+        run: &mind2t_vt_frame::Run<'_>,
     ) -> Vec<(usize, usize, Vec<CellGlyph>)> {
         let mut plans = Vec::new();
         let cells = run.cells;
-        let rtl = run.direction == ruuah_vt_frame::Direction::RightToLeft;
+        let rtl = run.direction == mind2t_vt_frame::Direction::RightToLeft;
         let mut index = 0usize;
         while index < cells.len() {
             let mut text = String::new();
@@ -423,7 +423,7 @@ impl<S: Surface> Renderer<S> {
                 if cell_width(cell) != 1 || !cell.has_text() {
                     break;
                 }
-                let mut scratch = [0u8; ruuah_vt_frame::CLUSTER_BYTES];
+                let mut scratch = [0u8; mind2t_vt_frame::CLUSTER_BYTES];
                 let cluster = cell.cluster(&mut scratch);
                 let Some(first) = cluster.chars().next() else {
                     break;
@@ -462,9 +462,9 @@ impl<S: Surface> Renderer<S> {
     /// as they always did.
     fn ligature_plan(
         &mut self,
-        run: &ruuah_vt_frame::Run<'_>,
+        run: &mind2t_vt_frame::Run<'_>,
     ) -> Vec<(usize, usize, Vec<PositionedGlyph>)> {
-        if run.direction == ruuah_vt_frame::Direction::RightToLeft {
+        if run.direction == mind2t_vt_frame::Direction::RightToLeft {
             return Vec::new();
         }
         let mut plans = Vec::new();
@@ -478,7 +478,7 @@ impl<S: Surface> Renderer<S> {
                 if cell_width(cell) != 1 {
                     break;
                 }
-                let mut scratch = [0u8; ruuah_vt_frame::CLUSTER_BYTES];
+                let mut scratch = [0u8; mind2t_vt_frame::CLUSTER_BYTES];
                 let cluster = cell.cluster(&mut scratch);
                 let mut chars = cluster.chars();
                 match (chars.next(), chars.next()) {
@@ -513,7 +513,7 @@ impl<S: Surface> Renderer<S> {
         let metrics = self.fonts.metrics();
         let baseline = top + metrics.baseline;
 
-        let mut scratch = [0u8; ruuah_vt_frame::CLUSTER_BYTES];
+        let mut scratch = [0u8; mind2t_vt_frame::CLUSTER_BYTES];
         let mut cluster = cell.cluster(&mut scratch);
 
         // Block mosaics are synthesized at exactly this cell's geometry so they meet
@@ -577,7 +577,7 @@ impl<S: Surface> Renderer<S> {
         if mirrored {
             let mut chars = cluster.chars();
             if let (Some(c), None) = (chars.next(), chars.next()) {
-                if let Some(m) = ruuah_vt_frame::mirror(c) {
+                if let Some(m) = mind2t_vt_frame::mirror(c) {
                     cluster = m.encode_utf8(&mut mirror_buf);
                 }
             }
@@ -627,7 +627,7 @@ impl<S: Surface> Renderer<S> {
     }
 
     fn draw_decorations(&mut self, drawn: &crate::color::Drawn, left: i32, top: i32, width: u16) {
-        use ruuah_vt_snapshot::Underline;
+        use mind2t_vt_snapshot::Underline;
 
         let metrics = self.fonts.metrics();
         let span = metrics.width * u32::from(width);
@@ -698,7 +698,7 @@ impl<S: Surface> Renderer<S> {
     pub fn draw_layered(
         &mut self,
         frame: &Frame,
-        placements: &[ruuah_vt_frame::FramePlacement],
+        placements: &[mind2t_vt_frame::FramePlacement],
         resolved: &[Option<(u32, u32, std::sync::Arc<Vec<u8>>)>],
     ) -> usize {
         let layer_of = |index: usize| placements[index].layer();
@@ -731,7 +731,7 @@ impl<S: Surface> Renderer<S> {
 
     /// Draws every unicode-placeholder run in the frame.
     ///
-    /// The runs come from the grid itself (`ruuah_vt_frame::virtual_runs`), so an image
+    /// The runs come from the grid itself (`mind2t_vt_frame::virtual_runs`), so an image
     /// placed this way scrolls, reflows and is erased exactly like the text it is made of
     /// -- no anchor to keep in step, which is the whole reason kitty added the feature.
     ///
@@ -748,7 +748,7 @@ impl<S: Surface> Renderer<S> {
     {
         let metrics = self.fonts.metrics();
         for y in 0..frame.rows {
-            for run in ruuah_vt_frame::virtual_runs(frame, y) {
+            for run in mind2t_vt_frame::virtual_runs(frame, y) {
                 let Some((width, height, rgba)) = lookup(run.image) else {
                     continue;
                 };
@@ -808,7 +808,7 @@ impl<S: Surface> Renderer<S> {
     /// never disagree about where the image is.
     fn blit_placement(
         &mut self,
-        placement: &ruuah_vt_frame::FramePlacement,
+        placement: &mind2t_vt_frame::FramePlacement,
         image: Option<&(u32, u32, std::sync::Arc<Vec<u8>>)>,
     ) -> Option<CellRect> {
         let metrics = self.fonts.metrics();
@@ -851,7 +851,7 @@ impl<S: Surface> Renderer<S> {
     /// bytes (the P0.2 rule). `lookup` resolves an image id to (width, height, pixels);
     /// a placement whose image is gone draws nothing. A `cols`/`rows` of 0 means the
     /// image's native pixel size (the core is cell-pixel-ignorant by design).
-    pub fn draw_images<F>(&mut self, placements: &[ruuah_vt_frame::FramePlacement], mut lookup: F)
+    pub fn draw_images<F>(&mut self, placements: &[mind2t_vt_frame::FramePlacement], mut lookup: F)
     where
         F: FnMut(u32) -> Option<(u32, u32, std::sync::Arc<Vec<u8>>)>,
     {
@@ -921,7 +921,7 @@ impl<S: Surface> Renderer<S> {
         // otherwise a bracket in an RTL run flips back the moment the cursor lands on it.
         // `logical_start` is the cursor's coordinate space; `start` is not.
         let mirrored = frame.runs(y).into_iter().any(|run| {
-            run.direction == ruuah_vt_frame::Direction::RightToLeft
+            run.direction == mind2t_vt_frame::Direction::RightToLeft
                 && (run.logical_start..run.logical_start + run.cells.len() as u16)
                     .contains(&frame.cursor.x)
         });

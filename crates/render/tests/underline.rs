@@ -10,9 +10,9 @@
 //! more, curly reaching rows single never touches). Seen red against the collapsed
 //! renderer, 2026-07-30.
 
-use ruuah_vt_core::Terminal;
-use ruuah_vt_frame::{Frame, Publisher, channel};
-use ruuah_vt_render::{FontStack, Renderer};
+use mind2t_vt_core::Terminal;
+use mind2t_vt_frame::{Frame, Publisher, channel};
+use mind2t_vt_render::{FontStack, Renderer};
 
 const COLS: u16 = 3;
 const SIZE: f32 = 32.0;

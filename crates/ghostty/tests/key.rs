@@ -22,8 +22,8 @@
 //! DECBKM (mode 67) is also absent: our core does not track it, so both sides
 //! run with the default (backspace = 0x7f) in the derived-state layer.
 
-use ruuah_vt_ghostty::sys;
-use ruuah_vt_pty::key::{
+use mind2t_vt_ghostty::sys;
+use mind2t_vt_pty::key::{
     self, KEY_MODS_ALT, KEY_MODS_ALT_SIDE, KEY_MODS_CAPS_LOCK, KEY_MODS_CTRL,
     KEY_MODS_NUM_LOCK, KEY_MODS_SHIFT, KEY_MODS_SUPER, Key, KeyAction, KeyEvent, KeyMods,
     KeyOptions, OptionAsAlt,
@@ -95,7 +95,7 @@ impl OracleKeyEncoder {
     }
 
     /// From the oracle TERMINAL's state -- the derived-mapping comparison.
-    fn set_from_terminal(&self, terminal: &ruuah_vt_ghostty::Terminal) {
+    fn set_from_terminal(&self, terminal: &mind2t_vt_ghostty::Terminal) {
         unsafe { sys::ghostty_key_encoder_setopt_from_terminal(self.raw, terminal.raw()) };
     }
 
@@ -452,12 +452,12 @@ fn terminal_derived_state_encodes_identically_after_every_mode_sequence() {
     let mut agreed_nonempty = 0usize;
     for bytes in sequences {
         let mut oracle_terminal =
-            ruuah_vt_ghostty::Terminal::new(20, 5).expect("oracle terminal");
+            mind2t_vt_ghostty::Terminal::new(20, 5).expect("oracle terminal");
         oracle_terminal.write(bytes.as_bytes());
         let oracle = OracleKeyEncoder::new();
         oracle.set_from_terminal(&oracle_terminal);
 
-        let mut terminal = ruuah_vt_core::terminal::Terminal::new(20, 5);
+        let mut terminal = mind2t_vt_core::terminal::Terminal::new(20, 5);
         terminal.write(bytes.as_bytes());
         // `setopt_from_terminal` cannot know option-as-alt (resets it to false)
         // and our core does not track DECBKM -- both sides run the defaults.

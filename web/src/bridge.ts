@@ -12,7 +12,7 @@ type Subscriber = (message: HostMessage) => void;
 
 interface WebKitBridge {
   readonly messageHandlers?: {
-    readonly ruuah?: { postMessage(body: unknown): void };
+    readonly mind2t?: { postMessage(body: unknown): void };
   };
 }
 
@@ -30,7 +30,7 @@ const subscribers = new Set<Subscriber>();
 
 function handler(): { postMessage(body: unknown): void } | null {
   const webkit = (window as { webkit?: WebKitBridge }).webkit;
-  return webkit?.messageHandlers?.ruuah ?? null;
+  return webkit?.messageHandlers?.mind2t ?? null;
 }
 
 /**
@@ -44,7 +44,7 @@ function handler(): { postMessage(body: unknown): void } | null {
 export function send(message: PanelMessage): boolean {
   const target = handler();
   if (target === null) {
-    console.error("[ruuah] no host message handler; the bridge is not installed");
+    console.error("[mind2t] no host message handler; the bridge is not installed");
     return false;
   }
   target.postMessage(message);
@@ -87,8 +87,8 @@ function receive(raw: unknown): void {
 declare global {
   interface Window {
     /** The host's single entry point into this document. Called via evaluateJavaScript. */
-    __ruuahReceive?: (raw: unknown) => void;
+    __mind2tReceive?: (raw: unknown) => void;
   }
 }
 
-window.__ruuahReceive = receive;
+window.__mind2tReceive = receive;

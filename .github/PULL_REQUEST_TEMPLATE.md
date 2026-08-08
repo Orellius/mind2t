@@ -9,7 +9,7 @@ Which gates were run, and their numbers. Paste the counts, not "all green".
 -->
 
 - [ ] `cargo test --workspace`
-- [ ] `cargo run -p ruuah-vt-difftest`
+- [ ] `cargo run -p mind2t-vt-difftest`
 - [ ] `./scripts/smoke-mind2t.sh`
 
 **The mutant.** Which deliberate break was used to prove the new test can fail, and what it

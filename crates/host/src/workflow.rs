@@ -202,7 +202,7 @@ port = { default = "22", description = "TCP port" }
 
     #[test]
     fn load_dir_skips_broken_files_and_reports_them() {
-        let dir = std::env::temp_dir().join(format!("ruuah-wf-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mind2t-wf-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("mkdir");
         std::fs::write(dir.join("a.toml"), "name = \"A\"\ncommand = \"echo a\"").expect("write");
         std::fs::write(dir.join("broken.toml"), "name = ").expect("write");

@@ -147,7 +147,7 @@ mod tests {
         assert_eq!(normalize(b"file:///tmp/%FF%FE"), None);
     }
 
-    /// THE PAIRING TEST. These are the exact bytes `shell/ruuah-integration.zsh` emitted
+    /// THE PAIRING TEST. These are the exact bytes `shell/mind2t-integration.zsh` emitted
     /// for these directories, captured from a real zsh on 2026-07-31. The emitter and the
     /// decoder are in different languages in different files, and nothing else would
     /// notice if one of them changed its mind about encoding.

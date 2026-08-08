@@ -23,8 +23,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use ruuah_vt_frame::{Frame, FrameReader, PackedCell, ReadOutcome, channel};
-use ruuah_vt_snapshot::{Semantic, Wide};
+use mind2t_vt_frame::{Frame, FrameReader, PackedCell, ReadOutcome, channel};
+use mind2t_vt_snapshot::{Semantic, Wide};
 
 const COLS: u16 = 120;
 const ROWS: u16 = 40;
@@ -205,7 +205,7 @@ fn a_publish_larger_than_the_buffer_is_refused_rather_than_truncated() {
     assert_eq!(error.capacity, (10, 4));
 
     // And the frame that was already there survived intact.
-    let mut scratch = [0u8; ruuah_vt_frame::CLUSTER_BYTES];
+    let mut scratch = [0u8; mind2t_vt_frame::CLUSTER_BYTES];
     assert!(matches!(
         reader.read_into(&mut frame),
         ReadOutcome::Unchanged
@@ -378,6 +378,6 @@ fn a_publish_after_a_panicked_publish_restores_the_protocol() {
         "the publish after a panicked one must be readable -- an odd completed \
          generation means the parity inverted"
     );
-    let mut scratch = [0u8; ruuah_vt_frame::CLUSTER_BYTES];
+    let mut scratch = [0u8; mind2t_vt_frame::CLUSTER_BYTES];
     assert_eq!(frame.cell(0, 0).cluster(&mut scratch), "b");
 }

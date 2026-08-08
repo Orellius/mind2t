@@ -8,7 +8,7 @@
 //! silently deletes the input mark and every block goes dark.
 //!
 //! The test spawns a real interactive zsh through the C surface with a hostile rc that
-//! reproduces exactly that shape, then asks `ruuah_host_row_text` with the input filter
+//! reproduces exactly that shape, then asks `mind2t_host_row_text` with the input filter
 //! whether the typed command is still input-marked. Run against the old integration this
 //! fails (seen 2026-07-30); the control below proves the marks come from the integration
 //! and not from zsh itself.
@@ -19,9 +19,9 @@ use std::ptr;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use ruuah_vt_host::{
-    RuuahHost, RuuahHostFrame, RuuahHostOptions, RuuahHostResult, ruuah_host_free,
-    ruuah_host_poll, ruuah_host_row_text, ruuah_host_send, ruuah_host_spawn,
+use mind2t_vt_host::{
+    Mind2tHost, Mind2tHostFrame, Mind2tHostOptions, Mind2tHostResult, mind2t_host_free,
+    mind2t_host_poll, mind2t_host_row_text, mind2t_host_send, mind2t_host_spawn,
 };
 
 const COLS: u16 = 80;
@@ -38,7 +38,7 @@ fn repo_shell_dir() -> PathBuf {
 /// A HOME whose .zshrc reproduces the starship shape: a precmd, registered after the
 /// integration's (user rc loads after .zshenv), that rewrites PROMPT every cycle.
 fn hostile_home() -> PathBuf {
-    let home = std::env::temp_dir().join(format!("ruuah-hostile-home-{}", std::process::id()));
+    let home = std::env::temp_dir().join(format!("mind2t-hostile-home-{}", std::process::id()));
     std::fs::create_dir_all(&home).expect("temp home");
     std::fs::write(
         home.join(".zshrc"),
@@ -48,8 +48,8 @@ fn hostile_home() -> PathBuf {
     home
 }
 
-fn empty_frame() -> RuuahHostFrame {
-    RuuahHostFrame {
+fn empty_frame() -> Mind2tHostFrame {
+    Mind2tHostFrame {
         pixels: ptr::null(),
         width: 0,
         height: 0,
@@ -69,44 +69,44 @@ fn empty_frame() -> RuuahHostFrame {
 /// Tolerant variant for polling: `row_text` answers from the last POLLED frame, so this
 /// polls first, and before the pump publishes its first frame it returns None ("not
 /// yet", not "wrong").
-fn try_text_of(host: *mut RuuahHost, row: u16, semantic: u8) -> Option<String> {
+fn try_text_of(host: *mut Mind2tHost, row: u16, semantic: u8) -> Option<String> {
     let mut polled = empty_frame();
-    if unsafe { ruuah_host_poll(host, &mut polled) } != RuuahHostResult::Success {
+    if unsafe { mind2t_host_poll(host, &mut polled) } != Mind2tHostResult::Success {
         return None;
     }
     let mut len = 0usize;
-    let probe = unsafe { ruuah_host_row_text(host, row, semantic, ptr::null_mut(), 0, &mut len) };
-    if probe != RuuahHostResult::Success {
+    let probe = unsafe { mind2t_host_row_text(host, row, semantic, ptr::null_mut(), 0, &mut len) };
+    if probe != Mind2tHostResult::Success {
         return None;
     }
     let mut buffer = vec![0u8; len];
     let read =
-        unsafe { ruuah_host_row_text(host, row, semantic, buffer.as_mut_ptr(), len, &mut len) };
-    if read != RuuahHostResult::Success {
+        unsafe { mind2t_host_row_text(host, row, semantic, buffer.as_mut_ptr(), len, &mut len) };
+    if read != Mind2tHostResult::Success {
         return None;
     }
     String::from_utf8(buffer).ok()
 }
 
-fn text_of(host: *mut RuuahHost, row: u16, semantic: u8) -> String {
+fn text_of(host: *mut Mind2tHost, row: u16, semantic: u8) -> String {
     let mut len = 0usize;
     assert_eq!(
-        unsafe { ruuah_host_row_text(host, row, semantic, ptr::null_mut(), 0, &mut len) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_row_text(host, row, semantic, ptr::null_mut(), 0, &mut len) },
+        Mind2tHostResult::Success
     );
     let mut buffer = vec![0u8; len];
     assert_eq!(
-        unsafe { ruuah_host_row_text(host, row, semantic, buffer.as_mut_ptr(), len, &mut len) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_row_text(host, row, semantic, buffer.as_mut_ptr(), len, &mut len) },
+        Mind2tHostResult::Success
     );
     String::from_utf8(buffer).expect("row text is UTF-8")
 }
 
-fn row_classes(host: *mut RuuahHost) -> Vec<u8> {
+fn row_classes(host: *mut Mind2tHost) -> Vec<u8> {
     let mut polled = empty_frame();
     assert_eq!(
-        unsafe { ruuah_host_poll(host, &mut polled) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_poll(host, &mut polled) },
+        Mind2tHostResult::Success
     );
     if polled.row_semantics.is_null() {
         return Vec::new();
@@ -125,14 +125,14 @@ fn wait_for<F: FnMut() -> bool>(mut done: F, what: &str) {
     panic!("timed out waiting for {what}");
 }
 
-fn send(host: *mut RuuahHost, bytes: &[u8]) {
+fn send(host: *mut Mind2tHost, bytes: &[u8]) {
     assert_eq!(
-        unsafe { ruuah_host_send(host, bytes.as_ptr(), bytes.len()) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_send(host, bytes.as_ptr(), bytes.len()) },
+        Mind2tHostResult::Success
     );
 }
 
-fn spawn_zsh(with_integration: bool) -> *mut RuuahHost {
+fn spawn_zsh(with_integration: bool) -> *mut Mind2tHost {
     let shell = repo_shell_dir().canonicalize().expect("shell dir");
     let home = hostile_home();
     // Env mutation is process-global; the lock is held only across spawn, and the child
@@ -140,17 +140,17 @@ fn spawn_zsh(with_integration: bool) -> *mut RuuahHost {
     let _guard = ENV_LOCK.lock().expect("env lock");
     unsafe {
         std::env::set_var("HOME", &home);
-        std::env::remove_var("RUUAH_USER_ZDOTDIR");
+        std::env::remove_var("MIND2T_USER_ZDOTDIR");
         if with_integration {
             std::env::set_var("ZDOTDIR", shell.join("zdotdir"));
-            std::env::set_var("RUUAH_INTEGRATION", shell.join("ruuah-integration.zsh"));
+            std::env::set_var("MIND2T_INTEGRATION", shell.join("mind2t-integration.zsh"));
         } else {
             std::env::set_var("ZDOTDIR", &home);
-            std::env::remove_var("RUUAH_INTEGRATION");
+            std::env::remove_var("MIND2T_INTEGRATION");
         }
     }
     let command = CString::new("exec zsh -i").expect("command");
-    let options = RuuahHostOptions {
+    let options = Mind2tHostOptions {
         cols: COLS,
         rows: ROWS,
         font_size: 0.0,
@@ -159,10 +159,10 @@ fn spawn_zsh(with_integration: bool) -> *mut RuuahHost {
         config: ptr::null(),
         cwd: ptr::null(),
     };
-    let mut host: *mut RuuahHost = ptr::null_mut();
+    let mut host: *mut Mind2tHost = ptr::null_mut();
     assert_eq!(
-        unsafe { ruuah_host_spawn(&options, &mut host) },
-        RuuahHostResult::Success
+        unsafe { mind2t_host_spawn(&options, &mut host) },
+        Mind2tHostResult::Success
     );
     host
 }
@@ -210,7 +210,7 @@ fn input_marks_survive_a_prompt_rewriting_precmd() {
         "H>",
         "the prompt filter keeps only the theme's own cells"
     );
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
 }
 
 /// The pair's control: the same hostile shell WITHOUT the integration must produce no
@@ -240,7 +240,7 @@ fn without_the_integration_nothing_is_marked() {
         "",
         "no integration, no input-marked cells"
     );
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
 }
 
 /// OSC 7 reaches the event seam from a REAL zsh running our integration.
@@ -255,7 +255,7 @@ fn without_the_integration_nothing_is_marked() {
 /// ever arrives, which is what proves the report comes from our file and not from zsh.
 #[test]
 fn the_integration_reports_the_working_directory() {
-    use ruuah_vt_host::ruuah_host_next_event;
+    use mind2t_vt_host::mind2t_host_next_event;
 
     let host = spawn_zsh(true);
     let deadline = Instant::now() + PATIENCE;
@@ -263,14 +263,14 @@ fn the_integration_reports_the_working_directory() {
     while Instant::now() < deadline && seen.is_none() {
         let mut polled = empty_frame();
         assert_eq!(
-            unsafe { ruuah_host_poll(host, &mut polled) },
-            RuuahHostResult::Success
+            unsafe { mind2t_host_poll(host, &mut polled) },
+            Mind2tHostResult::Success
         );
         loop {
             let (mut kind, mut len) = (0u32, 0usize);
             assert_eq!(
-                unsafe { ruuah_host_next_event(host, &mut kind, ptr::null_mut(), 0, &mut len) },
-                RuuahHostResult::Success
+                unsafe { mind2t_host_next_event(host, &mut kind, ptr::null_mut(), 0, &mut len) },
+                Mind2tHostResult::Success
             );
             if kind == 0 {
                 break;
@@ -279,9 +279,9 @@ fn the_integration_reports_the_working_directory() {
             let mut fetched = 0u32;
             assert_eq!(
                 unsafe {
-                    ruuah_host_next_event(host, &mut fetched, buffer.as_mut_ptr(), len, &mut len)
+                    mind2t_host_next_event(host, &mut fetched, buffer.as_mut_ptr(), len, &mut len)
                 },
-                RuuahHostResult::Success
+                Mind2tHostResult::Success
             );
             if kind == 7 && len > 0 {
                 seen = Some(buffer[..len].to_vec());
@@ -290,7 +290,7 @@ fn the_integration_reports_the_working_directory() {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
 
     let report = seen.expect("the integration never reported a working directory");
     let text = String::from_utf8(report).expect("the report is UTF-8");
@@ -315,7 +315,7 @@ fn the_integration_reports_the_working_directory() {
 /// prove nothing about our file.
 #[test]
 fn without_the_integration_no_working_directory_is_reported() {
-    use ruuah_vt_host::ruuah_host_next_event;
+    use mind2t_vt_host::mind2t_host_next_event;
 
     let host = spawn_zsh(false);
     // Long enough for several prompt cycles; the positive case finds its event well
@@ -324,19 +324,19 @@ fn without_the_integration_no_working_directory_is_reported() {
     while Instant::now() < deadline {
         let mut polled = empty_frame();
         assert_eq!(
-            unsafe { ruuah_host_poll(host, &mut polled) },
-            RuuahHostResult::Success
+            unsafe { mind2t_host_poll(host, &mut polled) },
+            Mind2tHostResult::Success
         );
         let (mut kind, mut len) = (0u32, 0usize);
         assert_eq!(
-            unsafe { ruuah_host_next_event(host, &mut kind, ptr::null_mut(), 0, &mut len) },
-            RuuahHostResult::Success
+            unsafe { mind2t_host_next_event(host, &mut kind, ptr::null_mut(), 0, &mut len) },
+            Mind2tHostResult::Success
         );
         if kind == 7 {
-            unsafe { ruuah_host_free(host) };
+            unsafe { mind2t_host_free(host) };
             panic!("an unintegrated zsh reported a working directory");
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    unsafe { ruuah_host_free(host) };
+    unsafe { mind2t_host_free(host) };
 }

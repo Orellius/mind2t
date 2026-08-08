@@ -3,14 +3,14 @@
 //! Why this file: `abi_layout.rs` proves the struct offsets are right; this proves the
 //!   readout built on them is right. Both are needed: correct offsets read in the wrong
 //!   order still produce a confident wrong answer.
-//! NOT responsible for: ruuah-vt's own behaviour, or any comparison between the two.
+//! NOT responsible for: mind2t-vt's own behaviour, or any comparison between the two.
 //! Test strategy: drive libghostty-vt with byte streams whose correct outcome is fixed by
 //!   the VT spec, and assert on the snapshot rather than on internal state.
 
-use ruuah_vt_ghostty::Terminal;
-use ruuah_vt_snapshot::{Color, Screen, Style, Underline, Wide};
+use mind2t_vt_ghostty::Terminal;
+use mind2t_vt_snapshot::{Color, Screen, Style, Underline, Wide};
 
-fn snapshot_of(cols: u16, rows: u16, bytes: &[u8]) -> ruuah_vt_snapshot::Snapshot {
+fn snapshot_of(cols: u16, rows: u16, bytes: &[u8]) -> mind2t_vt_snapshot::Snapshot {
     let mut terminal = Terminal::new(cols, rows).expect("terminal creation");
     terminal.write(bytes);
     terminal.snapshot().expect("snapshot")
@@ -224,14 +224,14 @@ fn a_direct_rgb_background_survives_erase() {
 #[test]
 fn the_oracle_reports_damage_and_a_reset_clears_it() {
     let mut terminal = Terminal::new(10, 3).expect("terminal");
-    let mut render = ruuah_vt_ghostty::RenderState::new().expect("render state");
+    let mut render = mind2t_vt_ghostty::RenderState::new().expect("render state");
 
     terminal.write(b"hello");
     render.update(&terminal).expect("update");
     let after_write = render.damage().expect("damage");
     assert_ne!(
         after_write.global,
-        ruuah_vt_snapshot::Dirty::None,
+        mind2t_vt_snapshot::Dirty::None,
         "a write must dirty the frame, or the harness is blind"
     );
 
@@ -240,7 +240,7 @@ fn the_oracle_reports_damage_and_a_reset_clears_it() {
     let after_reset = render.damage().expect("damage");
     assert_eq!(
         after_reset.global,
-        ruuah_vt_snapshot::Dirty::None,
+        mind2t_vt_snapshot::Dirty::None,
         "a reset with no further writes must leave the frame clean"
     );
     assert!(
@@ -252,7 +252,7 @@ fn the_oracle_reports_damage_and_a_reset_clears_it() {
     terminal.write(b"\r\nsecond");
     render.update(&terminal).expect("update");
     let targeted = render.damage().expect("damage");
-    assert_ne!(targeted.global, ruuah_vt_snapshot::Dirty::None);
+    assert_ne!(targeted.global, mind2t_vt_snapshot::Dirty::None);
     assert!(
         targeted.rows.iter().any(|dirty| *dirty),
         "writing one row must dirty at least that row: {:?}",
@@ -272,21 +272,21 @@ fn the_oracle_reports_damage_and_a_reset_clears_it() {
 /// call, and the two libraries have to agree about what that is.
 #[test]
 fn a_failed_creation_nulls_the_out_param() {
-    let sentinel = 0xDEAD_BEEF_usize as ruuah_vt_ghostty::sys::GhosttyTerminal;
+    let sentinel = 0xDEAD_BEEF_usize as mind2t_vt_ghostty::sys::GhosttyTerminal;
     let mut handle = sentinel;
-    let options = ruuah_vt_ghostty::sys::GhosttyTerminalOptions {
+    let options = mind2t_vt_ghostty::sys::GhosttyTerminalOptions {
         cols: 0,
         rows: 24,
         max_scrollback: 0,
     };
 
     let code = unsafe {
-        ruuah_vt_ghostty::sys::ghostty_terminal_new(std::ptr::null(), &mut handle, options)
+        mind2t_vt_ghostty::sys::ghostty_terminal_new(std::ptr::null(), &mut handle, options)
     };
 
     assert_ne!(
         code,
-        ruuah_vt_ghostty::sys::GhosttyResult_GHOSTTY_SUCCESS,
+        mind2t_vt_ghostty::sys::GhosttyResult_GHOSTTY_SUCCESS,
         "zero columns must fail"
     );
     assert!(
@@ -304,7 +304,7 @@ fn a_failed_creation_nulls_the_out_param() {
 /// in the field, because a consumer following upstream's own test pattern sends exactly that.
 #[test]
 fn a_pure_out_params_size_is_overwritten_not_echoed() {
-    use ruuah_vt_ghostty::sys;
+    use mind2t_vt_ghostty::sys;
     const GARBAGE: usize = 0xDEAD;
     unsafe {
         let mut handle: sys::GhosttyTerminal = std::ptr::null_mut();
@@ -376,7 +376,7 @@ fn a_pure_out_params_size_is_overwritten_not_echoed() {
 /// snapshot readout above never touches the tag (it reads clusters via the graphemes call).
 #[test]
 fn a_cell_holding_a_multi_codepoint_cluster_wears_the_grapheme_content_tag() {
-    use ruuah_vt_ghostty::sys;
+    use mind2t_vt_ghostty::sys;
     unsafe {
         let mut handle: sys::GhosttyTerminal = std::ptr::null_mut();
         let options = sys::GhosttyTerminalOptions {
@@ -448,7 +448,7 @@ fn a_cell_holding_a_multi_codepoint_cluster_wears_the_grapheme_content_tag() {
 /// INVALID_VALUE, so NULL-out is not simply always-success.
 #[test]
 fn a_null_out_param_validates_instead_of_failing() {
-    use ruuah_vt_ghostty::sys;
+    use mind2t_vt_ghostty::sys;
     unsafe {
         let mut handle: sys::GhosttyTerminal = std::ptr::null_mut();
         let options = sys::GhosttyTerminalOptions {

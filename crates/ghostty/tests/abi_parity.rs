@@ -1,25 +1,25 @@
-//! Purpose: prove the types ruuah-vt PUBLISHES match the ones libghostty-vt publishes.
+//! Purpose: prove the types mind2t-vt PUBLISHES match the ones libghostty-vt publishes.
 //! Public surface: none, this is a test.
 //! Why this file: slice 6's claim is that a program compiled against `ghostty/vt/*.h` can
-//!   link `libruuah-vt.a` instead. That is a claim about byte layout, and it was previously
+//!   link `libmind2t-vt.a` instead. That is a claim about byte layout, and it was previously
 //!   supported only by the fact that a human transcribed the numbers carefully. Here they are
 //!   checked against the real library's own `ghostty_type_json()` -- the same self-description
 //!   `abi_layout.rs` uses to verify the bindings, applied to the other direction.
 //! NOT responsible for: behaviour across the ABI, which is
 //!   `crates/abi/tests/differential.rs`.
-//! Test strategy: for every struct ruuah-vt publishes, compare `size_of` and each
+//! Test strategy: for every struct mind2t-vt publishes, compare `size_of` and each
 //!   `offset_of` against the JSON. A struct the library stops describing is a failure, not a
 //!   silent skip -- otherwise the test evaporates the day the report changes shape.
 //!
 //! This test lives here rather than in `crates/abi` because only this crate links
-//! libghostty-vt, and `ruuah-vt-abi-types` deliberately depends on nothing so it can be
-//! pulled in beside the oracle. Linking `ruuah-vt-abi` itself here would collide: both
+//! libghostty-vt, and `mind2t-vt-abi-types` deliberately depends on nothing so it can be
+//! pulled in beside the oracle. Linking `mind2t-vt-abi` itself here would collide: both
 //! define `ghostty_terminal_new`.
 
 use std::mem::{align_of, offset_of, size_of};
 
-use ruuah_vt_abi_types as ours;
-use ruuah_vt_ghostty::type_layout_json;
+use mind2t_vt_abi_types as ours;
+use mind2t_vt_ghostty::type_layout_json;
 use serde_json::Value;
 
 /// Every published struct, with the offset of each field a consumer can name.
@@ -119,7 +119,7 @@ fn every_published_struct_matches_the_library() {
             .unwrap_or_else(|| panic!("{name} has no size in the report"));
         assert_eq!(
             their_size as usize, size,
-            "{name}: libghostty-vt says {their_size} bytes, ruuah-vt publishes {size}"
+            "{name}: libghostty-vt says {their_size} bytes, mind2t-vt publishes {size}"
         );
 
         // The key is "align" (types.zig:143), and the lookup is required rather than
@@ -142,7 +142,7 @@ fn every_published_struct_matches_the_library() {
                 .unwrap_or_else(|| panic!("{name}.{field} is not described"));
             assert_eq!(
                 their_offset as usize, offset,
-                "{name}.{field}: libghostty-vt puts it at {their_offset}, ruuah-vt at {offset}"
+                "{name}.{field}: libghostty-vt puts it at {their_offset}, mind2t-vt at {offset}"
             );
         }
     }

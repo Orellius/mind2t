@@ -18,8 +18,8 @@ use std::process::Command;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use ruuah_vt_host::session::{Session, SessionError};
-use ruuah_vt_render::GpuContext;
+use mind2t_vt_host::session::{Session, SessionError};
+use mind2t_vt_render::GpuContext;
 
 use crate::agent::{AgentDef, Dangerous, launch};
 
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn every_shape_of_a_child_gets_its_own_verdict() {
         let agent: &'static AgentDef = Box::leak(Box::new(fake(600)));
-        let gpu = ruuah_vt_render::GpuContext::new().expect("a GPU");
+        let gpu = mind2t_vt_render::GpuContext::new().expect("a GPU");
 
         let cases: &[(&str, Verdict)] = &[
             // Speaks and stays. The only success.
@@ -281,7 +281,7 @@ mod tests {
     #[test]
     fn a_failing_launch_retries_with_a_backoff_that_really_doubles() {
         let agent: &'static AgentDef = Box::leak(Box::new(fake(50)));
-        let gpu = ruuah_vt_render::GpuContext::new().expect("a GPU");
+        let gpu = mind2t_vt_render::GpuContext::new().expect("a GPU");
         let base = Duration::from_millis(40);
 
         let started = std::time::Instant::now();
@@ -322,7 +322,7 @@ mod tests {
     #[test]
     fn a_refused_argv_never_reaches_a_second_attempt() {
         let agent: &'static AgentDef = Box::leak(Box::new(fake(50)));
-        let gpu = ruuah_vt_render::GpuContext::new().expect("a GPU");
+        let gpu = mind2t_vt_render::GpuContext::new().expect("a GPU");
 
         let error = into_pane(
             &gpu,
@@ -361,7 +361,7 @@ mod tests {
         let Some(binary) = probe.resolve(claude) else {
             panic!("claude is not installed on this machine");
         };
-        let gpu = ruuah_vt_render::GpuContext::new().expect("a GPU");
+        let gpu = mind2t_vt_render::GpuContext::new().expect("a GPU");
 
         let mut launched = into_pane(
             &gpu,

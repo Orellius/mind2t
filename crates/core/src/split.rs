@@ -8,7 +8,7 @@
 //!   (`reflow.rs` owns both, and the semantic rule it applies is measured there).
 //! Test strategy: exercised through `reflow.rs`'s tests and the resize corpus cases.
 
-use ruuah_vt_snapshot::RowSemantic;
+use mind2t_vt_snapshot::RowSemantic;
 
 use crate::cell::Wide;
 use crate::page::HistoryCell;

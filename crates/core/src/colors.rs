@@ -18,7 +18,7 @@
 //!   gap is recorded in docs/BACKLOG-2026.md and a name spec simply fails to parse,
 //!   which per the oracle's error rule stops the request list at that point.
 
-use ruuah_vt_snapshot::{Rgb, default_palette};
+use mind2t_vt_snapshot::{Rgb, default_palette};
 
 /// One dynamic colour (foreground, background or cursor): an OSC override over an
 /// embedder default. Mirrors the oracle's `DynamicRGB`. This core has no config

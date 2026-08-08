@@ -9,7 +9,7 @@
 //! Test strategy: measured against libghostty-vt by the corpus; unit tests below cover the
 //!   region arithmetic, where off-by-ones are cheapest to catch in isolation.
 
-use ruuah_vt_snapshot::Semantic;
+use mind2t_vt_snapshot::Semantic;
 
 use crate::cell::{Cell, Protection};
 use crate::grid::Grid;

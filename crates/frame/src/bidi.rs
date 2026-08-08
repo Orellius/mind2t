@@ -230,7 +230,7 @@ pub fn mirror(c: char) -> Option<char> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ruuah_vt_snapshot::{Semantic, Wide};
+    use mind2t_vt_snapshot::{Semantic, Wide};
 
     fn row(text: &str) -> Vec<PackedCell> {
         text.chars()

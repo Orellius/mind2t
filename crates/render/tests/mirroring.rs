@@ -7,9 +7,9 @@
 //! `]א` draws. If mirroring is absent the RTL row draws `[` there instead, and the byte
 //! comparison fails; the LTR-vs-RTL control proves the comparison sees layout at all.
 
-use ruuah_vt_core::Terminal;
-use ruuah_vt_frame::{BaseDirection, Frame, Publisher, channel};
-use ruuah_vt_render::{FontStack, Renderer};
+use mind2t_vt_core::Terminal;
+use mind2t_vt_frame::{BaseDirection, Frame, Publisher, channel};
+use mind2t_vt_render::{FontStack, Renderer};
 
 const COLS: u16 = 8;
 const ROWS: u16 = 2;

@@ -123,12 +123,12 @@ impl Blitter {
         let device = context.device();
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("ruuah-vt blit"),
+            label: Some("mind2t-vt blit"),
             source: wgpu::ShaderSource::Wgsl(BLIT_SHADER.into()),
         });
 
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("ruuah-vt blit"),
+            label: Some("mind2t-vt blit"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -154,13 +154,13 @@ impl Blitter {
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("ruuah-vt blit"),
+            label: Some("mind2t-vt blit"),
             bind_group_layouts: &[&layout],
             push_constant_ranges: &[],
         });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("ruuah-vt blit"),
+            label: Some("mind2t-vt blit"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -189,7 +189,7 @@ impl Blitter {
         });
 
         let solid_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("ruuah-vt solid"),
+            label: Some("mind2t-vt solid"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 2,
                 visibility: wgpu::ShaderStages::FRAGMENT,
@@ -204,13 +204,13 @@ impl Blitter {
 
         let solid_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("ruuah-vt solid"),
+                label: Some("mind2t-vt solid"),
                 bind_group_layouts: &[&solid_layout],
                 push_constant_ranges: &[],
             });
 
         let solid_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("ruuah-vt solid"),
+            label: Some("mind2t-vt solid"),
             layout: Some(&solid_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -314,7 +314,7 @@ impl Blitter {
             );
 
             bind_groups.push(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("ruuah-vt blit"),
+                label: Some("mind2t-vt blit"),
                 layout: &self.layout,
                 entries: &[
                     wgpu::BindGroupEntry {
@@ -353,7 +353,7 @@ impl Blitter {
                     },
                 );
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("ruuah-vt solid"),
+                    label: Some("mind2t-vt solid"),
                     layout: &self.solid_layout,
                     entries: &[wgpu::BindGroupEntry {
                         binding: 2,
@@ -367,7 +367,7 @@ impl Blitter {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("blit") });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("ruuah-vt blit"),
+                label: Some("mind2t-vt blit"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target,
                     depth_slice: None,

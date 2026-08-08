@@ -1,4 +1,4 @@
-# RUUAH shell integration: OSC 133 semantic marks (FinalTerm / semantic-prompt scheme).
+# Mind2t shell integration: OSC 133 semantic marks (FinalTerm / semantic-prompt scheme).
 #
 # Four marks drive blocks:
 #   A  prompt starts        (rides the front of PS1)
@@ -28,62 +28,62 @@
 # cl=line option exists for. Both are documented gaps, not oversights.
 
 [[ -o interactive ]] || return
-[[ -n "$_RUUAH_INTEGRATION_LOADED" ]] && return
-_RUUAH_INTEGRATION_LOADED=1
+[[ -n "$_MIND2T_INTEGRATION_LOADED" ]] && return
+_MIND2T_INTEGRATION_LOADED=1
 
 builtin typeset -ag precmd_functions
-precmd_functions+=(_ruuah_deferred_init)
+precmd_functions+=(_mind2t_deferred_init)
 
-_ruuah_deferred_init() {
+_mind2t_deferred_init() {
     builtin emulate -L zsh
     autoload -Uz add-zsh-hook
-    precmd_functions=(${precmd_functions:#_ruuah_deferred_init})
-    add-zsh-hook precmd _ruuah_precmd
-    add-zsh-hook preexec _ruuah_preexec
+    precmd_functions=(${precmd_functions:#_mind2t_deferred_init})
+    add-zsh-hook precmd _mind2t_precmd
+    add-zsh-hook preexec _mind2t_preexec
     # Mark this first prompt too; a theme's own precmd may still rewrite PS1 after us
     # this one cycle, which the re-sort corrects from the second prompt on.
-    _ruuah_precmd
+    _mind2t_precmd
 }
 
-typeset -g _ruuah_report_exit=0
-typeset -g _ruuah_saved_ps1=
-typeset -g _ruuah_marked_ps1=
+typeset -g _mind2t_report_exit=0
+typeset -g _mind2t_saved_ps1=
+typeset -g _mind2t_marked_ps1=
 
-_ruuah_precmd() {
+_mind2t_precmd() {
     builtin local ret=$?
     builtin emulate -L zsh
 
     # D closes the previous command's output region -- with the exit status when a
     # command actually ran (C was emitted), bare when the line was empty.
-    if (( _ruuah_report_exit )); then
+    if (( _mind2t_report_exit )); then
         builtin print -n "\e]133;D;${ret}\a"
-        _ruuah_report_exit=0
+        _mind2t_report_exit=0
     fi
 
     # Stay last: whoever runs last owns the final PROMPT. The re-sort takes effect the
     # NEXT cycle, which is why a freshly registered theme steals at most one prompt.
-    if [[ "${precmd_functions[-1]}" != _ruuah_precmd ]]; then
-        precmd_functions=(${precmd_functions:#_ruuah_precmd} _ruuah_precmd)
+    if [[ "${precmd_functions[-1]}" != _mind2t_precmd ]]; then
+        precmd_functions=(${precmd_functions:#_mind2t_precmd} _mind2t_precmd)
     fi
 
     # Every prompt, not only on chpwd: a command may cd without the hook (a subshell that
     # exits, `popd` inside a function), and one report per prompt is cheap.
-    _ruuah_report_pwd
+    _mind2t_report_pwd
 
     # Re-mark from the PS1 the theme just produced. If PS1 still wears our marks from
     # last cycle (nothing touched it), strip back to the saved clean copy first.
-    if [[ -n "$_ruuah_marked_ps1" && "$PS1" == "$_ruuah_marked_ps1" ]]; then
-        PS1="$_ruuah_saved_ps1"
+    if [[ -n "$_mind2t_marked_ps1" && "$PS1" == "$_mind2t_marked_ps1" ]]; then
+        PS1="$_mind2t_saved_ps1"
     fi
-    _ruuah_saved_ps1="$PS1"
+    _mind2t_saved_ps1="$PS1"
     # A bare trailing % would swallow the %{ of the B mark.
     [[ "$PS1" == *[^%]% || "$PS1" == % ]] && PS1="${PS1}%"
     PS1=$'%{\e]133;A\a%}'"$PS1"$'%{\e]133;B\a%}'
-    _ruuah_marked_ps1="$PS1"
+    _mind2t_marked_ps1="$PS1"
 }
 
-_ruuah_preexec() {
-    _ruuah_report_exit=1
+_mind2t_preexec() {
+    _mind2t_report_exit=1
     builtin print -n "\e]133;C\a"
 }
 
@@ -94,7 +94,7 @@ _ruuah_preexec() {
 # and the receiving side cannot tell where the path ended. zsh's own ${var//pattern/repl}
 # cannot do this per byte, so the encoding walks the string; paths are short and this runs
 # once per directory change, not once per keystroke.
-_ruuah_report_pwd() {
+_mind2t_report_pwd() {
     # NOT named `path`: in zsh that identifier is tied to $PATH as an array, so
     # ${path[i]} indexes PATH entries and ${#path} counts them. Measured -- the first
     # version of this function reported "file://host%2F" for every directory.

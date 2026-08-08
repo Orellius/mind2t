@@ -9,19 +9,19 @@ publish = false
 # one genuinely unproven thing - a native GPU surface living in a window this project does not
 # own - is isolated from everything else. The webview, and then Tauri itself, come after.
 #
-# Links ruuah-vt-host as a RUST crate, not through the C ABI. The C surface exists for the
+# Links mind2t-vt-host as a RUST crate, not through the C ABI. The C surface exists for the
 # Swift host and for outside embedders; our own app has no reason to cross a foreign-function
 # boundary to reach its own workspace.
 [dependencies]
-ruuah-vt-host = { path = "../host" }
+mind2t-vt-host = { path = "../host" }
 # For `BaseDirection` alone: the Hebrew-first setting is a layout preference the host applies to
 # a session, and naming it requires the type that defines it.
-ruuah-vt-frame = { path = "../frame" }
-ruuah-vt-render.workspace = true
+mind2t-vt-frame = { path = "../frame" }
+mind2t-vt-render.workspace = true
 # The key encoder lives here and is corpus-pinned against the oracle. Reaching for it directly
 # rather than through the host keeps one encoder in the project instead of a second mapping
 # written for this window (the Swift host's `KeyMap.swift` is the same encoder's other caller).
-ruuah-vt-pty = { path = "../pty" }
+mind2t-vt-pty = { path = "../pty" }
 tao = "0.35"
 # B2.2. The chrome layer, and the only browser engine in the project - it draws documents, never
 # terminal pixels (the "no terminal bytes in the webview" law). It is WKWebView on macOS, which

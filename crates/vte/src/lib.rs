@@ -454,7 +454,7 @@ impl<const OSC_RAW_BUF_SIZE: usize> Parser<OSC_RAW_BUF_SIZE> {
         }
     }
 
-    /// RUUAH fork: APC strings get dispatched instead of swallowed. Terminates exactly
+    /// MIND2T fork: APC strings get dispatched instead of swallowed. Terminates exactly
     /// where SosPmApcString terminates (CAN, SUB, ESC); every other byte is payload.
     #[inline(always)]
     fn advance_apc_string<P: Perform>(&mut self, performer: &mut P, byte: u8) {
@@ -816,14 +816,14 @@ pub trait Perform {
     /// Dispatch an operating system command.
     fn osc_dispatch(&mut self, _params: &[&[u8]], _bell_terminated: bool) {}
 
-    /// RUUAH fork: an APC string (`ESC _ ... ESC \\`) opened. The kitty graphics
+    /// MIND2T fork: an APC string (`ESC _ ... ESC \\`) opened. The kitty graphics
     /// protocol rides APC; upstream vte swallows these bytes silently.
     fn apc_start(&mut self) {}
 
-    /// RUUAH fork: one byte of APC payload.
+    /// MIND2T fork: one byte of APC payload.
     fn apc_put(&mut self, _byte: u8) {}
 
-    /// RUUAH fork: the APC string terminated (ST, CAN or SUB).
+    /// MIND2T fork: the APC string terminated (ST, CAN or SUB).
     fn apc_end(&mut self) {}
 
     /// A final character has arrived for a CSI sequence

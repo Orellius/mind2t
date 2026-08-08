@@ -19,9 +19,9 @@
 //! rounding term -- the exact mistake a shader that computes in floats and rounds toward zero
 //! would make -- and is caught despite being off by at most one.
 
-use ruuah_vt_core::Terminal;
-use ruuah_vt_frame::{Frame, Publisher, ReadOutcome, channel};
-use ruuah_vt_render::{Canvas, FontStack, GpuSurface, Renderer, Surface, TruncatingSurface};
+use mind2t_vt_core::Terminal;
+use mind2t_vt_frame::{Frame, Publisher, ReadOutcome, channel};
+use mind2t_vt_render::{Canvas, FontStack, GpuSurface, Renderer, Surface, TruncatingSurface};
 
 const COLS: u16 = 24;
 const ROWS: u16 = 6;

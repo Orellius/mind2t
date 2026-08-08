@@ -1,6 +1,6 @@
 //! Purpose: turning `tao` key events into the bytes a child on a pty expects.
 //! Public surface: `encode_press`, `mods_from`.
-//! Why this file: the encoder already exists and is corpus-pinned (`ruuah_vt_pty::key`), keyed
+//! Why this file: the encoder already exists and is corpus-pinned (`mind2t_vt_pty::key`), keyed
 //!   on W3C `KeyCode` names. `tao` reports physical keys with the SAME W3C names. So the whole
 //!   job here is the bridge between two spellings of one standard, and putting it in its own
 //!   file is what keeps that claim testable instead of buried in an event loop.
@@ -12,7 +12,7 @@
 //!   hunts. The tests below pin representative keys from every W3C section AND assert the
 //!   unmapped case is reported rather than guessed.
 
-use ruuah_vt_pty::key::{
+use mind2t_vt_pty::key::{
     KEY_MODS_ALT, KEY_MODS_CTRL, KEY_MODS_SHIFT, KEY_MODS_SUPER, Key, KeyAction, KeyEvent,
     KeyMods, KeyOptions, encode,
 };
@@ -95,7 +95,7 @@ pub fn encode_press(event: &TaoKeyEvent, mods: KeyMods, options: &KeyOptions) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ruuah_vt_pty::key::OptionAsAlt;
+    use mind2t_vt_pty::key::OptionAsAlt;
 
     /// A terminal in its default modes. Tests state the modes they encode against rather than
     /// borrowing a host's, so a change in what the session reports cannot silently rewrite what

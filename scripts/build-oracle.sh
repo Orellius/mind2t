@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds libghostty-vt out of the RUUAH checkout and installs it into ruuah-vt/vendor.
+# Builds libghostty-vt out of the RUUAH checkout and installs it into mind2t-vt/vendor.
 #
 # RUUAH is read-only. Its whole economics are a near-zero rebase tax against upstream
 # Ghostty, so both zig's install prefix and its cache are redirected here; the checkout
@@ -10,12 +10,12 @@ readonly ZIG=/opt/homebrew/opt/zig/bin/zig
 readonly REQUIRED_ZIG=0.16.0
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-ruuah=${RUUAH_VT_ORACLE_SRC:-$(cd "$root/../ruuah" 2>/dev/null && pwd || true)}
+ruuah=${MIND2T_VT_ORACLE_SRC:-$(cd "$root/../ruuah" 2>/dev/null && pwd || true)}
 prefix="$root/vendor/libghostty-vt"
 cache="$root/vendor/.zig-cache"
 
 if [[ -z "$ruuah" || ! -f "$ruuah/build.zig" ]]; then
-  echo "error: no Ghostty checkout found. Set RUUAH_VT_ORACLE_SRC to one." >&2
+  echo "error: no Ghostty checkout found. Set MIND2T_VT_ORACLE_SRC to one." >&2
   exit 1
 fi
 
@@ -52,7 +52,7 @@ fi
 
 # Record which Ghostty build the oracle came from.
 #
-# ruuah-vt has no git upstream -- it is original code, and adding a remote with no shared
+# mind2t-vt has no git upstream -- it is original code, and adding a remote with no shared
 # history would be theatre. But it does have a real upstream DEPENDENCY: the oracle is a
 # moving target, and when Ghostty changes behaviour the corpus verdicts move with it. Without
 # this pin, a case flipping overnight is indistinguishable from a regression we caused. This
@@ -82,7 +82,7 @@ cat > "$lock" <<LOCK
 # Which libghostty-vt the differential oracle was built from. Written by
 # scripts/build-oracle.sh; commit this file when it changes.
 #
-# ruuah-vt has no git upstream. This is the upstream that matters: the oracle is the
+# mind2t-vt has no git upstream. This is the upstream that matters: the oracle is the
 # reference implementation, and when it moves the corpus can move with it.
 source = "$source_recorded"
 commit = "$commit"

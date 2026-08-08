@@ -13,7 +13,7 @@
 use std::ffi::c_void;
 use std::mem;
 
-use ruuah_vt_snapshot::{Damage, Dirty};
+use mind2t_vt_snapshot::{Damage, Dirty};
 
 use crate::sys;
 use crate::terminal::{Error, Terminal, check};

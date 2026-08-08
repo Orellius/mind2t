@@ -17,7 +17,7 @@
 //!   The chrome page is still a fixture. Also not responsible for the modes the key encoder
 //!   branches on - see `keys::options`, a named gap.
 //! Test strategy: the parts that can be checked by a machine are checked where they live -
-//!   `ruuah_vt_host::session` for the pipeline, `crates/render/tests/present.rs` for the origin
+//!   `mind2t_vt_host::session` for the pipeline, `crates/render/tests/present.rs` for the origin
 //!   that reserves the strip, `keys` for the W3C bridge. What remains here is the part only a
 //!   human can judge: a shell that answers, at the right size, under the chrome.
 //!
@@ -33,8 +33,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use muda::{Menu, PredefinedMenuItem, Submenu};
-use ruuah_vt_host::session::{Session, SessionError, SessionGeometry};
-use ruuah_vt_render::WindowTarget;
+use mind2t_vt_host::session::{Session, SessionError, SessionGeometry};
+use mind2t_vt_render::WindowTarget;
 use tao::dpi::LogicalSize;
 use tao::event::{ElementState, Event, MouseScrollDelta, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoop};

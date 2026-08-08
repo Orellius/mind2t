@@ -1,22 +1,22 @@
 [package]
-name = "ruuah-vt-host"
+name = "mind2t-vt-host"
 version = "0.1.0"
 edition.workspace = true
 
-# One archive, both surfaces: depending on ruuah-vt-abi as an rlib carries its 13
-# `ghostty_*` #[no_mangle] exports into this staticlib alongside `ruuah_host_*`. A second
+# One archive, both surfaces: depending on mind2t-vt-abi as an rlib carries its 13
+# `ghostty_*` #[no_mangle] exports into this staticlib alongside `mind2t_host_*`. A second
 # independent Rust staticlib is not an option -- two of them in one link duplicate the Rust
-# runtime's symbols. The pure drop-in `libruuah-vt.a` remains its own slim artifact.
+# runtime's symbols. The pure drop-in `libmind2t-vt.a` remains its own slim artifact.
 [lib]
-name = "ruuah_vt_host"
+name = "mind2t_vt_host"
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-ruuah-vt-abi = { path = "../abi" }
-ruuah-vt-core = { path = "../core" }
-ruuah-vt-frame = { path = "../frame" }
-ruuah-vt-pty = { path = "../pty" }
-ruuah-vt-render = { path = "../render" }
-ruuah-vt-snapshot = { workspace = true }
+mind2t-vt-abi = { path = "../abi" }
+mind2t-vt-core = { path = "../core" }
+mind2t-vt-frame = { path = "../frame" }
+mind2t-vt-pty = { path = "../pty" }
+mind2t-vt-render = { path = "../render" }
+mind2t-vt-snapshot = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }

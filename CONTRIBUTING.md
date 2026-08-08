@@ -63,10 +63,10 @@ All five are exit-code gates. Run them before you open a pull request.
 
 ```sh
 cargo test --workspace                 # units, pixels, concurrency, C-surface round trips
-cargo run -p ruuah-vt-difftest         # the corpus, against the real reference library
+cargo run -p mind2t-vt-difftest         # the corpus, against the real reference library
 ./scripts/smoke-mind2t.sh              # host invariants; needs no screen, no synthetic input
-./scripts/build-lib.sh                 # libruuah-vt.a and its export count
-./scripts/build-host.sh                # libruuah-vt-host.a and its export count
+./scripts/build-lib.sh                 # libmind2t-vt.a and its export count
+./scripts/build-host.sh                # libmind2t-vt-host.a and its export count
 ```
 
 `scripts/smoke-mind2t.sh` deliberately runs with the window ordered out and with a poisoned
@@ -83,7 +83,7 @@ platforms are welcome work.
 The differential harness needs a Ghostty checkout to build its oracle from:
 
 ```sh
-RUUAH_VT_ORACLE_SRC=/path/to/ghostty ./scripts/build-oracle.sh
+MIND2T_VT_ORACLE_SRC=/path/to/ghostty ./scripts/build-oracle.sh
 ```
 
 That checkout is treated as read-only. The script redirects both the build prefix and the

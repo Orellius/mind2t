@@ -8,7 +8,7 @@
 //!   result to cells (`terminal.rs` holds the pen).
 //! Test strategy: unit tests below for each shape; the corpus checks it against Ghostty.
 
-use ruuah_vt_snapshot::{Color, Style, Underline};
+use mind2t_vt_snapshot::{Color, Style, Underline};
 use vte::Params;
 
 /// Applies an SGR sequence to `style`.

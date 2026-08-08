@@ -12,7 +12,7 @@
 //!   equality; unit tests here pin the rules that motivated each branch, all measured
 //!   from `src/input/mouse_encode.zig` (v1.3.2) on 2026-07-30.
 
-use ruuah_vt_core::mouse::{MouseEvent, MouseFormat};
+use mind2t_vt_core::mouse::{MouseEvent, MouseFormat};
 
 /// The rendered geometry that turns surface-space pixels into cells. Mirrors the
 /// oracle's `renderer_size.Size`: the grid is derived from the padded screen, so the

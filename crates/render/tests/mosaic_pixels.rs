@@ -1,9 +1,9 @@
 //! The renderer-level proof for synthesized mosaics: ink through the REAL draw
 //! path, filling the whole cell with no gutter at the seam -- the exact failure
 //! a narrow fallback font produces (its block fills the font's em, not the cell).
-use ruuah_vt_core::Terminal;
-use ruuah_vt_frame::{Frame, Publisher, channel};
-use ruuah_vt_render::{FontStack, Renderer};
+use mind2t_vt_core::Terminal;
+use mind2t_vt_frame::{Frame, Publisher, channel};
+use mind2t_vt_render::{FontStack, Renderer};
 
 /// Renders on a 3-column row: the probe text in cells 0..2, cell 2 untouched so
 /// the background is sampled OUTSIDE any ink.

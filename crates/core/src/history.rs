@@ -13,7 +13,7 @@
 
 use std::collections::VecDeque;
 
-use ruuah_vt_snapshot::Row;
+use mind2t_vt_snapshot::Row;
 
 use crate::page::{HistoryRow, Page};
 
@@ -184,7 +184,7 @@ mod tests {
     use crate::cell::Wide;
     use crate::grid::RowMeta;
     use crate::page::{HistoryCell, PAGE_ROWS};
-    use ruuah_vt_snapshot::{Semantic, Style};
+    use mind2t_vt_snapshot::{Semantic, Style};
 
     fn row(text: &str) -> HistoryRow {
         HistoryRow {

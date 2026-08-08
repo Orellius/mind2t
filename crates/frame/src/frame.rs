@@ -12,7 +12,7 @@
 //!   agreement with the core is tested end to end in `tests/publish.rs`; the layout is
 //!   measured against 91,707 Unicode cases in `tests/bidi_conformance.rs`.
 
-use ruuah_vt_snapshot::{Cell, Row, RowSemantic, Semantic, Style, Wide};
+use mind2t_vt_snapshot::{Cell, Row, RowSemantic, Semantic, Style, Wide};
 
 use crate::bidi::{BaseDirection, visual_spans};
 use crate::packed::{PackedCell, unpack_style};
@@ -136,7 +136,7 @@ pub struct Frame {
     /// sets it on the frame it is about to draw, which is why it is a plain public field
     /// rather than something the seqlock carries.
     ///
-    /// Viewport-relative, unlike `ruuah_vt_core::selection`, which answers in absolute rows
+    /// Viewport-relative, unlike `mind2t_vt_core::selection`, which answers in absolute rows
     /// counting from the top of scrollback. Whoever sets this owns the conversion, and getting
     /// it wrong paints the highlight one screen away from the pointer.
     pub selection: Option<FrameSelection>,
@@ -232,7 +232,7 @@ impl Frame {
     /// batch, so a frame carrying this bit is one the anti-stuck budget forced out.
     pub const MODE_SYNCHRONIZED_OUTPUT: u64 = 1 << 1;
     /// Bits 2-4: the DERIVED mouse event kind (0 none, 1 x10, 2 normal, 3 button,
-    /// 4 any -- `ruuah_vt_core::mouse::MouseEvent` in declaration order). The frame
+    /// 4 any -- `mind2t_vt_core::mouse::MouseEvent` in declaration order). The frame
     /// carries the derived pair rather than the nine raw bits because the derived
     /// pair is what an embedder's routing consults; DECRQM owns the raw bits.
     pub const MODE_MOUSE_EVENT_SHIFT: u64 = 2;
@@ -279,8 +279,8 @@ impl Frame {
 
     /// The derived mouse event kind at publish time. An unknown bit pattern (a frame
     /// from a newer writer) reads as `None`, which fails safe: no reports.
-    pub fn mouse_event(&self) -> ruuah_vt_core::mouse::MouseEvent {
-        use ruuah_vt_core::mouse::MouseEvent;
+    pub fn mouse_event(&self) -> mind2t_vt_core::mouse::MouseEvent {
+        use mind2t_vt_core::mouse::MouseEvent;
         match (self.modes & Frame::MODE_MOUSE_EVENT_MASK) >> Frame::MODE_MOUSE_EVENT_SHIFT {
             1 => MouseEvent::X10,
             2 => MouseEvent::Normal,
@@ -292,8 +292,8 @@ impl Frame {
 
     /// The derived mouse report format at publish time; unknown patterns read as the
     /// legacy X10 encoding, the protocol's own fallback.
-    pub fn mouse_format(&self) -> ruuah_vt_core::mouse::MouseFormat {
-        use ruuah_vt_core::mouse::MouseFormat;
+    pub fn mouse_format(&self) -> mind2t_vt_core::mouse::MouseFormat {
+        use mind2t_vt_core::mouse::MouseFormat;
         match (self.modes & Frame::MODE_MOUSE_FORMAT_MASK) >> Frame::MODE_MOUSE_FORMAT_SHIFT {
             1 => MouseFormat::Utf8,
             2 => MouseFormat::Sgr,
@@ -388,7 +388,7 @@ impl Frame {
         self.row_flags.get(usize::from(y)).is_some_and(|f| f.1)
     }
 
-    /// The visible grid as snapshot rows -- the shape `ruuah_vt_core::selection` reads.
+    /// The visible grid as snapshot rows -- the shape `mind2t_vt_core::selection` reads.
     ///
     /// This exists so the host does NOT get a second selection implementation. The rules that
     /// decide where a word ends were ported from the oracle's `selection_codepoints.zig` and
@@ -603,7 +603,7 @@ pub enum Motion {
 mod tests {
     use super::*;
     use crate::packed::pack_style;
-    use ruuah_vt_snapshot::Color;
+    use mind2t_vt_snapshot::Color;
 
     fn frame_with(cells: Vec<PackedCell>, styles: Vec<[u64; 2]>) -> Frame {
         let cols = cells.len() as u16;

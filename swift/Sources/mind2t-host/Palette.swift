@@ -8,9 +8,9 @@
 // shell runs it, which is what keeps a template with a typo recoverable.
 
 import AppKit
-import CRuuahHost
+import CMind2tHost
 
-/// Swift face of the RuuahWorkflows C handle. Loaded fresh at every palette open so
+/// Swift face of the Mind2tWorkflows C handle. Loaded fresh at every palette open so
 /// file edits show up without a restart; freed with the palette.
 final class Workflows {
     private var handle: OpaquePointer?
@@ -19,29 +19,29 @@ final class Workflows {
     init(dir: String? = nil) {
         var out: OpaquePointer?
         if let dir {
-            _ = dir.withCString { pointer in ruuah_workflows_load(pointer, &out) }
+            _ = dir.withCString { pointer in mind2t_workflows_load(pointer, &out) }
         } else {
-            _ = ruuah_workflows_load(nil, &out)
+            _ = mind2t_workflows_load(nil, &out)
         }
         handle = out
     }
 
     deinit {
-        ruuah_workflows_free(handle)
+        mind2t_workflows_free(handle)
     }
 
-    var count: Int { Int(ruuah_workflows_count(handle)) }
+    var count: Int { Int(mind2t_workflows_count(handle)) }
 
     var errors: String {
         var length = 0
-        guard ruuah_workflows_errors(handle, nil, 0, &length) == RUUAH_HOST_SUCCESS,
+        guard mind2t_workflows_errors(handle, nil, 0, &length) == MIND2T_HOST_SUCCESS,
             length > 0
         else { return "" }
         var buffer = [UInt8](repeating: 0, count: length)
         guard
             buffer.withUnsafeMutableBufferPointer({ pointer in
-                ruuah_workflows_errors(handle, pointer.baseAddress, length, &length)
-            }) == RUUAH_HOST_SUCCESS
+                mind2t_workflows_errors(handle, pointer.baseAddress, length, &length)
+            }) == MIND2T_HOST_SUCCESS
         else { return "" }
         return String(decoding: buffer, as: UTF8.self)
     }
@@ -49,37 +49,37 @@ final class Workflows {
     func field(_ index: Int, _ field: UInt32) -> String {
         var length = 0
         guard
-            ruuah_workflow_field(handle, UInt32(index), field, nil, 0, &length)
-                == RUUAH_HOST_SUCCESS, length > 0
+            mind2t_workflow_field(handle, UInt32(index), field, nil, 0, &length)
+                == MIND2T_HOST_SUCCESS, length > 0
         else { return "" }
         var buffer = [UInt8](repeating: 0, count: length)
         guard
             buffer.withUnsafeMutableBufferPointer({ pointer in
-                ruuah_workflow_field(
+                mind2t_workflow_field(
                     handle, UInt32(index), field, pointer.baseAddress, length, &length)
-            }) == RUUAH_HOST_SUCCESS
+            }) == MIND2T_HOST_SUCCESS
         else { return "" }
         return String(decoding: buffer, as: UTF8.self)
     }
 
     func argCount(_ index: Int) -> Int {
-        Int(ruuah_workflow_arg_count(handle, UInt32(index)))
+        Int(mind2t_workflow_arg_count(handle, UInt32(index)))
     }
 
     /// nil = the C surface answered Ignored: no default exists, prompt bare.
     func arg(_ index: Int, _ argIndex: Int, _ field: UInt32) -> String? {
         var length = 0
-        let sized = ruuah_workflow_arg(
+        let sized = mind2t_workflow_arg(
             handle, UInt32(index), UInt32(argIndex), field, nil, 0, &length)
-        guard sized == RUUAH_HOST_SUCCESS else { return nil }
+        guard sized == MIND2T_HOST_SUCCESS else { return nil }
         if length == 0 { return "" }
         var buffer = [UInt8](repeating: 0, count: length)
         guard
             buffer.withUnsafeMutableBufferPointer({ pointer in
-                ruuah_workflow_arg(
+                mind2t_workflow_arg(
                     handle, UInt32(index), UInt32(argIndex), field, pointer.baseAddress,
                     length, &length)
-            }) == RUUAH_HOST_SUCCESS
+            }) == MIND2T_HOST_SUCCESS
         else { return nil }
         return String(decoding: buffer, as: UTF8.self)
     }
@@ -96,19 +96,19 @@ final class Workflows {
         }
         var length = 0
         let sized = blob.withUnsafeBufferPointer { pointer in
-            ruuah_workflow_render(
+            mind2t_workflow_render(
                 handle, UInt32(index), pointer.baseAddress, pointer.count, nil, 0, &length)
         }
-        guard sized == RUUAH_HOST_SUCCESS, length > 0 else { return nil }
+        guard sized == MIND2T_HOST_SUCCESS, length > 0 else { return nil }
         var out = [UInt8](repeating: 0, count: length)
         let copied = blob.withUnsafeBufferPointer { pointer in
             out.withUnsafeMutableBufferPointer { outPointer in
-                ruuah_workflow_render(
+                mind2t_workflow_render(
                     handle, UInt32(index), pointer.baseAddress, pointer.count,
                     outPointer.baseAddress, length, &length)
             }
         }
-        guard copied == RUUAH_HOST_SUCCESS else { return nil }
+        guard copied == MIND2T_HOST_SUCCESS else { return nil }
         return out
     }
 }
@@ -257,14 +257,14 @@ final class PaletteView: NSView, NSTextFieldDelegate {
 
     private func promptForCurrentParam() {
         guard let workflow = paramWorkflow else { return }
-        let name = workflows.arg(workflow, paramIndex, RUUAH_WORKFLOW_NAME) ?? "?"
+        let name = workflows.arg(workflow, paramIndex, MIND2T_WORKFLOW_NAME) ?? "?"
         let description =
-            workflows.arg(workflow, paramIndex, RUUAH_WORKFLOW_DESCRIPTION) ?? ""
+            workflows.arg(workflow, paramIndex, MIND2T_WORKFLOW_DESCRIPTION) ?? ""
         let total = workflows.argCount(workflow)
-        field.stringValue = workflows.arg(workflow, paramIndex, RUUAH_WORKFLOW_ARG_DEFAULT) ?? ""
+        field.stringValue = workflows.arg(workflow, paramIndex, MIND2T_WORKFLOW_ARG_DEFAULT) ?? ""
         field.placeholderString = name
         hint.stringValue = [
-            "\(workflows.field(workflow, RUUAH_WORKFLOW_NAME)) \u{2022} \(paramIndex + 1)/\(total): \(name)",
+            "\(workflows.field(workflow, MIND2T_WORKFLOW_NAME)) \u{2022} \(paramIndex + 1)/\(total): \(name)",
             description,
         ]
         .filter { !$0.isEmpty }
@@ -276,7 +276,7 @@ final class PaletteView: NSView, NSTextFieldDelegate {
 
     private func acceptCurrentParam() {
         guard let workflow = paramWorkflow else { return }
-        let name = workflows.arg(workflow, paramIndex, RUUAH_WORKFLOW_NAME) ?? ""
+        let name = workflows.arg(workflow, paramIndex, MIND2T_WORKFLOW_NAME) ?? ""
         paramValues.append((name, field.stringValue))
         paramIndex += 1
         if paramIndex < workflows.argCount(workflow) {

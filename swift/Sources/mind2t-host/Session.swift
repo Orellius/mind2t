@@ -5,7 +5,7 @@
 // cheap because an unchanged frame comes back without drawing.
 
 import AppKit
-import CRuuahHost
+import CMind2tHost
 
 final class Session {
     /// The spawn label; shown until the program sets a real title (OSC 0/2).
@@ -36,7 +36,7 @@ final class Session {
     /// wear it. When theme support arrives, the margin follows automatically -- nothing
     /// app-side hardcodes a color.
     private(set) var background: CGColor?
-    /// One OSC 133 class byte per grid row (RUUAH_ROW_*), from the last drawn frame.
+    /// One OSC 133 class byte per grid row (MIND2T_ROW_*), from the last drawn frame.
     /// Empty until a shell with integration has marked something. The gutter's input.
     private(set) var rowClasses: [UInt8] = []
     /// The caret's cell and visibility from the last polled frame (S4's ghost anchor).
@@ -121,29 +121,29 @@ final class Session {
     func attachLayer(_ layer: CAMetalLayer, width: Int, height: Int) -> Bool {
         guard let host, !exited else { return false }
         let raw = Unmanaged.passUnretained(layer).toOpaque()
-        let ok = ruuah_host_attach_layer(host, raw, UInt32(width), UInt32(height))
-            == RUUAH_HOST_SUCCESS
+        let ok = mind2t_host_attach_layer(host, raw, UInt32(width), UInt32(height))
+            == MIND2T_HOST_SUCCESS
         presenting = ok
         return ok
     }
 
     func detachLayer() {
         guard let host, presenting else { return }
-        _ = ruuah_host_detach_layer(host)
+        _ = mind2t_host_detach_layer(host)
         presenting = false
     }
 
     /// Reconfigures the swapchain. DEVICE pixels.
     func resizeLayer(width: Int, height: Int) {
         guard let host, presenting else { return }
-        _ = ruuah_host_resize_layer(host, UInt32(width), UInt32(height))
+        _ = mind2t_host_resize_layer(host, UInt32(width), UInt32(height))
     }
 
     /// Puts the current frame on screen. No-op unless a layer is attached.
     @discardableResult
     func present() -> Bool {
         guard let host, presenting, !exited else { return false }
-        return ruuah_host_present(host) == RUUAH_HOST_SUCCESS
+        return mind2t_host_present(host) == MIND2T_HOST_SUCCESS
     }
 
     /// Polls once. Returns a fresh image when the host drew; `exited` flips when the
@@ -155,8 +155,8 @@ final class Session {
     @discardableResult
     func poll() -> CGImage? {
         guard let host, !exited else { return nil }
-        var frame = RuuahHostFrame()
-        guard ruuah_host_poll(host, &frame) == RUUAH_HOST_SUCCESS else { return nil }
+        var frame = Mind2tHostFrame()
+        guard mind2t_host_poll(host, &frame) == MIND2T_HOST_SUCCESS else { return nil }
 
         // The C surface reports the renderer's default background outright -- sampling
         // the corner pixel instead picks up the caret whenever the cursor sits at home,
@@ -193,19 +193,19 @@ final class Session {
         return fresh
     }
 
-    /// One row's text, filtered by OSC 133 mark (RUUAH_TEXT_ALL for every cell). Empty
+    /// One row's text, filtered by OSC 133 mark (MIND2T_TEXT_ALL for every cell). Empty
     /// when the row is out of range or nothing has been polled yet.
     func rowText(_ row: UInt16, semantic: UInt8) -> String {
         guard let host else { return "" }
         var length = 0
-        guard ruuah_host_row_text(host, row, semantic, nil, 0, &length) == RUUAH_HOST_SUCCESS,
+        guard mind2t_host_row_text(host, row, semantic, nil, 0, &length) == MIND2T_HOST_SUCCESS,
             length > 0
         else { return "" }
         var buffer = [UInt8](repeating: 0, count: length)
         guard
             buffer.withUnsafeMutableBufferPointer({ pointer in
-                ruuah_host_row_text(host, row, semantic, pointer.baseAddress, length, &length)
-            }) == RUUAH_HOST_SUCCESS
+                mind2t_host_row_text(host, row, semantic, pointer.baseAddress, length, &length)
+            }) == MIND2T_HOST_SUCCESS
         else { return "" }
         return String(decoding: buffer, as: UTF8.self)
     }
@@ -238,7 +238,7 @@ final class Session {
         let bytes = Array(command.utf8)
         _ = bytes.withUnsafeBufferPointer { pointer in
             pwdRaw.withUnsafeBufferPointer { cwdPointer in
-                ruuah_history_append(
+                mind2t_history_append(
                     store, pointer.baseAddress, pointer.count,
                     cwdPointer.baseAddress, pwdRaw.count)
             }
@@ -254,25 +254,25 @@ final class Session {
         var length = 0
         let sized = inputBytes.withUnsafeBufferPointer { pointer in
             pwdRaw.withUnsafeBufferPointer { cwdPointer in
-                ruuah_history_suggest(
+                mind2t_history_suggest(
                     store, pointer.baseAddress, pointer.count,
                     cwdPointer.baseAddress, pwdRaw.count, nil, 0, &length)
             }
         }
-        guard sized == RUUAH_HOST_SUCCESS, length > 0 else { return nil }
+        guard sized == MIND2T_HOST_SUCCESS, length > 0 else { return nil }
 
         var buffer = [UInt8](repeating: 0, count: length)
         let copied = inputBytes.withUnsafeBufferPointer { pointer in
             pwdRaw.withUnsafeBufferPointer { cwdPointer in
                 buffer.withUnsafeMutableBufferPointer { outPointer in
-                    ruuah_history_suggest(
+                    mind2t_history_suggest(
                         store, pointer.baseAddress, pointer.count,
                         cwdPointer.baseAddress, pwdRaw.count,
                         outPointer.baseAddress, length, &length)
                 }
             }
         }
-        guard copied == RUUAH_HOST_SUCCESS else { return nil }
+        guard copied == MIND2T_HOST_SUCCESS else { return nil }
         return String(decoding: buffer, as: UTF8.self)
     }
 
@@ -284,7 +284,7 @@ final class Session {
         while true {
             var kind: UInt32 = 0
             var length = 0
-            guard ruuah_host_next_event(host, &kind, nil, 0, &length) == RUUAH_HOST_SUCCESS,
+            guard mind2t_host_next_event(host, &kind, nil, 0, &length) == MIND2T_HOST_SUCCESS,
                 kind != 0
             else { break }
             var payload = [UInt8](repeating: 0, count: length)
@@ -292,9 +292,9 @@ final class Session {
                 var fetched: UInt32 = 0
                 guard
                     payload.withUnsafeMutableBufferPointer({ pointer in
-                        ruuah_host_next_event(
+                        mind2t_host_next_event(
                             host, &fetched, pointer.baseAddress, length, &length)
-                    }) == RUUAH_HOST_SUCCESS, fetched == kind
+                    }) == MIND2T_HOST_SUCCESS, fetched == kind
                 else { break }
             }
             let text = String(decoding: payload, as: UTF8.self)
@@ -325,14 +325,14 @@ final class Session {
     func linkAt(col: UInt16, row: UInt16) -> String? {
         guard let host else { return nil }
         var length = 0
-        guard ruuah_host_link_at(host, col, row, nil, 0, &length) == RUUAH_HOST_SUCCESS,
+        guard mind2t_host_link_at(host, col, row, nil, 0, &length) == MIND2T_HOST_SUCCESS,
             length > 0
         else { return nil }
         var buffer = [UInt8](repeating: 0, count: length)
         guard
             buffer.withUnsafeMutableBufferPointer({ pointer in
-                ruuah_host_link_at(host, col, row, pointer.baseAddress, length, &length)
-            }) == RUUAH_HOST_SUCCESS
+                mind2t_host_link_at(host, col, row, pointer.baseAddress, length, &length)
+            }) == MIND2T_HOST_SUCCESS
         else { return nil }
         return String(decoding: buffer, as: UTF8.self)
     }
@@ -343,13 +343,13 @@ final class Session {
     /// the next polled frame's viewport_offset.
     func scroll(_ rows: Int32) {
         guard let host else { return }
-        _ = ruuah_host_scroll(host, rows)
+        _ = mind2t_host_scroll(host, rows)
     }
 
     func send(_ bytes: [UInt8]) {
         guard let host else { return }
         _ = bytes.withUnsafeBufferPointer { buffer in
-            ruuah_host_send(host, buffer.baseAddress, buffer.count)
+            mind2t_host_send(host, buffer.baseAddress, buffer.count)
         }
     }
 
@@ -359,14 +359,14 @@ final class Session {
     /// was frontmost has never seen the view.
     func mouseGeometry(width: UInt32, height: UInt32, inset: UInt32) {
         guard let host else { return }
-        _ = ruuah_host_mouse_geometry(host, width, height, inset, inset, inset, inset)
+        _ = mind2t_host_mouse_geometry(host, width, height, inset, inset, inset, inset)
     }
 
     /// One pointer event in surface pixels. True when the terminal consumed it (a
     /// report went to the child); false hands the event back to AppKit.
     func mouse(action: UInt32, button: UInt32, mods: UInt32, x: Float, y: Float) -> Bool {
         guard let host else { return false }
-        return ruuah_host_mouse(host, action, button, mods, x, y) == RUUAH_HOST_SUCCESS
+        return mind2t_host_mouse(host, action, button, mods, x, y) == MIND2T_HOST_SUCCESS
     }
 
     /// One wheel gesture in whole ticks, positive up. True when the terminal consumed
@@ -374,7 +374,7 @@ final class Session {
     /// scroll is ours.
     func wheel(x: Float, y: Float, ticks: Int32, mods: UInt32) -> Bool {
         guard let host else { return false }
-        return ruuah_host_wheel(host, x, y, ticks, mods) == RUUAH_HOST_SUCCESS
+        return mind2t_host_wheel(host, x, y, ticks, mods) == MIND2T_HOST_SUCCESS
     }
 
     /// One keyboard event through the host's encoder -- every mode (DECCKM, keypad,
@@ -386,22 +386,22 @@ final class Session {
     ) -> Bool {
         guard let host else { return false }
         return text.withUnsafeBufferPointer { buffer in
-            ruuah_host_key(
+            mind2t_host_key(
                 host, action, key, mods, consumedMods,
                 buffer.baseAddress, buffer.count, unshiftedCodepoint)
-        } == RUUAH_HOST_SUCCESS
+        } == MIND2T_HOST_SUCCESS
     }
 
     func paste(_ bytes: [UInt8]) {
         guard let host else { return }
         _ = bytes.withUnsafeBufferPointer { buffer in
-            ruuah_host_paste(host, buffer.baseAddress, buffer.count)
+            mind2t_host_paste(host, buffer.baseAddress, buffer.count)
         }
     }
 
     func resize(cols: UInt16, rows: UInt16) {
         guard let host, cols != self.cols || rows != self.rows else { return }
-        if ruuah_host_resize(host, cols, rows) == RUUAH_HOST_SUCCESS {
+        if mind2t_host_resize(host, cols, rows) == MIND2T_HOST_SUCCESS {
             self.cols = cols
             self.rows = rows
         }
@@ -412,7 +412,7 @@ final class Session {
     /// old numbers describe a dead font.
     func setFontSize(_ fontSize: Float, cols: UInt16, rows: UInt16) {
         guard let host else { return }
-        if ruuah_host_set_font_size(host, fontSize, cols, rows) == RUUAH_HOST_SUCCESS {
+        if mind2t_host_set_font_size(host, fontSize, cols, rows) == MIND2T_HOST_SUCCESS {
             self.cols = cols
             self.rows = rows
             cellWidth = 0
@@ -422,7 +422,7 @@ final class Session {
 
     func close() {
         if let host {
-            ruuah_host_free(host)
+            mind2t_host_free(host)
             self.host = nil
         }
     }

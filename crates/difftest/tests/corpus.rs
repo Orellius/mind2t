@@ -7,8 +7,8 @@
 //! NOT responsible for: the correctness of either terminal. It asserts the harness.
 //! Test strategy: run every declared case and compare the verdict to its expectation.
 
-use ruuah_vt_difftest::case::{DEFAULT_CORPUS, Expectation, load};
-use ruuah_vt_difftest::run::{Verdict, run};
+use mind2t_vt_difftest::case::{DEFAULT_CORPUS, Expectation, load};
+use mind2t_vt_difftest::run::{Verdict, run};
 
 #[test]
 fn every_case_produces_the_verdict_the_corpus_declares() {
@@ -179,7 +179,7 @@ fn both_sides_receive_the_identical_byte_stream() {
 /// ready to paste into `cases.toml`. Run it when the oracle moves and a pinned set needs
 /// re-measuring:
 ///
-///     cargo test -p ruuah-vt-difftest --test corpus -- --ignored print_measured --no-capture
+///     cargo test -p mind2t-vt-difftest --test corpus -- --ignored print_measured --no-capture
 #[test]
 #[ignore = "authoring tool; prints rather than asserts"]
 fn print_measured_diff_paths() {

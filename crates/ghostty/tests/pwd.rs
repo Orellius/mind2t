@@ -2,10 +2,10 @@
 //!   than assumed.
 //! Public surface: none, this is a test.
 //! Why this file: the pwd is an ABI observable (`GHOSTTY_TERMINAL_DATA_PWD`), so unlike
-//!   OSC 52 or OSC 8 it has a real oracle and the corpus can pin it. Before ruuah-vt
+//!   OSC 52 or OSC 8 it has a real oracle and the corpus can pin it. Before mind2t-vt
 //!   implements anything, the rules the corpus will encode are read off the library here --
 //!   probe for WHAT, source for WHY, both discharged before a line of core is written.
-//! NOT responsible for: ruuah-vt's own behaviour, or any comparison between the two.
+//! NOT responsible for: mind2t-vt's own behaviour, or any comparison between the two.
 //! Test strategy: write the sequences a shell actually emits and read the pwd back through
 //!   the same ABI getter the differential harness uses.
 //!
@@ -14,7 +14,7 @@
 //! never parsed or validated, truncated at 4096 bytes; and `../ruuah/src/terminal/
 //! Terminal.zig` `setPwd` (empty clears) / `fullReset` (RIS clears).
 
-use ruuah_vt_ghostty::Terminal;
+use mind2t_vt_ghostty::Terminal;
 
 fn pwd_after(bytes: &[u8]) -> Vec<u8> {
     let mut terminal = Terminal::new(20, 4).expect("terminal creation");
@@ -150,7 +150,7 @@ fn an_over_long_report_leaves_the_previous_pwd_alone() {
 
 /// The header's callback doc names OSC 9 (ConEmu CurrentDir) and OSC 1337 as pwd sources
 /// as well. Whether THIS build routes them there is a measurement, not a reading: the
-/// answer decides whether ruuah-vt owes them an implementation or the corpus owes them a
+/// answer decides whether mind2t-vt owes them an implementation or the corpus owes them a
 /// named divergence. Recorded as measured on 2026-07-31 against `oracle.lock`'s build --
 /// if either flips, the oracle moved and the corpus notes must be re-read.
 #[test]

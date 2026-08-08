@@ -8,7 +8,7 @@
 //!   (`sgr.rs`). It routes; it does not implement.
 //! Test strategy: measured against libghostty-vt by the differential corpus.
 
-use ruuah_vt_snapshot::Semantic;
+use mind2t_vt_snapshot::Semantic;
 use vte::Params;
 
 use crate::cell::Protection;

@@ -1,16 +1,16 @@
 [package]
-name = "ruuah-vt-abi"
+name = "mind2t-vt-abi"
 version = "0.1.0"
 edition.workspace = true
 
 [lib]
-name = "ruuah_vt"
+name = "mind2t_vt"
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-ruuah-vt-abi-types = { path = "../abi-types" }
-ruuah-vt-core = { path = "../core" }
-ruuah-vt-snapshot = { path = "../snapshot" }
+mind2t-vt-abi-types = { path = "../abi-types" }
+mind2t-vt-core = { path = "../core" }
+mind2t-vt-snapshot = { path = "../snapshot" }
 
 [dev-dependencies]
 serde = { workspace = true }

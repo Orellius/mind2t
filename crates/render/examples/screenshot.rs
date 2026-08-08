@@ -10,7 +10,7 @@
 //! is using.
 //!
 //! ```sh
-//! cargo run -p ruuah-vt-render --example screenshot -- \
+//! cargo run -p mind2t-vt-render --example screenshot -- \
 //!     --cols 100 --rows 32 --out /tmp/shot.bmp --until "met expectation" -- ./target/debug/difftest
 //! ```
 //!
@@ -21,9 +21,9 @@
 use std::io::Write;
 use std::time::{Duration, Instant};
 
-use ruuah_vt_frame::{CLUSTER_BYTES, Frame, FrameReader};
-use ruuah_vt_pty::{Host, Options};
-use ruuah_vt_render::{FontStack, Renderer};
+use mind2t_vt_frame::{CLUSTER_BYTES, Frame, FrameReader};
+use mind2t_vt_pty::{Host, Options};
+use mind2t_vt_render::{FontStack, Renderer};
 
 struct Args {
     cols: u16,

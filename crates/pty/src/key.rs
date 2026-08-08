@@ -217,7 +217,7 @@ pub struct KeyOptions {
     pub alt_esc_prefix: bool,
     /// xterm modifyOtherKeys state 2.
     pub modify_other_keys_state_2: bool,
-    /// Kitty keyboard flags, wire layout (`ruuah_vt_core::kitty_keys` bit names).
+    /// Kitty keyboard flags, wire layout (`mind2t_vt_core::kitty_keys` bit names).
     /// Only the low 5 bits are meaningful; the rest are masked off exactly as the
     /// oracle's C setopt truncates to a u5.
     pub kitty_flags: u8,
@@ -226,7 +226,7 @@ pub struct KeyOptions {
     pub backarrow_key_mode: bool,
 }
 
-// Kitty flag bits, mirrored from `ruuah_vt_core::kitty_keys` (one wire format).
+// Kitty flag bits, mirrored from `mind2t_vt_core::kitty_keys` (one wire format).
 // Disambiguate has no branch of its own -- ANY set flag selects the kitty path.
 #[allow(dead_code)]
 const KITTY_DISAMBIGUATE: u8 = 1 << 0;

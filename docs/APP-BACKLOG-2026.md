@@ -1,4 +1,4 @@
-# RUUAH app slices - the homegrown map from Warp OSS and Superset
+# Mind2t app slices - the homegrown map from Warp OSS and Superset
 
 > **2026-07-30 append-all wave:** S2 compat CLOSED (integration rewritten on the
 > oracle's own zsh pattern -- deferred init, stay-last, re-mark the theme's PS1;
@@ -21,7 +21,7 @@
 
 Written 2026-07-29 (IDT), researched live the same day. `BACKLOG-2026.md` is the
 *protocol* backlog (what the VT layer owes any terminal); this file is the *app*
-backlog - what makes RUUAH a product rather than a viewport. Sources, verified
+backlog - what makes Mind2t a product rather than a viewport. Sources, verified
 2026-07-29 via web + browser cross-confirmation:
 
 - **Warp** went open source 2026-04-28: the whole client is at
@@ -47,12 +47,12 @@ backlog - what makes RUUAH a product rather than a viewport. Sources, verified
    `crates/host` + `swift/` unless a real observable forces a core seam - and
    then the corpus pins it.
 
-## What RUUAH already has that these products build on
+## What Mind2t already has that these products build on
 
 - **OSC 133 semantic zones in the core** (`semantic.rs`, slice 5.6): prompt /
   input / output regions, corpus-pinned. This is the exact substrate Warp's
   signature Blocks feature needs - most terminals bolt it on; we start with it.
-- **Session sidebar** (2026-07-29): one `RuuahHost` per session, background
+- **Session sidebar** (2026-07-29): one `Mind2tHost` per session, background
   sessions keep running. This is the seed of Superset's workspace list.
 - **Frame mode-bits + reported background**: the pattern for any state the GUI
   needs from the terminal without touching the pump thread.
@@ -64,17 +64,17 @@ and Orel's stated want. A TOML at `~/.ruuah/config.toml`: font, size, theme,
 keybinds, default shell. A theme = a palette file (16 ANSI + fg/bg/cursor);
 `Palette` already resolves everything through `default_*` fields, and the
 margin already follows the reported background - themes drop in. Shape:
-host gains `ruuah_host_spawn` options for palette (or a set-palette call);
+host gains `mind2t_host_spawn` options for palette (or a set-palette call);
 Swift reads the TOML. Oracle: a theme file with a distinct background must
 recolor grid AND margin in a window capture; a bad file must fall back loudly.
 *Prereq for S2+ (keybinds live in the settings).*
 
 **S2 - Blocks v1. LANDED 2026-07-29, one compat gap open.** The C surface
-carries per-row OSC 133 classes (`RuuahHostFrame.row_semantics`) and filtered
-row text (`ruuah_host_row_text` - the input filter is what makes copy-command
+carries per-row OSC 133 classes (`Mind2tHostFrame.row_semantics`) and filtered
+row text (`mind2t_host_row_text` - the input filter is what makes copy-command
 return `ls -la` out of `$ ls -la`; both pinned in host_abi with a no-marks
 control). Swift: gutter bars per block in the left margin, click pops copy
-command / copy output / run again; `shell/ruuah-integration.zsh` +
+command / copy output / run again; `shell/mind2t-integration.zsh` +
 `shell/zdotdir/.zshenv` bootstrap wired via ZDOTDIR env in the .app. Proven:
 scripted two-command child shows two bars with the boundary at the block seam
 (`docs/images/blocks-gutter-20260729.png`, pixel-scanned), and a PRISTINE zsh
@@ -90,7 +90,7 @@ frameworks. *V2 later: sticky command header, block search, collapse.*
 
 **S3 - Command palette + workflows. DONE 2026-07-30** (`s3-palette`, PR #10):
 `Palette.swift`'s `PaletteView`, cmd+K in `Window.swift`, workflows loaded from
-`~/.ruuah/workflows/` through the `RUUAH_WORKFLOW_*` exports with file errors
+`~/.ruuah/workflows/` through the `MIND2T_WORKFLOW_*` exports with file errors
 surfaced as their own palette row. The queue line in this file's header went on
 saying S3 was outstanding for three days after it shipped, and on 2026-08-02 a
 session picked it as the next slice on that basis. A backlog is only as good as
@@ -107,10 +107,10 @@ exercised by hand (aesthetics = Orel).
 Fish-style ghost text: `host/src/suggest.rs` (append-only store, 10k cap,
 consecutive-dupe collapse, PROPER-prefix most-recent-wins matcher - the
 deterministic fixture oracle, unit-tested both directions) behind 4 C exports
-(`ruuah_history_*`, 49 total; C-surface round-trip test incl. persistence
+(`mind2t_history_*`, 49 total; C-surface round-trip test incl. persistence
 across handles). History records when a NEW block appears below the last (the
 S2 OSC 133 rails - no shell integration, no suggestions, the named
-dependency). Ghost = dim CATextLayer at the caret (RuuahHostFrame grew
+dependency). Ghost = dim CATextLayer at the caret (Mind2tHostFrame grew
 cursor_col/row/visible), shown only at the live bottom with the caret at
 line end; bare right-arrow accepts by pasting the remainder. NOT keyed by
 cwd yet; multiline commands refused;
@@ -140,7 +140,7 @@ will emit OSC 7 into our windows today.** On macOS the emitter is
 `update_terminal_cwd` in `/etc/zshrc_Apple_Terminal` (defined line 16, hooked
 to `precmd` line 43), and `/etc/zshrc:74` sources that file only when
 `$TERM_PROGRAM` is `Apple_Terminal`. We do not set `TERM_PROGRAM` at all, so
-the hook never installs. `ruuah-integration.zsh` therefore has to emit OSC 7
+the hook never installs. `mind2t-integration.zsh` therefore has to emit OSC 7
 itself, the same way it already emits the OSC 133 marks - which is good news
 for the consumer slice, because it means the reported format is ours to fix
 (`file://$HOST$PWD`, percent-encoded) rather than something to sniff.
@@ -152,7 +152,7 @@ Workspace" closes the session and OFFERS to remove the worktree.
 
 Three things this settled.
 
-**`RuuahHostOptions` grew `cwd`.** Placing a session used to mean
+**`Mind2tHostOptions` grew `cwd`.** Placing a session used to mean
 `command = "cd X && exec zsh"`, which breaks on quoting and, as the live tap
 proved, silently loses to any configured shell line that contains its own cd.
 The option is applied last so it beats the home default. Boundary, documented
@@ -193,7 +193,7 @@ create a git worktree of the current repo + spawn a session (optionally
 launching a CLI agent - claude, codex) inside it. Sidebar groups sessions by
 workspace; closing a workspace offers to remove the worktree. This is
 **convoy's thesis** (tools/convoy, Orel's own prior art) - Superset shipping it
-as a product validates the direction; RUUAH absorbing it is Orel's call on
+as a product validates the direction; Mind2t absorbing it is Orel's call on
 convoy's future. Oracle: spawn → `git worktree list` shows it; close → gone;
 two agents editing in parallel never touch each other's tree.
 
@@ -203,7 +203,7 @@ departures from the sketch below, both deliberate.
 
 **It is rendered in a WKWebView, not in AppKit** - the first web-rendered panel
 in the app, and the reason the seam exists at all. Orel raised `simion/termic`
-(Tauri 2 + React 19 + xterm.js, AGPL-3.0) on 2026-08-02 and asked whether RUUAH
+(Tauri 2 + React 19 + xterm.js, AGPL-3.0) on 2026-08-02 and asked whether Mind2t
 should be wrapped the same way. The answer was half no, half yes, and the split
 is the architecture: **the terminal surface stays native** (xterm.js carries its
 own VT parser and its own screen model, so a webview terminal would bypass this
@@ -218,7 +218,7 @@ wherever the active session is standing is useful on its own and needs none of
 that machinery. S5 later widens the scope from "this session's repo" to "this
 workspace".
 
-Off unless `panels = true` in `config.toml` (`ruuah_config_panels`, default
+Off unless `panels = true` in `config.toml` (`mind2t_config_panels`, default
 false and tested in both directions). Reachable by cmd+shift+D or the palette's
 "Review Changes". Read-only by construction: nothing in `Git.swift` mutates a
 repository, and a `requestDiff` for a path the host never advertised is refused
@@ -231,7 +231,7 @@ PASSED VACUOUSLY - a navigation-policy bug (URL equality against a
 symlink-resolved path) refused the document outright, so the missing nonce
 proved nothing; the control now also demands the document loaded and mounted.
 Run two caught a real race: the bundle is an ES module and module scripts are
-deferred, so WKWebView's `didFinish` fires BEFORE `window.__ruuahReceive`
+deferred, so WKWebView's `didFinish` fires BEFORE `window.__mind2tReceive`
 exists. The queue now flushes on the panel's own `ready`, which cannot precede
 its bridge module by construction.
 
@@ -268,7 +268,7 @@ the C surface already isolates everything behind handles). Real work; do not
 start before S5 proves the multi-workspace life is the daily driver.
 
 **S9 - Automations + MCP control.** Superset's scheduled agent runs and
-`superset-mcp`: RUUAH exposes its sessions as an MCP server (spawn, send,
+`superset-mcp`: Mind2t exposes its sessions as an MCP server (spawn, send,
 read block output) so an agent can drive terminals programmatically, plus
 cron-shaped scheduled runs. Overlaps Orel's existing agent infra - scope it
 with him when S5/S6 are live.
@@ -277,15 +277,15 @@ with him when S5/S6 are live.
 
 - **Warp's cloud** (Drive, Oz, session sharing, teams) - closed, server-side,
   and against the local-first grain of this machine.
-- **Warp's AI-in-terminal UI** (agent conversation panes) - RUUAH's model is
+- **Warp's AI-in-terminal UI** (agent conversation panes) - Mind2t's model is
   the opposite: the agent (Claude Code) runs *in* the terminal as a child, and
   the terminal serves it well (kitty keyboard P1.7, mouse P1.5, notifications).
   Revisit only if real use demands more.
-- **A built-in code editor / LSP** (Warp's ADE direction) - RUUAH is a
+- **A built-in code editor / LSP** (Warp's ADE direction) - Mind2t is a
   terminal; S6's diff panel is the boundary of "viewing code" here.
 
 ## Protocol dependencies (live in BACKLOG-2026.md)
 
 Scrollback viewport (P1.6) unlocks S2 block navigation and S7 panes; kitty
 keyboard (P1.7) + SGR mouse (P1.5) are what make CLI agents first-class; color
-emoji (P0.2) is still the top visible gap in daily Claude-in-RUUAH use.
+emoji (P0.2) is still the top visible gap in daily Claude-in-Mind2t use.

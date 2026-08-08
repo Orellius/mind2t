@@ -237,7 +237,7 @@ impl FontStack {
             ("/System/Library/Fonts/GeezaPro.ttc".to_string(), 0),
             // Braille patterns (U+2800..U+28FF): none of the fonts above carry them, so
             // dot art and braille spinners rendered as NOTHING until 2026-07-29, when the
-            // RUUAH splash's ghost simply failed to appear. Apple Braille ships on every
+            // Mind2t splash's ghost simply failed to appear. Apple Braille ships on every
             // macOS and sits last so it can never shadow a glyph the leads own.
             ("/System/Library/Fonts/Apple Braille.ttf".to_string(), 0),
             // Color emoji (P0.2): none of the fonts above carry emoji, so `[🧠 BRAIN]`
@@ -372,7 +372,7 @@ mod tests {
 
     #[test]
     fn braille_patterns_resolve_somewhere_in_the_stack() {
-        // U+28FF drew NOTHING on 2026-07-29 (the RUUAH splash ghost vanished): no font in
+        // U+28FF drew NOTHING on 2026-07-29 (the Mind2t splash ghost vanished): no font in
         // the stack carried Braille. Apple Braille now backstops it; this pins the gap shut.
         let mut stack = FontStack::system(16.0).expect("system fonts");
         let resolved = stack.resolve('\u{28FF}');

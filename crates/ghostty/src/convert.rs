@@ -5,11 +5,11 @@
 //!   variant has to become an error rather than a default -- a library that grew a fourth
 //!   cell width would otherwise be silently read as `Narrow`. Keeping them together makes
 //!   that discipline checkable at a glance, and keeps `terminal.rs` to the readout itself.
-//! NOT responsible for: reading anything (`terminal.rs`) or judging it (`ruuah-vt-snapshot`).
+//! NOT responsible for: reading anything (`terminal.rs`) or judging it (`mind2t-vt-snapshot`).
 //! Test strategy: exercised through `tests/oracle.rs` and `tests/semantic.rs`, which drive
 //!   real byte streams and assert on the converted values.
 
-use ruuah_vt_snapshot::{Color, RowSemantic, Semantic, Style, Underline, Wide};
+use mind2t_vt_snapshot::{Color, RowSemantic, Semantic, Style, Underline, Wide};
 
 use crate::sys;
 use crate::terminal::Error;

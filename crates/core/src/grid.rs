@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use ruuah_vt_snapshot::{Row, RowSemantic, Style};
+use mind2t_vt_snapshot::{Row, RowSemantic, Style};
 
 use crate::cell::Cell;
 use crate::page::{HistoryCell, HistoryRow};
@@ -543,7 +543,7 @@ impl Grid {
                         .map(|x| {
                             let index = self.index(x, y);
                             let cell = self.cell(index);
-                            ruuah_vt_snapshot::Cell {
+                            mind2t_vt_snapshot::Cell {
                                 text: self.cell_text(index),
                                 wide: cell.wide.into(),
                                 style: self.style(cell.style_id),
@@ -561,7 +561,7 @@ impl Grid {
 mod tests {
     use super::*;
     use crate::cell::{CellFlags, Wide};
-    use ruuah_vt_snapshot::Color;
+    use mind2t_vt_snapshot::Color;
 
     fn cell_with(codepoint: char) -> Cell {
         Cell {

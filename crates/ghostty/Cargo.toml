@@ -1,19 +1,19 @@
 [package]
-name = "ruuah-vt-ghostty"
+name = "mind2t-vt-ghostty"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-ruuah-vt-snapshot.workspace = true
+mind2t-vt-snapshot.workspace = true
 thiserror.workspace = true
 
 [build-dependencies]
 bindgen = "0.72"
 
 [dev-dependencies]
-ruuah-vt-abi-types = { path = "../abi-types" }
-ruuah-vt-core.workspace = true
-ruuah-vt-pty.workspace = true
+mind2t-vt-abi-types = { path = "../abi-types" }
+mind2t-vt-core.workspace = true
+mind2t-vt-pty.workspace = true
 serde_json = "1"

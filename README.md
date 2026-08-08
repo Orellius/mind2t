@@ -152,12 +152,12 @@ are untouched in both.
 | gate | what it proves |
 |---|---|
 | `cargo test --workspace` | 703 tests: units, pixels, concurrency, C-surface round trips |
-| `ruuah-vt-difftest` | 223 corpus cases, every verdict met, 17 of them pinned to disagree |
+| `mind2t-vt-difftest` | 223 corpus cases, every verdict met, 17 of them pinned to disagree |
 | `esctest2` | 391 pinned passes of 568, both directions: a regression fails, so does an unpromoted pass |
 | `scripts/smoke-mind2t.sh` | 26 host invariants about what AppKit, WebKit, the IPC and the child processes actually did, with no screen required |
 | export check | 14 + 56 C symbols present in the shipped archives |
 
-The screenshots above were taken with `cargo run -p ruuah-vt-render --example screenshot`, which
+The screenshots above were taken with `cargo run -p mind2t-vt-render --example screenshot`, which
 runs a command in a real pty and renders the result with this terminal's own CPU backend. A
 picture of some other terminal agreeing with our numbers would not be the claim being made.
 
@@ -249,7 +249,7 @@ After, the same bytes through the same renderer, one variable changed:
 ![Arabic drawn with contextual forms](docs/images/arabic-joining-after-20260808.png)
 
 Both are this terminal's own CPU backend, which is byte-identical to the GPU one by
-specification, captured with `cargo run -p ruuah-vt-render --example screenshot` and therefore
+specification, captured with `cargo run -p mind2t-vt-render --example screenshot` and therefore
 needing no window and no display. The Hebrew and the Latin are unchanged between them, which is
 the control: a change that moved those would be a change to something other than joining.
 
@@ -384,29 +384,29 @@ The rest:
 
 ```sh
 cargo test --workspace                  # the gate: every test green
-cargo run -p ruuah-vt-difftest          # the corpus, measured against libghostty-vt
+cargo run -p mind2t-vt-difftest          # the corpus, measured against libghostty-vt
 ./scripts/smoke-mind2t.sh               # host gate: no window, no synthesized input
-./scripts/build-lib.sh                  # libruuah-vt.a       (the drop-in ABI)
-./scripts/build-host.sh                 # libruuah-vt-host.a  (ABI plus embedder surface)
+./scripts/build-lib.sh                  # libmind2t-vt.a       (the drop-in ABI)
+./scripts/build-host.sh                 # libmind2t-vt-host.a  (ABI plus embedder surface)
 ./scripts/build-swift.sh                # the Swift reference host and its headless smoke test
 ./scripts/build-app.sh                  # assemble, sign and install the app
 sh scripts/demo-features.sh             # the one-screen feature tour, inside the terminal
 ```
 
 Running the differential harness additionally needs a Ghostty checkout to build its oracle from,
-pointed at by `RUUAH_VT_ORACLE_SRC`. See [CONTRIBUTING.md](CONTRIBUTING.md) for that and the rest
+pointed at by `MIND2T_VT_ORACLE_SRC`. See [CONTRIBUTING.md](CONTRIBUTING.md) for that and the rest
 of the development setup.
 
 ## The names
 
 - **Mind2t** is the product: the app in `crates/mind2t`.
-- **`ruuah-vt`** is the engine, and it keeps its name. The VT core, pty, renderers and C ABI are
+- **`mind2t-vt`** is the engine, and it keeps its name. The VT core, pty, renderers and C ABI are
   the part somebody else could embed, so the crates carry the engine's name while the repository
   carries the product's.
 - The `-vt` is heritage. The engine started as a drop-in for the C ABI Ghostty publishes as
   `libghostty-vt`, meant to sit behind somebody else's GUI, then grew its own window, renderer,
   panes and agent launcher. The ABI promise is still real and still tested: you can link
-  `libruuah-vt.a` where `libghostty-vt` was expected.
+  `libmind2t-vt.a` where `libghostty-vt` was expected.
 
 ## Contributing
 

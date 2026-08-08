@@ -7,9 +7,9 @@
 //! Chromatic = a pixel whose channels differ (the emoji_probe.rs rule): a mask glyph
 //! tinted with the white foreground can never produce it.
 
-use ruuah_vt_core::Terminal;
-use ruuah_vt_frame::{Frame, Publisher, channel};
-use ruuah_vt_render::{FontStack, Renderer};
+use mind2t_vt_core::Terminal;
+use mind2t_vt_frame::{Frame, Publisher, channel};
+use mind2t_vt_render::{FontStack, Renderer};
 
 const COLS: u16 = 6;
 const SIZE: f32 = 24.0;

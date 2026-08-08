@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use ruuah_vt_pty::{Host, Options};
+use mind2t_vt_pty::{Host, Options};
 
 /// The test universe the gate runs: the whole suite. Measured 2026-07-30 at ~154s wall
 /// clock for 568 tests (the 1s reply timeout is rare because the queries esctest leans
@@ -56,7 +56,7 @@ fn run_esctest(include: &str, patience: Duration) -> BTreeMap<String, Outcome> {
     );
 
     let log = std::env::temp_dir().join(format!(
-        "ruuah-esctest-{}-{include_len}.log",
+        "mind2t-esctest-{}-{include_len}.log",
         std::process::id(),
         include_len = include.len()
     ));
@@ -188,7 +188,7 @@ fn esctest_conformance_matches_the_pinned_expectations() {
 
 /// Authoring tool: the whole suite, results printed for triage. Run manually:
 ///
-///     cargo test -p ruuah-vt-pty --test esctest -- --ignored print_esctest --nocapture
+///     cargo test -p mind2t-vt-pty --test esctest -- --ignored print_esctest --nocapture
 #[test]
 #[ignore = "authoring tool; prints rather than asserts"]
 fn print_esctest_results() {

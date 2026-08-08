@@ -1,5 +1,5 @@
 #!/bin/sh
-# RUUAH VT splash -- generated from ruuah-home's NAME/GHOST lockup (wizard.rs).
+# Mind2t splash -- generated from ruuah-home's NAME/GHOST lockup (wizard.rs).
 # The app runs with auto base direction, so the Hebrew lines flow from the right.
 clear
 printf '\n'
@@ -26,6 +26,6 @@ printf '\033[38;2;236;72;153m%s\033[0m\n' '                    ██   ██ �
 printf '\033[38;2;236;72;153m%s\033[0m\n' '                    ██   ██  █████   █████  ██   ██ ██   ██'
 printf '\n'
 printf '\033[38;2;122;130;136m%s\033[0m\n' '                   רוח — טרמינל שליבתו כתובה ברסט, עברית קודם'
-printf '\033[38;2;122;130;136m%s\033[0m\n' '              core: ruuah-vt v0.8 · difftest 125/125 · bidi: auto'
+printf '\033[38;2;122;130;136m%s\033[0m\n' '              core: mind2t-vt v0.8 · difftest 125/125 · bidi: auto'
 printf '\n'
 exec /bin/zsh -il

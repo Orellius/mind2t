@@ -11,9 +11,9 @@
 //! The control is not decorative -- without it, "the mark is somewhere in the cell" would pass
 //! for both the working and the broken renderer.
 
-use ruuah_vt_core::Terminal;
-use ruuah_vt_frame::{Frame, Publisher, channel};
-use ruuah_vt_render::{FontStack, Renderer};
+use mind2t_vt_core::Terminal;
+use mind2t_vt_frame::{Frame, Publisher, channel};
+use mind2t_vt_render::{FontStack, Renderer};
 
 const COLS: u16 = 4;
 /// Large enough that a mark is several pixels wide, so "no ink here" is a real measurement

@@ -5,7 +5,7 @@
 //!   and without consulting it a qamats lands wherever the glyph's default origin happens to
 //!   be, which for Miriam Mono CLM is the left edge of the cell instead of centred under the
 //!   letter. Measured: shaping moves it by half an advance.
-//! NOT responsible for: reordering (that is `ruuah-vt-frame`'s `bidi.rs`, and it happens per
+//! NOT responsible for: reordering (that is `mind2t-vt-frame`'s `bidi.rs`, and it happens per
 //!   ROW), rasterization (`atlas.rs`), or font choice (`font.rs`).
 //! Test strategy: `tests/shaping.rs` measures where the mark's ink actually lands, and proves
 //!   the measurement can fail by running the same cell through the unshaped path.

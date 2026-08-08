@@ -4,12 +4,12 @@
 //! silhouette tinted with the foreground. The only observable that separates a working
 //! sbix blit from every broken shape is CHROMATIC ink: pixels whose channels differ.
 //!
-//! U+1F9E0 (brain) is the pin deliberately -- `[🧠 BRAIN]` in Claude Code inside RUUAH VT
+//! U+1F9E0 (brain) is the pin deliberately -- `[🧠 BRAIN]` in Claude Code inside Mind2t
 //! was the live gap that opened this backlog item (2026-07-29).
 
-use ruuah_vt_core::Terminal;
-use ruuah_vt_frame::{Frame, Publisher, channel};
-use ruuah_vt_render::{FontStack, Renderer};
+use mind2t_vt_core::Terminal;
+use mind2t_vt_frame::{Frame, Publisher, channel};
+use mind2t_vt_render::{FontStack, Renderer};
 
 fn render(text: &str) -> Vec<u8> {
     let mut terminal = Terminal::new(4, 1);

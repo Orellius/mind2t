@@ -1,7 +1,7 @@
 //! The observable state of a terminal, and the difference between two of them.
 //!
-//! This crate is the contract of the differential oracle: `ruuah-vt-ghostty` and
-//! `ruuah-vt-core` both produce a [`Snapshot`], and [`diff`] is the only thing that
+//! This crate is the contract of the differential oracle: `mind2t-vt-ghostty` and
+//! `mind2t-vt-core` both produce a [`Snapshot`], and [`diff`] is the only thing that
 //! decides whether they agree. It holds no terminal logic and depends on
 //! nothing, so neither implementation can bias the comparison.
 

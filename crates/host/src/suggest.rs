@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn the_file_round_trips() {
-        let dir = std::env::temp_dir().join(format!("ruuah-hist-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mind2t-hist-test-{}", std::process::id()));
         let path = dir.join("history");
         let mut history = History::default();
         history.append("git status", None);
@@ -221,11 +221,11 @@ mod tests {
     #[test]
     fn a_match_in_this_directory_beats_a_newer_one_elsewhere() {
         let mut history = History::default();
-        history.append("cargo test --workspace", Some("/work/ruuah"));
+        history.append("cargo test --workspace", Some("/work/mind2t"));
         history.append("cargo build --release", Some("/other"));
 
         assert_eq!(
-            history.suggest("cargo ", Some("/work/ruuah")),
+            history.suggest("cargo ", Some("/work/mind2t")),
             Some("cargo test --workspace"),
             "the older entry wins because it was run here"
         );
@@ -263,7 +263,7 @@ mod tests {
     /// is a command with no directory, which is exactly the old format.
     #[test]
     fn a_pre_cwd_history_file_loads_unchanged() {
-        let dir = std::env::temp_dir().join(format!("ruuah-history-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mind2t-history-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let path = dir.join("old-format");
         std::fs::write(&path, "git status\ncargo test\n").expect("write");
@@ -283,7 +283,7 @@ mod tests {
     /// until the session ended.
     #[test]
     fn the_directory_survives_a_save_and_load() {
-        let dir = std::env::temp_dir().join(format!("ruuah-history-rt-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mind2t-history-rt-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let path = dir.join("history");
 

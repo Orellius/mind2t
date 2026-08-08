@@ -7,7 +7,7 @@
 //!
 //! So the harness comes first again. This reads a `Snapshot` **entirely through the exported
 //! C functions** and requires it to equal the one the core builds in Rust, over every case in
-//! the real corpus. The comparison is the same `ruuah_vt_snapshot::diff` the oracle harness
+//! the real corpus. The comparison is the same `mind2t_vt_snapshot::diff` the oracle harness
 //! uses, so a disagreement is located to a field rather than reported as "the grids differ".
 //!
 //! Transitivity is what makes this worth the machinery: the corpus already proves core ==
@@ -20,9 +20,9 @@
 
 use std::ffi::c_void;
 
-use ruuah_vt::exports::*;
-use ruuah_vt::types::*;
-use ruuah_vt_snapshot::{
+use mind2t_vt::exports::*;
+use mind2t_vt::types::*;
+use mind2t_vt_snapshot::{
     Cell, Color, Cursor, Row, RowSemantic, Screen, Semantic, Snapshot, Style, Underline, Wide, diff,
 };
 use serde::Deserialize;
@@ -177,7 +177,7 @@ unsafe fn read_snapshot(handle: GhosttyTerminal, reader: Reader) -> Snapshot {
                     );
                     value
                 };
-                ruuah_vt_snapshot::Modes {
+                mind2t_vt_snapshot::Modes {
                     bracketed_paste: mode(GHOSTTY_MODE_BRACKETED_PASTE),
                     synchronized_output: mode(GHOSTTY_MODE_SYNCHRONIZED_OUTPUT),
                     mouse_event_x10: mode(9),
@@ -236,12 +236,12 @@ unsafe fn read_snapshot(handle: GhosttyTerminal, reader: Reader) -> Snapshot {
             // dynamic colours answer NO_VALUE when unset (never an error), and the
             // palette getter always succeeds.
             colors: {
-                let dynamic = |data: GhosttyTerminalData| -> Option<ruuah_vt_snapshot::Rgb> {
+                let dynamic = |data: GhosttyTerminalData| -> Option<mind2t_vt_snapshot::Rgb> {
                     let mut c = GhosttyColorRgb { r: 0, g: 0, b: 0 };
                     let code = ghostty_terminal_get(handle, data, (&raw mut c).cast());
                     match code {
                         GHOSTTY_SUCCESS => {
-                            Some(ruuah_vt_snapshot::Rgb { r: c.r, g: c.g, b: c.b })
+                            Some(mind2t_vt_snapshot::Rgb { r: c.r, g: c.g, b: c.b })
                         }
                         GHOSTTY_NO_VALUE => None,
                         _ => panic!("terminal_get({data}) returned {code}"),
@@ -249,13 +249,13 @@ unsafe fn read_snapshot(handle: GhosttyTerminal, reader: Reader) -> Snapshot {
                 };
                 let palette: [GhosttyColorRgb; 256] =
                     get(handle, GHOSTTY_TERMINAL_DATA_COLOR_PALETTE);
-                ruuah_vt_snapshot::Colors {
+                mind2t_vt_snapshot::Colors {
                     foreground: dynamic(GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND),
                     background: dynamic(GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND),
                     cursor: dynamic(GHOSTTY_TERMINAL_DATA_COLOR_CURSOR),
                     palette: palette
                         .iter()
-                        .map(|c| ruuah_vt_snapshot::Rgb { r: c.r, g: c.g, b: c.b })
+                        .map(|c| mind2t_vt_snapshot::Rgb { r: c.r, g: c.g, b: c.b })
                         .collect(),
                 }
             },
@@ -443,7 +443,7 @@ fn unpack_color(raw: &GhosttyStyleColor) -> Color {
 /// The same case, driven through the core's Rust API. The reference.
 fn core_snapshot(case: &Case) -> Snapshot {
     let mut terminal =
-        ruuah_vt_core::Terminal::with_scrollback(case.cols, case.rows, case.scrollback);
+        mind2t_vt_core::Terminal::with_scrollback(case.cols, case.rows, case.scrollback);
     terminal.write(case.bytes.as_bytes());
     if let Some(resize) = case.resize {
         terminal.resize(resize.cols, resize.rows);
@@ -566,7 +566,7 @@ fn an_out_of_range_point_is_refused() {
 ///
 /// Every case in this file drives a terminal that was created successfully; nothing here
 /// otherwise observes what happens when creation fails. The oracle's behaviour is measured in
-/// `ruuah-vt-ghostty`'s `a_failed_creation_nulls_the_out_param`, and this is the same
+/// `mind2t-vt-ghostty`'s `a_failed_creation_nulls_the_out_param`, and this is the same
 /// assertion against our export, so the two move together or the test says so.
 #[test]
 fn a_failed_creation_nulls_the_out_param_here_too() {
@@ -645,7 +645,7 @@ fn a_styled_cell_reports_a_non_zero_style_id() {
 /// The content tag is the other cell field with no consumer inside this harness: `read_cell`
 /// gets the cluster through `read_graphemes`, so a `CONTENT_TAG` frozen at `CODEPOINT` passes
 /// the whole corpus -- which is exactly what the audit's finding 13 found shipping. The
-/// oracle's rule is measured in `ruuah-vt-ghostty`'s
+/// oracle's rule is measured in `mind2t-vt-ghostty`'s
 /// `a_cell_holding_a_multi_codepoint_cluster_wears_the_grapheme_content_tag`: more than one
 /// codepoint in the cell means `CODEPOINT_GRAPHEME`. A consumer gating its graphemes call on
 /// the tag drops every niqqud otherwise.
@@ -693,7 +693,7 @@ fn a_grapheme_cell_reports_the_grapheme_content_tag() {
 }
 
 /// A pure out-param's `.size` must be written, never read. The oracle whole-struct-assigns at
-/// all four of these sites (measured in `ruuah-vt-ghostty`'s
+/// all four of these sites (measured in `mind2t-vt-ghostty`'s
 /// `a_pure_out_params_size_is_overwritten_not_echoed`), and its own tests pass `undefined`
 /// out-params -- so a consumer following upstream's pattern hands us uninitialised memory in
 /// that field. Echoing it back is the audit's finding 15: the harness above never saw it
@@ -777,7 +777,7 @@ fn a_pure_out_params_size_is_overwritten_here_too() {
 
 /// A NULL out-param on the four grid-ref readers is the validate-only idiom, not an error.
 /// The headers say "(may be NULL)" and the oracle skips the write and returns success --
-/// measured in `ruuah-vt-ghostty`'s `a_null_out_param_validates_instead_of_failing`. This
+/// measured in `mind2t-vt-ghostty`'s `a_null_out_param_validates_instead_of_failing`. This
 /// port refused all four with INVALID_VALUE, making every valid position look invalid to a
 /// consumer probing with NULL (finding 23). A ref that does NOT resolve must still fail, so
 /// NULL-out is not simply always-success.

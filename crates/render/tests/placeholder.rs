@@ -10,9 +10,9 @@
 
 use std::sync::Arc;
 
-use ruuah_vt_core::Terminal;
-use ruuah_vt_frame::{Frame, Publisher, ReadOutcome, channel};
-use ruuah_vt_render::{FontStack, Renderer};
+use mind2t_vt_core::Terminal;
+use mind2t_vt_frame::{Frame, Publisher, ReadOutcome, channel};
+use mind2t_vt_render::{FontStack, Renderer};
 
 const COLS: u16 = 6;
 const ROWS: u16 = 3;

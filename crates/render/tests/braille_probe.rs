@@ -2,9 +2,9 @@
 //! the app still drew nothing (stale link, and resolve is not ink) -- this one asserts
 //! the only thing that matters: U+28FF leaves ink on the canvas.
 
-use ruuah_vt_core::Terminal;
-use ruuah_vt_frame::{Frame, Publisher, channel};
-use ruuah_vt_render::{FontStack, Renderer};
+use mind2t_vt_core::Terminal;
+use mind2t_vt_frame::{Frame, Publisher, channel};
+use mind2t_vt_render::{FontStack, Renderer};
 
 #[test]
 fn a_full_braille_cell_leaves_ink() {

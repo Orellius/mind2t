@@ -15,7 +15,7 @@ use std::collections::HashSet;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use ruuah_vt_host::session::{MouseAction, MouseMods, Session, SessionGeometry};
+use mind2t_vt_host::session::{MouseAction, MouseMods, Session, SessionGeometry};
 
 const GEOMETRY: SessionGeometry = SessionGeometry { cols: 24, rows: 6 };
 
@@ -95,12 +95,12 @@ fn colours_past_the_caret(session: &mut Session) -> usize {
 fn a_child_that_prints_puts_ink_on_the_surface() {
     // `printf` rather than `echo`: no trailing newline to scroll the grid, and no shell
     // builtin differences between /bin/sh implementations.
-    let mut session = spawn("printf 'RUUAH'; sleep 1");
+    let mut session = spawn("printf 'MIND2T'; sleep 1");
     // Wait for the CHILD'S TEXT, never for a draw count. A draw fires for the caret alone, so
     // the old form could be satisfied before the child wrote anything and then assert on an
     // empty surface - which is exactly how this failed under parallel load and passed alone.
     assert!(
-        pump_until_text(&mut session, "RUUAH", Duration::from_secs(20)),
+        pump_until_text(&mut session, "MIND2T", Duration::from_secs(20)),
         "the child's own output never reached the grid; surface holds:\n{}",
         session.visible_text()
     );
@@ -143,11 +143,11 @@ fn sent_bytes_reach_the_child_and_come_back_as_pixels() {
 
 #[test]
 fn the_visible_grid_reads_back_as_text() {
-    let mut session = spawn("printf 'RUUAH'; sleep 1");
+    let mut session = spawn("printf 'MIND2T'; sleep 1");
     pump(&mut session, 1, Duration::from_secs(5));
     assert!(
-        session.visible_text().contains("RUUAH"),
-        "the child printed RUUAH and the grid reads {:?}",
+        session.visible_text().contains("MIND2T"),
+        "the child printed MIND2T and the grid reads {:?}",
         session.visible_text()
     );
 
@@ -157,7 +157,7 @@ fn the_visible_grid_reads_back_as_text() {
     let mut silent = spawn("sleep 1");
     pump(&mut silent, 1, Duration::from_millis(500));
     assert!(
-        !silent.visible_text().contains("RUUAH"),
+        !silent.visible_text().contains("MIND2T"),
         "a silent child's grid claims to hold text it never printed"
     );
 }
@@ -275,10 +275,10 @@ fn wait_for_cwd(session: &mut Session, budget: Duration) -> Option<String> {
 fn an_osc_7_report_becomes_the_sessions_cwd() {
     // The host name is deliberately present and deliberately not this machine's: `normalize`
     // discards it, and a session that kept it would answer `localhost/tmp/...`.
-    let mut session = spawn("printf '\\033]7;file://localhost/tmp/ruuah-cwd\\a'; sleep 2");
+    let mut session = spawn("printf '\\033]7;file://localhost/tmp/mind2t-cwd\\a'; sleep 2");
     assert_eq!(
         wait_for_cwd(&mut session, Duration::from_secs(5)).as_deref(),
-        Some("/tmp/ruuah-cwd"),
+        Some("/tmp/mind2t-cwd"),
         "the child reported a directory and the session did not learn it"
     );
 }
@@ -292,11 +292,11 @@ fn an_osc_7_report_becomes_the_sessions_cwd() {
 #[test]
 fn an_empty_osc_7_report_clears_the_cwd() {
     let mut session = spawn(
-        "printf '\\033]7;file://localhost/tmp/ruuah-cwd\\a'; sleep 1; printf '\\033]7;\\a'; sleep 2",
+        "printf '\\033]7;file://localhost/tmp/mind2t-cwd\\a'; sleep 1; printf '\\033]7;\\a'; sleep 2",
     );
     assert_eq!(
         wait_for_cwd(&mut session, Duration::from_secs(5)).as_deref(),
-        Some("/tmp/ruuah-cwd"),
+        Some("/tmp/mind2t-cwd"),
         "the first report never arrived, so the clear below would prove nothing"
     );
 

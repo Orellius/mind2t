@@ -8,7 +8,7 @@
 //!   live (`grid.rs`), or page-internal offset allocation (deferred to slice 3).
 //! Test strategy: the 8-byte guarantee is a compile-time assertion, not a hope.
 
-use ruuah_vt_snapshot::Semantic;
+use mind2t_vt_snapshot::Semantic;
 
 use crate::style::{DEFAULT_STYLE_ID, StyleId};
 
@@ -157,13 +157,13 @@ impl Default for Cell {
     }
 }
 
-impl From<Wide> for ruuah_vt_snapshot::Wide {
+impl From<Wide> for mind2t_vt_snapshot::Wide {
     fn from(wide: Wide) -> Self {
         match wide {
-            Wide::Narrow => ruuah_vt_snapshot::Wide::Narrow,
-            Wide::Wide => ruuah_vt_snapshot::Wide::Wide,
-            Wide::SpacerTail => ruuah_vt_snapshot::Wide::SpacerTail,
-            Wide::SpacerHead => ruuah_vt_snapshot::Wide::SpacerHead,
+            Wide::Narrow => mind2t_vt_snapshot::Wide::Narrow,
+            Wide::Wide => mind2t_vt_snapshot::Wide::Wide,
+            Wide::SpacerTail => mind2t_vt_snapshot::Wide::SpacerTail,
+            Wide::SpacerHead => mind2t_vt_snapshot::Wide::SpacerHead,
         }
     }
 }

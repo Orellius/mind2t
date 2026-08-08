@@ -5,19 +5,19 @@
 import PackageDescription
 
 let package = Package(
-    name: "ruuah-host",
+    name: "mind2t-host",
     platforms: [.macOS(.v13)],
     targets: [
         // The C surface, imported straight from the crate's own header -- one source of
         // truth, no copied declarations.
-        .systemLibrary(name: "CRuuahHost", path: "Sources/CRuuahHost"),
+        .systemLibrary(name: "CMind2tHost", path: "Sources/CMind2tHost"),
         .executableTarget(
-            name: "ruuah-host",
-            dependencies: ["CRuuahHost"],
-            path: "Sources/ruuah-host",
+            name: "mind2t-host",
+            dependencies: ["CMind2tHost"],
+            path: "Sources/mind2t-host",
             linkerSettings: [
                 .unsafeFlags(["-L../target/release"]),
-                .linkedLibrary("ruuah-vt-host"),
+                .linkedLibrary("mind2t-vt-host"),
                 // wgpu's Metal backend.
                 .linkedFramework("Metal"),
                 .linkedFramework("QuartzCore"),

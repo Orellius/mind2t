@@ -1,7 +1,7 @@
 # Which libghostty-vt the differential oracle was built from. Written by
 # scripts/build-oracle.sh; commit this file when it changes.
 #
-# ruuah-vt has no git upstream. This is the upstream that matters: the oracle is the
+# mind2t-vt has no git upstream. This is the upstream that matters: the oracle is the
 # reference implementation, and when it moves the corpus can move with it.
 source = "a local Ghostty checkout"
 commit = "b2afcdc1deda92b4ea667bfc283636fa2a9a3a7b"

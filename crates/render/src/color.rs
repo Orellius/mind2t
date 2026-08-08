@@ -8,7 +8,7 @@
 //! NOT responsible for: where the colours are painted (`canvas.rs`, `renderer.rs`).
 //! Test strategy: unit tests below pin the ordering rules, which is the part that breaks.
 
-use ruuah_vt_snapshot::{Color, Style, Underline};
+use mind2t_vt_snapshot::{Color, Style, Underline};
 
 /// Straight (non-premultiplied) 8-bit RGBA.
 pub type Rgba = [u8; 4];
@@ -162,7 +162,7 @@ impl Default for Palette {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ruuah_vt_snapshot::Underline;
+    use mind2t_vt_snapshot::Underline;
 
     #[test]
     fn the_cube_and_the_grey_ramp_land_where_xterm_puts_them() {

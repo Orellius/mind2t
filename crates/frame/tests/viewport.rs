@@ -6,9 +6,9 @@
 //! for. There is no oracle for any of this -- libghostty-vt exports no viewport surface
 //! at all -- so the viewport is unit- and host-gated the way sixel is, and said loudly.
 
-use ruuah_vt_core::Terminal;
-use ruuah_vt_frame::{CLUSTER_BYTES, Frame, FrameReader, Publisher, ReadOutcome, channel};
-use ruuah_vt_snapshot::Color;
+use mind2t_vt_core::Terminal;
+use mind2t_vt_frame::{CLUSTER_BYTES, Frame, FrameReader, Publisher, ReadOutcome, channel};
+use mind2t_vt_snapshot::Color;
 
 /// A terminal that wrote `lines` numbered rows through a `rows`-tall screen, so the early
 /// ones are in scrollback and the late ones on the grid.
@@ -46,7 +46,7 @@ fn frame_text(frame: &Frame) -> Vec<String> {
                 let cell = frame.cell(x, y);
                 if cell.has_text() {
                     line.push_str(cell.cluster(&mut scratch));
-                } else if cell.wide() != ruuah_vt_snapshot::Wide::SpacerTail {
+                } else if cell.wide() != mind2t_vt_snapshot::Wide::SpacerTail {
                     line.push(' ');
                 }
             }

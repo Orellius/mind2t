@@ -9,7 +9,7 @@
 //!   of the oracle's own `Screen.zig` and then confirmed by measurement, never inferred from
 //!   a header - the two disagree, and the header is the one that is wrong.
 
-use ruuah_vt_snapshot::{Point, Row, Selection, Wide};
+use mind2t_vt_snapshot::{Point, Row, Selection, Wide};
 
 /// The codepoints that bound a word, and the ones trimmed off a line.
 ///
@@ -294,7 +294,7 @@ fn ordered(selection: &Selection) -> (Point, Point) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ruuah_vt_snapshot::{Cell, RowSemantic};
+    use mind2t_vt_snapshot::{Cell, RowSemantic};
 
     fn row(text: &str, cols: u16, wrap: bool) -> Row {
         let mut cells: Vec<Cell> = text

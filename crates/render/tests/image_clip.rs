@@ -7,8 +7,8 @@
 
 use std::sync::Arc;
 
-use ruuah_vt_frame::FramePlacement;
-use ruuah_vt_render::{FontStack, Renderer};
+use mind2t_vt_frame::FramePlacement;
+use mind2t_vt_render::{FontStack, Renderer};
 
 #[test]
 fn a_negative_row_placement_draws_its_bottom_half_only() {

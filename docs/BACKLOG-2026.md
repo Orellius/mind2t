@@ -32,7 +32,7 @@
 > animation and file-transmission for kitty graphics.
 
 
-Written 2026-07-29 (IDT), after the first day RUUAH VT ran real work (Claude Code,
+Written 2026-07-29 (IDT), after the first day Mind2t ran real work (Claude Code,
 vim, zsh) as an installed app. Everything below is verified-missing against this
 repo on that date, not guessed: `grep` for the mode numbers, the live defect, or
 the absent seam is named per item. Ordered by what a user hits first, not by
@@ -43,7 +43,7 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
 
 1. **DONE 2026-07-29 (branch `paste-2004`): paste (cmd+V) + bracketed paste (mode 2004).**
    Landed exactly on the planned shape -- core mode → `Frame.modes` word →
-   `ruuah_host_paste` → NSPasteboard on cmd+V -- with two upgrades found on the way:
+   `mind2t_host_paste` → NSPasteboard on cmd+V -- with two upgrades found on the way:
    the oracle exports `ghostty_terminal_mode_get` and `ghostty_paste_encode`, so the
    mode is corpus-pinned (4 cases) and the encoder is differentially tested
    byte-for-byte instead of inferred. The end-to-end proof dropped `od` entirely:
@@ -94,7 +94,7 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
    pure Rust in the pty crate and BYTE-COMPARED against the oracle's own
    `ghostty_mouse_encoder_encode` ABI (~65k-case matrix, dedup sequences, and
    terminal-derived-state sequences through `setopt_from_terminal`). Exports:
-   `ruuah_host_mouse_geometry` / `ruuah_host_mouse` / `ruuah_host_wheel` (36
+   `mind2t_host_mouse_geometry` / `mind2t_host_mouse` / `mind2t_host_wheel` (36
    total); the wheel owns the three-way precedence (mouse mode -> 64/65; alt
    screen + 1007 -> arrows, ESC O under DECCKM; else viewport). SCAR-014 live
    taps: real click -> `^[[<0;30;15M/m` at the aimed cell, real wheel -> `^[[B`
@@ -106,7 +106,7 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
 6. **Scrollback in the window. DONE 2026-07-30** (`scrollback-viewport`). The
    offset never enters the core: `Publisher::publish_scrolled` stitches history
    above the active grid, the pump owns/clamps the offset and pins it to content
-   via `History::total_pushed`, `ruuah_host_scroll` + `viewport_offset` cross the
+   via `History::total_pushed`, `mind2t_host_scroll` + `viewport_offset` cross the
    C surface, and the window wires wheel + cmd+PageUp/PageDown/Home/End with
    snap-on-typing. No oracle exists (libghostty-vt has no viewport surface) --
    unit/pty/host-gated, mutants seen red. Named v1 boundaries: OSC 8 links in
@@ -123,7 +123,7 @@ controls seen to fail, core stays pure (no I/O), bidi never enters the core.
    legacy tables, ctrl mapping, modifyOtherKeys, all five kitty flags, alternates,
    event types, associated text -- BYTE-COMPARED against the oracle's key-encoder
    ABI over 135,216 cases (zero divergent) plus a terminal-derived-state layer.
-   Host: `ruuah_host_key` (37 exports) encodes against the polled frame's modes.
+   Host: `mind2t_host_key` (37 exports) encodes against the polled frame's modes.
    Swift: the hand-rolled byte encoder is gone; keyDown/keyUp/flagsChanged forward
    events built by Ghostty's own macOS recipe, with the keycode map GENERATED from
    the oracle's table (`scripts/gen-keymap.ts`). Live tap: `ok^[[27u^[[A` -- text,
@@ -213,7 +213,7 @@ the file so a later reader does not mistake the omission for an oversight.
 
 - **Bidi in the core** - renderer-layer forever (measured ABI + oracle reasons,
   see the bidi module). Auto base direction shipped 2026-07-29 at the frame layer.
-- **Tabs / splits / config files** - that is RUUAH-the-app's territory, not the
+- **Tabs / splits / config files** - that is Mind2t-the-app's territory, not the
   VT core's proof-of-consumability host.
 - **GPU present path** (the buffer is blitted via CoreGraphics): measure first;
   at one 60Hz window the copy has never been the bottleneck.

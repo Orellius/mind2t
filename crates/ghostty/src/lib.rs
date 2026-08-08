@@ -1,6 +1,6 @@
-//! The oracle: a real libghostty-vt terminal, read out as a `ruuah_vt_snapshot::Snapshot`.
+//! The oracle: a real libghostty-vt terminal, read out as a `mind2t_vt_snapshot::Snapshot`.
 //!
-//! Ghostty's terminal core is the reference implementation ruuah-vt is measured against. It
+//! Ghostty's terminal core is the reference implementation mind2t-vt is measured against. It
 //! is consumed through the same published C ABI that RUUAH's Swift app already links,
 //! so agreement here is agreement with a shipping terminal, not with a model of one.
 

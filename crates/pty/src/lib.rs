@@ -1,6 +1,6 @@
 //! The pty host: the one crate in this project that does I/O.
 //!
-//! Everything below it is pure. `ruuah-vt-core` is a state machine with no clock and no file
+//! Everything below it is pure. `mind2t-vt-core` is a state machine with no clock and no file
 //! descriptors, which is what makes the differential corpus possible at all; that property
 //! is only worth anything if nothing quietly adds I/O to it later. So the pty lives here
 //! instead, owns the `Terminal` on its own thread, and hands the outside world published

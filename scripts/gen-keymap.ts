@@ -1,6 +1,6 @@
 // Generates the macOS virtual-keycode tables from the oracle's keycode table
 // (src/input/keycodes.zig, Chromium dom_code_data) and the C key enum order
-// (vendor/.../vt/key/event.h). Run: bun gen-keymap.ts <ruuah-src> <ruuah-vt-root>
+// (vendor/.../vt/key/event.h). Run: bun gen-keymap.ts <ruuah-src> <mind2t-vt-root>
 import { readFileSync, writeFileSync } from "fs";
 
 const oracleSrc = process.argv[2];
@@ -73,7 +73,7 @@ ${lines.join("\n")}
     ]
 }
 `;
-writeFileSync(`${repo}/swift/Sources/ruuah-host/KeyMap.swift`, swift);
+writeFileSync(`${repo}/swift/Sources/mind2t-host/KeyMap.swift`, swift);
 
 // The same table for Rust hosts. TWO consumers, ONE generator: Mind2t needs this mapping
 // because Tauri exposes no keyboard events at the window level, so the app reads NSEvent

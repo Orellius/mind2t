@@ -3,7 +3,7 @@
 //! Why this file: a harness that is never wrong about anything is not evidence. Declaring
 //!   the expected verdict per case makes the harness itself testable -- if the stub starts
 //!   agreeing with Ghostty on SGR, that is a corpus failure demanding an explanation.
-//! NOT responsible for: running anything (`run.rs`) or comparing anything (`ruuah-vt-snapshot`).
+//! NOT responsible for: running anything (`run.rs`) or comparing anything (`mind2t-vt-snapshot`).
 //! Test strategy: the corpus round-trip is covered by `tests/corpus.rs`, which loads the
 //!   real file rather than a fixture.
 
@@ -56,9 +56,9 @@ pub enum CorpusError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Expectation {
-    /// ruuah-vt already agrees with Ghostty here. A regression makes this case fail.
+    /// mind2t-vt already agrees with Ghostty here. A regression makes this case fail.
     Match,
-    /// ruuah-vt does not implement this yet. When it does, this case fails and gets promoted.
+    /// mind2t-vt does not implement this yet. When it does, this case fails and gets promoted.
     Diff,
 }
 
@@ -108,13 +108,13 @@ impl Select {
     ///
     /// The corpus type stays separate from the snapshot type so the TOML spelling can change
     /// without touching either terminal, and neither terminal has to depend on the corpus.
-    pub fn resolve(self) -> (ruuah_vt_snapshot::SelectionKind, ruuah_vt_snapshot::Point) {
+    pub fn resolve(self) -> (mind2t_vt_snapshot::SelectionKind, mind2t_vt_snapshot::Point) {
         let kind = match self.kind {
-            SelectKind::Word => ruuah_vt_snapshot::SelectionKind::Word,
-            SelectKind::Line => ruuah_vt_snapshot::SelectionKind::Line,
-            SelectKind::All => ruuah_vt_snapshot::SelectionKind::All,
+            SelectKind::Word => mind2t_vt_snapshot::SelectionKind::Word,
+            SelectKind::Line => mind2t_vt_snapshot::SelectionKind::Line,
+            SelectKind::All => mind2t_vt_snapshot::SelectionKind::All,
         };
-        (kind, ruuah_vt_snapshot::Point { x: self.x, y: self.y })
+        (kind, mind2t_vt_snapshot::Point { x: self.x, y: self.y })
     }
 }
 
@@ -249,7 +249,7 @@ mod tests {
                 "\n[[case]]\nname = \"c{i}\"\nexpect = \"match\"\nbytes = \"x\"\n"
             ));
         }
-        let path = std::env::temp_dir().join(format!("ruuah-vt-{name}.toml"));
+        let path = std::env::temp_dir().join(format!("mind2t-vt-{name}.toml"));
         std::fs::write(&path, text).expect("write the fixture");
         path.to_string_lossy().into_owned()
     }
@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn a_diff_case_without_pinned_paths_is_refused() {
-        let path = std::env::temp_dir().join("ruuah-vt-unpinned-diff.toml");
+        let path = std::env::temp_dir().join("mind2t-vt-unpinned-diff.toml");
         std::fs::write(
             &path,
             "declared_cases = 1\n\n[[case]]\nname = \"d\"\nexpect = \"diff\"\nbytes = \"x\"\n",
@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn a_match_case_with_pinned_paths_is_refused() {
-        let path = std::env::temp_dir().join("ruuah-vt-pinned-match.toml");
+        let path = std::env::temp_dir().join("mind2t-vt-pinned-match.toml");
         std::fs::write(
             &path,
             "declared_cases = 1\n\n[[case]]\nname = \"m\"\nexpect = \"match\"\nbytes = \"x\"\n\
@@ -323,7 +323,7 @@ mod tests {
     /// in exactly the file it exists to protect.
     #[test]
     fn a_corpus_with_no_declared_count_does_not_parse() {
-        let path = std::env::temp_dir().join("ruuah-vt-count-missing.toml");
+        let path = std::env::temp_dir().join("mind2t-vt-count-missing.toml");
         std::fs::write(
             &path,
             "[[case]]\nname = \"c\"\nexpect = \"match\"\nbytes = \"x\"\n",

@@ -5,13 +5,13 @@
 //!   as an ARGUMENT, so a gate can exercise the whole encode-and-send path with a fixture and
 //!   never read - let alone disturb - the operator's real clipboard. Reading the pasteboard is
 //!   the one line that cannot be tested headlessly, and it is now the only one.
-//! NOT responsible for: the paste TRANSFORM. `ruuah_vt_pty::paste::encode` owns it and is
+//! NOT responsible for: the paste TRANSFORM. `mind2t_vt_pty::paste::encode` owns it and is
 //!   measured byte-for-byte against `ghostty_paste_encode`; a second cleaning pass here would
 //!   be a second implementation of a rule that already has an oracle.
 //! Test strategy: `paste_text` is proven end to end by the Mind2t smoke (a fixture is sent and
 //!   must appear on the grid); `text` is a live-tap item by construction.
 
-use ruuah_vt_host::session::Session;
+use mind2t_vt_host::session::Session;
 
 /// Sends the clipboard to the child, fenced when the child asked for fences.
 ///
@@ -28,7 +28,7 @@ pub fn paste(session: &Session) {
 
 /// Sends `text` to the child as a paste. The half a gate can drive.
 pub fn paste_text(session: &Session, text: &str) {
-    let bytes = ruuah_vt_pty::paste::encode(text.as_bytes(), session.bracketed_paste());
+    let bytes = mind2t_vt_pty::paste::encode(text.as_bytes(), session.bracketed_paste());
     if let Err(error) = session.send(&bytes) {
         eprintln!("mind2t: paste failed: {error:?}");
     }

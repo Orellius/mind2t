@@ -10,7 +10,7 @@
 //! Test strategy: measured against libghostty-vt by the differential corpus rather than by
 //!   restating expected cell contents here.
 
-use ruuah_vt_snapshot::{
+use mind2t_vt_snapshot::{
     Cursor, Damage, Dirty, Point, RowSemantic, Screen as SnapshotScreen, SelectionKind,
     SelectionProbe, Snapshot, Style,
 };
@@ -522,7 +522,7 @@ impl State {
                 Active::Primary => SnapshotScreen::Primary,
                 Active::Alternate => SnapshotScreen::Alternate,
             },
-            modes: ruuah_vt_snapshot::Modes {
+            modes: mind2t_vt_snapshot::Modes {
                 bracketed_paste: self.bracketed_paste,
                 synchronized_output: self.synchronized_output,
                 mouse_event_x10: self.mouse.x10,
@@ -564,7 +564,7 @@ impl State {
             // COLOR_CURSOR is `cursor.get()` with NO foreground fallback (that
             // fallback is xterm report behaviour, `colorForXterm` only).
             title: self.title.clone(),
-            colors: ruuah_vt_snapshot::Colors {
+            colors: mind2t_vt_snapshot::Colors {
                 foreground: self.colors.foreground.get(),
                 background: self.colors.background.get(),
                 cursor: self.colors.cursor.get(),

@@ -9,7 +9,7 @@ name = "vte"
 version = "0.15.0"
 edition = "2021"
 license = "Apache-2.0 OR MIT"
-description = "Parser for implementing terminal emulators (ruuah-vt APC fork)"
+description = "Parser for implementing terminal emulators (mind2t-vt APC fork)"
 
 [dependencies]
 arrayvec = { version = "0.7.2", default-features = false }

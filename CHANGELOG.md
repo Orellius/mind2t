@@ -32,7 +32,7 @@ The engine was built in numbered slices, and the tags follow them.
 
 Work after `v0.19.3` is unreleased and lives on `main`: the product host gaining panes,
 selection, zoom and the agent launcher, and the rename of the repository and the product from
-`ruuah-vt` to Mind2t. The engine crates keep the `ruuah-vt-` prefix.
+`mind2t-vt` to Mind2t. The engine crates keep the `mind2t-vt-` prefix.
 
 ## Notes on reading the history
 

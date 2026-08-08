@@ -1,7 +1,7 @@
 # esctest2: measured against Ghostty, re-measured 2026-08-01
 
 **This document was rewritten after the first measurement turned out to be invalid.**
-The original numbers (Ghostty 141, ruuah-vt 126) were taken under esctest's DEFAULT
+The original numbers (Ghostty 141, mind2t-vt 126) were taken under esctest's DEFAULT
 checksum convention, which negates every DECRQCRA reply it reads. That flag decides
 whether a terminal's screen can be read back at all, so it was never a like-for-like
 comparison. The correction and what it exposed are below.
@@ -9,7 +9,7 @@ comparison. The correction and what it exposed are below.
 Both terminals ran the VENDORED suite (`esctest.lock` pin), same 80x25, same log
 grammar parsed both times: `--expected-terminal=xterm --max-vt-level=4 --timeout=1
 --include=.`. Ghostty 1.3.1 (`ghostty --version`) from /Applications, driven with
-`-e`; ruuah-vt through its own pty host (`crates/pty/tests/esctest.rs`).
+`-e`; mind2t-vt through its own pty host (`crates/pty/tests/esctest.rs`).
 
 ## The instrument was mis-set, and it only ever mattered for one side
 
@@ -39,9 +39,9 @@ terminal that never answers the query it governs.
 | terminal | passed of 568 |
 |---|---|
 | Ghostty 1.3.1 | 142 |
-| ruuah-vt (this repo, at v0.15.0) | **368** |
+| mind2t-vt (this repo, at v0.15.0) | **368** |
 
-Overlap: **130 both pass · 12 only Ghostty · 238 only ruuah-vt.**
+Overlap: **130 both pass · 12 only Ghostty · 238 only mind2t-vt.**
 
 **That 238 is not 238 behaviours Ghostty gets wrong.** esctest verifies screen content
 by asking the terminal to checksum a rectangle. A terminal that cannot answer fails
@@ -49,7 +49,7 @@ every such test regardless of whether its grid is correct. Ghostty's ED, EL, ICH
 and scrolling are very probably fine; this instrument simply cannot see them. The
 honest statement of the gap is:
 
-> ruuah-vt implements the readback query esctest needs, so its content behaviour is
+> mind2t-vt implements the readback query esctest needs, so its content behaviour is
 > measurable and measured. Ghostty's is not measurable by this suite. The score
 > difference is mostly instrumentation, not correctness.
 

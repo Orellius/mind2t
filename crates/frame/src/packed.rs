@@ -10,7 +10,7 @@
 //! Test strategy: round-trip properties below -- every style and every cluster that fits
 //!   comes back identical, and one that does not fit comes back marked truncated.
 
-use ruuah_vt_snapshot::{Color, Semantic, Style, Underline, Wide};
+use mind2t_vt_snapshot::{Color, Semantic, Style, Underline, Wide};
 
 /// How much UTF-8 a cell carries inline.
 ///

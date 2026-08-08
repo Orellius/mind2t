@@ -5,12 +5,12 @@
 //!   probe against the real library on 2026-07-28 and then confirmed in
 //!   `ruuah/src/terminal/Terminal.zig`, so the two halves of the project rule -- probe for
 //!   WHAT, source for WHY -- are both discharged before the core implements anything.
-//! NOT responsible for: ruuah-vt's own behaviour, or any comparison between the two.
+//! NOT responsible for: mind2t-vt's own behaviour, or any comparison between the two.
 //! Test strategy: drive the library with the sequences a shell actually emits, and assert
 //!   on the snapshot's semantic layer.
 
-use ruuah_vt_ghostty::Terminal;
-use ruuah_vt_snapshot::{RowSemantic, Semantic, Snapshot};
+use mind2t_vt_ghostty::Terminal;
+use mind2t_vt_snapshot::{RowSemantic, Semantic, Snapshot};
 
 fn snapshot_of(cols: u16, rows: u16, bytes: &[u8]) -> Snapshot {
     let mut terminal = Terminal::with_scrollback(cols, rows, 100).expect("terminal creation");

@@ -9,8 +9,8 @@
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use ruuah_vt_frame::{CLUSTER_BYTES, Frame, FrameReader};
-use ruuah_vt_pty::{Geometry, Host, Options};
+use mind2t_vt_frame::{CLUSTER_BYTES, Frame, FrameReader};
+use mind2t_vt_pty::{Geometry, Host, Options};
 
 const PATIENCE: Duration = Duration::from_secs(5);
 
@@ -23,7 +23,7 @@ fn text(frame: &Frame) -> String {
             let cell = frame.cell(x, y);
             if cell.has_text() {
                 out.push_str(cell.cluster(&mut scratch));
-            } else if cell.wide() != ruuah_vt_snapshot::Wide::SpacerTail {
+            } else if cell.wide() != mind2t_vt_snapshot::Wide::SpacerTail {
                 out.push(' ');
             }
         }

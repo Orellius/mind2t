@@ -7,7 +7,7 @@
 //!   stacks, and the oracle stores it as a `Screen` field, so a TUI entering 1049
 //!   pushes its flags without disturbing the shell's.
 //! NOT responsible for: parsing `CSI u` forms (dispatch.rs), answering the query
-//!   (replies.rs), or encoding keys (`ruuah-vt-pty`).
+//!   (replies.rs), or encoding keys (`mind2t-vt-pty`).
 //! Test strategy: stack semantics unit-tested here against the measured rules; the
 //!   negotiated-state -> bytes mapping is differentially gated through the oracle's
 //!   `ghostty_key_encoder_setopt_from_terminal` (there is NO mode_get/snapshot

@@ -3,7 +3,7 @@
 #   sh scripts/demo-features.sh
 # Written 2026-07-30, the night these features landed.
 
-printf '\033[1m RUUAH VT feature tour \033[0m\n\n'
+printf '\033[1m Mind2t feature tour \033[0m\n\n'
 
 # --- styled underlines (SGR 4:x) + underline color (SGR 58) ---------------------
 printf ' \033[4msingle\033[0m  \033[4:2mdouble\033[0m  \033[4:3m\033[58;2;255;80;80mcurly\033[0m  '
@@ -56,7 +56,7 @@ printf '\033]52;c;UlVVQUggd2FzIGhlcmUgLSBwYXN0ZSBtZSE=\007'
 printf ' clipboard: written via OSC 52 -- cmd+V somewhere to see it\n'
 
 # --- OSC 777: a real macOS notification -----------------------------------------
-printf '\033]777;notify;RUUAH VT;the demo script says hi\007'
+printf '\033]777;notify;Mind2t;the demo script says hi\007'
 printf ' notification: sent (first run asks permission)\n\n'
 
 printf ' zoom: cmd+= / cmd+- / cmd+0    new tab: cmd+T    close: cmd+W\n'

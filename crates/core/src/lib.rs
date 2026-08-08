@@ -1,4 +1,4 @@
-//! The ruuah-vt terminal core: bytes in, grid mutations out.
+//! The mind2t-vt terminal core: bytes in, grid mutations out.
 //!
 //! Pure and deterministic by construction -- no PTY, no GPU, no clock, no I/O. That split
 //! is what makes headless CI and differential testing against libghostty-vt possible, and

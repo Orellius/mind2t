@@ -1,15 +1,15 @@
 // The minimal Swift host, slice 8. Two modes:
 //
-//   ruuah-host --smoke        headless: spawn a known child, poll until its pixels arrive,
+//   mind2t-host --smoke        headless: spawn a known child, poll until its pixels arrive,
 //                             assert there is ink, exit 0/1. This is the CI-assertable
 //                             proof that the ABI is consumable from Swift at all.
-//   ruuah-host [--command X]  a window: blit polled frames, forward keys, live resize.
+//   mind2t-host [--command X]  a window: blit polled frames, forward keys, live resize.
 //
-// Everything the host knows arrives through CRuuahHost -- the five ruuah_host_* calls.
+// Everything the host knows arrives through CMind2tHost -- the five mind2t_host_* calls.
 // There is deliberately no second channel into the Rust side.
 
 import AppKit
-import CRuuahHost
+import CMind2tHost
 
 /// Runs `body` with a borrowed C string, or with NULL when there is nothing to lend.
 ///
@@ -30,13 +30,13 @@ func spawnHost(
     var host: OpaquePointer?
     let result = withOptionalCString(command) { commandPointer in
         withOptionalCString(cwd) { cwdPointer in
-            var options = RuuahHostOptions(
+            var options = Mind2tHostOptions(
                 cols: cols, rows: rows, font_size: fontSize, command: commandPointer,
                 auto_direction: autoDirection, config: config, cwd: cwdPointer)
-            return ruuah_host_spawn(&options, &host)
+            return mind2t_host_spawn(&options, &host)
         }
     }
-    guard result == RUUAH_HOST_SUCCESS, let host else {
+    guard result == MIND2T_HOST_SUCCESS, let host else {
         FileHandle.standardError.write(Data("spawn failed: \(result)\n".utf8))
         return nil
     }
@@ -46,14 +46,14 @@ func spawnHost(
 /// Headless proof: a child's output becomes ink, through the archive, from Swift.
 func runSmoke() -> Int32 {
     guard let host = spawnHost(
-        cols: 80, rows: 24, fontSize: 0, command: "printf 'RUUAH-VT-SMOKE\\n'")
+        cols: 80, rows: 24, fontSize: 0, command: "printf 'MIND2T-VT-SMOKE\\n'")
     else { return 1 }
-    defer { ruuah_host_free(host) }
+    defer { mind2t_host_free(host) }
 
     let deadline = Date().addingTimeInterval(10)
-    var frame = RuuahHostFrame()
+    var frame = Mind2tHostFrame()
     while Date() < deadline {
-        guard ruuah_host_poll(host, &frame) == RUUAH_HOST_SUCCESS else {
+        guard mind2t_host_poll(host, &frame) == MIND2T_HOST_SUCCESS else {
             FileHandle.standardError.write(Data("poll failed\n".utf8))
             return 1
         }
@@ -89,8 +89,8 @@ func runSmoke() -> Int32 {
 /// So the assertion is the discriminating one -- a command run HERE must win over a
 /// NEWER command run elsewhere. With the cwd lost, the newer one wins and this fails.
 func runHistorySmoke() -> Int32 {
-    let directoryA = "/tmp/ruuah-cwd-smoke-a"
-    let directoryB = "/tmp/ruuah-cwd-smoke-b"
+    let directoryA = "/tmp/mind2t-cwd-smoke-a"
+    let directoryB = "/tmp/mind2t-cwd-smoke-b"
 
     /// Spawns a child whose only job is to report a directory, and returns the session
     /// once that report has been drained. Real OSC 7 bytes down a real pty -- the point
@@ -115,10 +115,10 @@ func runHistorySmoke() -> Int32 {
         return nil
     }
 
-    let storePath = "/tmp/ruuah-cwd-smoke-history"
+    let storePath = "/tmp/mind2t-cwd-smoke-history"
     try? FileManager.default.removeItem(atPath: storePath)
     var store: OpaquePointer?
-    guard storePath.withCString({ ruuah_history_load($0, &store) }) == RUUAH_HOST_SUCCESS
+    guard storePath.withCString({ mind2t_history_load($0, &store) }) == MIND2T_HOST_SUCCESS
     else {
         FileHandle.standardError.write(Data("history store failed to load\n".utf8))
         return 1
@@ -199,13 +199,13 @@ func runPanelSmoke(webDir: String?, control: Bool) -> Int32 {
             return 1
         }
         let broken = html.replacingOccurrences(
-            of: "window.__ruuahReceive=", with: "window.__ruuahDisconnected=")
+            of: "window.__mind2tReceive=", with: "window.__mind2tDisconnected=")
         guard broken != html else {
             FileHandle.standardError.write(
                 Data("control could not find the receiver to remove; the bundle changed shape\n".utf8))
             return 1
         }
-        let path = NSTemporaryDirectory() + "ruuah-panel-control.html"
+        let path = NSTemporaryDirectory() + "mind2t-panel-control.html"
         guard (try? broken.write(toFile: path, atomically: true, encoding: .utf8)) != nil else {
             FileHandle.standardError.write(Data("could not write the control document\n".utf8))
             return 1
@@ -332,7 +332,7 @@ func runPanelSmoke(webDir: String?, control: Bool) -> Int32 {
 /// discovered later. So the test dirties the tree, requires the removal to FAIL and the
 /// directory to survive, then cleans it and requires the same call to succeed.
 func runWorktreeSmoke() -> Int32 {
-    let base = NSTemporaryDirectory() + "ruuah-worktree-smoke-\(ProcessInfo.processInfo.processIdentifier)"
+    let base = NSTemporaryDirectory() + "mind2t-worktree-smoke-\(ProcessInfo.processInfo.processIdentifier)"
     let root = base + "/repo"
     try? FileManager.default.removeItem(atPath: base)
     defer { try? FileManager.default.removeItem(atPath: base) }
@@ -351,8 +351,8 @@ func runWorktreeSmoke() -> Int32 {
     // A repository with one commit: `git worktree add` has nothing to point at otherwise.
     for arguments in [
         ["init", "--initial-branch=main"],
-        ["config", "user.email", "smoke@ruuah.local"],
-        ["config", "user.name", "ruuah smoke"],
+        ["config", "user.email", "smoke@mind2t.local"],
+        ["config", "user.name", "mind2t smoke"],
     ] {
         let result = Git.run(arguments, in: root)
         guard result.status == 0 else { return fail("git \(arguments[0]): \(result.err)") }
@@ -528,11 +528,11 @@ if let index = arguments.firstIndex(of: "--config-dir"), index + 1 < arguments.c
 }
 var config: OpaquePointer?
 if let configDir {
-    _ = configDir.withCString { pointer in ruuah_config_load(pointer, &config) }
+    _ = configDir.withCString { pointer in mind2t_config_load(pointer, &config) }
 } else {
-    _ = ruuah_config_load(nil, &config)
+    _ = mind2t_config_load(nil, &config)
 }
-let configError = ruuah_config_error(config).map { String(cString: $0) }
+let configError = mind2t_config_error(config).map { String(cString: $0) }
 
 // When the binary runs from an assembled .app (scripts/build-app.sh), the app is
 // Hebrew-first: auto base direction unless --ltr. The bare CLI binary keeps the
@@ -544,7 +544,7 @@ if command == nil, arguments.contains("--splash"), let bundledBanner {
 }
 // The config's shell is the default for new sessions; explicit CLI intent outranks it.
 if command == nil, !arguments.contains("--splash"),
-    let shell = ruuah_config_shell(config).map({ String(cString: $0) })
+    let shell = mind2t_config_shell(config).map({ String(cString: $0) })
 {
     command = shell
 }
@@ -556,10 +556,10 @@ if arguments.contains("--auto-direction") {
 } else if arguments.contains("--ltr") {
     autoDirection = false
 } else {
-    autoDirection = ruuah_config_auto_direction(config, bundledBanner != nil)
+    autoDirection = mind2t_config_auto_direction(config, bundledBanner != nil)
 }
 // Logical size; the delegate multiplies by the backing scale at spawn.
-let configFontSize = ruuah_config_font_size(config)
+let configFontSize = mind2t_config_font_size(config)
 let baseFontSize: Float = configFontSize > 0 ? configFontSize : 16
 
 // Shell integration (S2): spawned shells inherit this process's environment, so pointing
@@ -568,13 +568,13 @@ let baseFontSize: Float = configFontSize > 0 ? configFontSize : 16
 // no resource bundle, and an externally-set ZDOTDIR chain is left alone there).
 if let resources = Bundle.main.resourcePath {
     let zdotdir = resources + "/shell/zdotdir"
-    let integration = resources + "/shell/ruuah-integration.zsh"
+    let integration = resources + "/shell/mind2t-integration.zsh"
     if FileManager.default.fileExists(atPath: zdotdir + "/.zshenv"),
         FileManager.default.fileExists(atPath: integration)
     {
-        setenv("RUUAH_INTEGRATION", integration, 1)
+        setenv("MIND2T_INTEGRATION", integration, 1)
         if let original = getenv("ZDOTDIR") {
-            setenv("RUUAH_USER_ZDOTDIR", String(cString: original), 1)
+            setenv("MIND2T_USER_ZDOTDIR", String(cString: original), 1)
         }
         setenv("ZDOTDIR", zdotdir, 1)
     }

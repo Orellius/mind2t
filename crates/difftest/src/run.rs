@@ -7,7 +7,7 @@
 //!   declared expectation, checked by the caller) or formatting (`main.rs`).
 //! Test strategy: `tests/corpus.rs` runs every case and asserts the declared expectation.
 
-use ruuah_vt_snapshot::{Difference, Snapshot, diff};
+use mind2t_vt_snapshot::{Difference, Snapshot, diff};
 
 use crate::case::Case;
 
@@ -17,12 +17,12 @@ pub enum RunError {
     Oracle {
         case: String,
         #[source]
-        source: ruuah_vt_ghostty::Error,
+        source: mind2t_vt_ghostty::Error,
     },
 }
 
 /// Wraps an oracle failure with the case that provoked it.
-fn oracle_error(case: &Case) -> impl Fn(ruuah_vt_ghostty::Error) -> RunError + '_ {
+fn oracle_error(case: &Case) -> impl Fn(mind2t_vt_ghostty::Error) -> RunError + '_ {
     move |source| RunError::Oracle {
         case: case.name.clone(),
         source,
@@ -84,7 +84,7 @@ impl Outcome {
     }
 }
 
-/// Runs one case through libghostty-vt and through ruuah-vt, and diffs the results.
+/// Runs one case through libghostty-vt and through mind2t-vt, and diffs the results.
 ///
 /// The byte stream is written in a single call to each side. Chunking is a separate
 /// property and is covered by the oracle's own tests, not here.
@@ -95,7 +95,7 @@ pub fn run(case: &Case) -> Result<Outcome, RunError> {
     let bytes = case.bytes.as_bytes();
 
     let mut oracle_terminal =
-        ruuah_vt_ghostty::Terminal::with_scrollback(case.cols, case.rows, case.scrollback).map_err(|source| RunError::Oracle {
+        mind2t_vt_ghostty::Terminal::with_scrollback(case.cols, case.rows, case.scrollback).map_err(|source| RunError::Oracle {
             case: case.name.clone(),
             source,
         })?;
@@ -111,7 +111,7 @@ pub fn run(case: &Case) -> Result<Outcome, RunError> {
     // The dirty flags are reset here, before `after`, so damage reports exactly what the
     // second stream changed rather than everything since the terminal was created.
     let mut render = if case.damage {
-        let mut state = ruuah_vt_ghostty::RenderState::new().map_err(oracle_error(case))?;
+        let mut state = mind2t_vt_ghostty::RenderState::new().map_err(oracle_error(case))?;
         state.update(&oracle_terminal).map_err(oracle_error(case))?;
         state.clear_dirty().map_err(oracle_error(case))?;
         Some(state)
@@ -141,7 +141,7 @@ pub fn run(case: &Case) -> Result<Outcome, RunError> {
             .push(oracle_terminal.select(kind, at).map_err(oracle_error(case))?);
     }
 
-    let mut candidate_terminal = ruuah_vt_core::Terminal::with_scrollback(case.cols, case.rows, case.scrollback);
+    let mut candidate_terminal = mind2t_vt_core::Terminal::with_scrollback(case.cols, case.rows, case.scrollback);
     candidate_terminal.write(bytes);
     if let Some(resize) = case.resize {
         candidate_terminal.resize(resize.cols, resize.rows);
@@ -180,7 +180,7 @@ mod tests {
     use crate::case::{Case, Expectation};
 
     fn outcome_with_paths(paths: &[&str]) -> Outcome {
-        let snapshot = ruuah_vt_core::Terminal::with_scrollback(2, 1, 0).snapshot();
+        let snapshot = mind2t_vt_core::Terminal::with_scrollback(2, 1, 0).snapshot();
         Outcome {
             verdict: if paths.is_empty() {
                 Verdict::Match

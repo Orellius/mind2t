@@ -1,7 +1,7 @@
 //! Ignored survey tool: which installed fonts cover the Symbols for Legacy
 //! Computing block (U+1FBxx) and quadrants that Clawd and TUI mosaics need.
-//! Run: cargo test -p ruuah-vt-render --test coverage_probe -- --ignored --nocapture
-use ruuah_vt_render::FontStack;
+//! Run: cargo test -p mind2t-vt-render --test coverage_probe -- --ignored --nocapture
+use mind2t_vt_render::FontStack;
 
 #[test]
 #[ignore]

@@ -1,11 +1,11 @@
-//! Purpose: the C types ruuah-vt publishes, laid out to match `ghostty/vt/*.h` exactly.
+//! Purpose: the C types mind2t-vt publishes, laid out to match `ghostty/vt/*.h` exactly.
 //! Public surface: every `Ghostty*` type and constant a consumer names.
 //! Why this file: the whole claim of slice 6 is that a program compiled against
 //!   libghostty-vt's headers can link this archive instead. That claim is a claim about
 //!   BYTE LAYOUT, so the layouts live in one place and are pinned against the real library's
 //!   own `ghostty_type_json()` report in `tests/layout.rs` -- not against the headers, which
 //!   could drift, and not against a reading of them, which could be wrong.
-//! NOT responsible for: behaviour (`exports.rs`) or the core (`ruuah-vt-core`).
+//! NOT responsible for: behaviour (`exports.rs`) or the core (`mind2t-vt-core`).
 //! Test strategy: `crates/ghostty/tests/abi_parity.rs` compares every size and offset here
 //!   against the real library's own `ghostty_type_json()`. It lives in that crate because
 //!   only that crate links libghostty-vt, and this one deliberately depends on nothing so it

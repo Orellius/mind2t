@@ -66,19 +66,19 @@ jobs:
       - name: Test the oracle-free crates
         run: >
           cargo test
-          -p ruuah-vt-core
-          -p ruuah-vt-snapshot
+          -p mind2t-vt-core
+          -p mind2t-vt-snapshot
           -p vte
-          -p ruuah-vt-frame
+          -p mind2t-vt-frame
           --
           --skip the_reader_never_accepts_a_frame_the_writer_was_still_writing
 
       - name: Clippy
         run: >
           cargo clippy
-          -p ruuah-vt-core
-          -p ruuah-vt-snapshot
-          -p ruuah-vt-frame
+          -p mind2t-vt-core
+          -p mind2t-vt-snapshot
+          -p mind2t-vt-frame
           --all-targets
 
   macos:
@@ -109,7 +109,7 @@ jobs:
       # somebody deliberately vendored. It stays local.
       - name: Test the pty host
         run: >
-          cargo test -p ruuah-vt-pty
+          cargo test -p mind2t-vt-pty
           --
           --skip esctest_conformance_matches_the_pinned_expectations
 
@@ -118,8 +118,8 @@ jobs:
       # silently falls back to a software path is measuring something else.
       - name: Build the renderer and its example
         run: |
-          cargo build -p ruuah-vt-render
-          cargo build -p ruuah-vt-render --example screenshot
+          cargo build -p mind2t-vt-render
+          cargo build -p mind2t-vt-render --example screenshot
 
   documentation:
     name: docs and links

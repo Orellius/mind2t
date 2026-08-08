@@ -14,9 +14,9 @@
 //! `a_renderer_that_skips_a_stale_row_is_caught` runs the identical load through a renderer
 //! that declines one row and asserts the buffers diverge.
 
-use ruuah_vt_core::Terminal;
-use ruuah_vt_frame::{Frame, Publisher, ReadOutcome, channel};
-use ruuah_vt_render::{FontStack, Renderer};
+use mind2t_vt_core::Terminal;
+use mind2t_vt_frame::{Frame, Publisher, ReadOutcome, channel};
+use mind2t_vt_render::{FontStack, Renderer};
 
 const COLS: u16 = 40;
 const ROWS: u16 = 12;

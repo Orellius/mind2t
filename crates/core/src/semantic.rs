@@ -9,7 +9,7 @@
 //! Test strategy: every rule here is a corpus case measured against libghostty-vt, and the
 //!   oracle's own behaviour is pinned in `crates/ghostty/tests/semantic.rs`.
 
-use ruuah_vt_snapshot::{RowSemantic, Semantic};
+use mind2t_vt_snapshot::{RowSemantic, Semantic};
 
 use crate::cell::Cell;
 use crate::terminal::State;

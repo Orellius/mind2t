@@ -214,12 +214,12 @@ impl GpuSurface {
         let queue = context.queue.clone();
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("ruuah-vt raster"),
+            label: Some("mind2t-vt raster"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
         });
 
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("ruuah-vt raster"),
+            label: Some("mind2t-vt raster"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -257,7 +257,7 @@ impl GpuSurface {
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("ruuah-vt raster"),
+            label: Some("mind2t-vt raster"),
             bind_group_layouts: &[&layout],
             push_constant_ranges: &[],
         });
@@ -358,7 +358,7 @@ impl GpuSurface {
             });
 
         let bind_group = self.context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ruuah-vt raster"),
+            label: Some("mind2t-vt raster"),
             layout: &self.layout,
             entries: &[
                 wgpu::BindGroupEntry {

@@ -11,7 +11,7 @@
 //! Test strategy: neither defect can fail deterministically in a native run; undefined
 //!   behaviour usually looks like passing. The oracle that can say NO is Miri:
 //!
-//!       cargo +nightly miri test -p ruuah-vt-abi --test soundness
+//!       cargo +nightly miri test -p mind2t-vt-abi --test soundness
 //!
 //!   Both tests were run under Miri against the pre-fix code and SEEN to fail there
 //!   (a data race on the cached view, and a Stacked Borrows violation through the ref's
@@ -20,8 +20,8 @@
 
 use std::ffi::c_void;
 
-use ruuah_vt::exports::*;
-use ruuah_vt::types::*;
+use mind2t_vt::exports::*;
+use mind2t_vt::types::*;
 
 unsafe fn new_terminal(cols: u16, rows: u16, bytes: &[u8]) -> GhosttyTerminal {
     unsafe {

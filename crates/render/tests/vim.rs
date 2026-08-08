@@ -12,9 +12,9 @@
 use std::io::Write;
 use std::time::{Duration, Instant};
 
-use ruuah_vt_frame::{CLUSTER_BYTES, Frame, FrameReader};
-use ruuah_vt_pty::{Host, Options};
-use ruuah_vt_render::{FontStack, Renderer};
+use mind2t_vt_frame::{CLUSTER_BYTES, Frame, FrameReader};
+use mind2t_vt_pty::{Host, Options};
+use mind2t_vt_render::{FontStack, Renderer};
 
 const COLS: u16 = 80;
 const ROWS: u16 = 24;
@@ -58,7 +58,7 @@ fn wait_for(reader: &FrameReader, wanted: impl Fn(&Frame) -> bool) -> Frame {
 
 /// Writes the canvas somewhere a human can open it, and says where.
 fn save(renderer: &Renderer, name: &str) -> std::path::PathBuf {
-    let path = std::env::temp_dir().join(format!("ruuah-vt-{name}.bmp"));
+    let path = std::env::temp_dir().join(format!("mind2t-vt-{name}.bmp"));
     let mut file = std::fs::File::create(&path).expect("create bmp");
     file.write_all(&renderer.canvas().to_bmp())
         .expect("write bmp");
@@ -68,7 +68,7 @@ fn save(renderer: &Renderer, name: &str) -> std::path::PathBuf {
 
 #[test]
 fn it_renders_vim() {
-    let source = std::env::temp_dir().join("ruuah-vt-vim-fixture.txt");
+    let source = std::env::temp_dir().join("mind2t-vt-vim-fixture.txt");
     std::fs::write(
         &source,
         "the quick brown fox\njumps over the lazy dog\nSPHINX OF BLACK QUARTZ\n",
@@ -142,7 +142,7 @@ fn it_renders_vim_in_hebrew() {
     // fix. Rendering it now is what proves the fallback font, the cluster transport and the
     // atlas all survive to pixels, so 5.5 is a reordering problem and not an everything
     // problem.
-    let source = std::env::temp_dir().join("ruuah-vt-vim-hebrew.txt");
+    let source = std::env::temp_dir().join("mind2t-vt-vim-hebrew.txt");
     std::fs::write(
         &source,
         "\u{05E9}\u{05DC}\u{05D5}\u{05DD} \u{05E2}\u{05D5}\u{05DC}\u{05DD}\nhello world\n",

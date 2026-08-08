@@ -12,6 +12,8 @@
 //! using only the verified surface can swap libraries; one using the rest cannot.
 
 pub mod exports;
+/// The same ABI under our own name, `mind2t_vt_*`. See the module card.
+pub mod native;
 
 /// The published C types. They live in their own crate so `crates/ghostty` can pin them
 /// against the real library's `ghostty_type_json()` without linking two libraries that

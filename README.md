@@ -12,7 +12,7 @@
   <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg"></a>
   <img alt="Rust 1.93+" src="https://img.shields.io/badge/rust-1.93%2B-orange.svg">
   <img alt="macOS arm64" src="https://img.shields.io/badge/platform-macOS%20arm64-lightgrey.svg">
-  <img alt="706 tests" src="https://img.shields.io/badge/tests-706-brightgreen.svg">
+  <img alt="711 tests" src="https://img.shields.io/badge/tests-711-brightgreen.svg">
 </p>
 
 ![bidirectional text, rendered by this terminal](docs/images/bidi-proof-20260807.png)
@@ -163,11 +163,12 @@ are untouched in both.
 
 | gate | what it proves |
 |---|---|
-| `cargo test --workspace` | 706 tests: units, pixels, concurrency, C-surface round trips |
+| `cargo test --workspace` | 711 tests: units, pixels, concurrency, C-surface round trips |
 | `mind2t-vt-difftest` | 223 corpus cases, every verdict met, 17 of them pinned to disagree |
 | `esctest2` | 391 pinned passes of 568, both directions: a regression fails, so does an unpromoted pass |
 | `scripts/smoke-mind2t.sh` | 26 host invariants about what AppKit, WebKit, the IPC and the child processes actually did, with no screen required |
-| export check | 14 + 56 C symbols present in the shipped archives |
+| export check | 28 + 56 C symbols present in the shipped archives: our own `mind2t_vt_*` surface and the `ghostty_*` drop-in, each verified by name |
+| header parity | `include/mind2t_vt.h` compiled against C static assertions generated from Rust's own `size_of` and `offset_of!`, with a control that proves a false assertion fails |
 
 The screenshots above were taken with `cargo run -p mind2t-vt-render --example screenshot`, which
 runs a command in a real pty and renders the result with this terminal's own CPU backend. A

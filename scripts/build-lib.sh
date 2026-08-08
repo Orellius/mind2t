@@ -32,9 +32,31 @@ if [ ! -f "$SRC" ]; then
 fi
 cp "$SRC" "$DST"
 
-# Every symbol the differential harness verifies. If one is missing the archive is not a
-# drop-in, whatever the tests say.
+# TWO surfaces, and both are checked because each carries a different claim.
+#
+#   mind2t_vt_*  is ours, declared by our own include/mind2t_vt.h. Missing one means a consumer
+#                who linked us by our own name gets an undefined symbol.
+#   ghostty_*    is the drop-in claim the differential corpus earns. Missing one means this
+#                archive can no longer stand in behind something built for that ABI, whatever
+#                the tests say.
+#
+# They are the same functions: crates/abi/src/native.rs is a thin forward, so a mismatch in
+# COUNT between the two lists below means somebody added an entry point to one surface only.
 EXPECTED=(
+  mind2t_vt_terminal_new
+  mind2t_vt_terminal_free
+  mind2t_vt_terminal_vt_write
+  mind2t_vt_terminal_resize
+  mind2t_vt_terminal_get
+  mind2t_vt_terminal_mode_get
+  mind2t_vt_terminal_grid_ref
+  mind2t_vt_grid_ref_cell
+  mind2t_vt_grid_ref_row
+  mind2t_vt_grid_ref_graphemes
+  mind2t_vt_grid_ref_style
+  mind2t_vt_cell_get
+  mind2t_vt_row_get
+  mind2t_vt_style_default
   ghostty_terminal_new
   ghostty_terminal_free
   ghostty_terminal_vt_write
@@ -75,4 +97,4 @@ fi
 echo "built $DST"
 echo "  exports  ${#EXPECTED[@]}/${#EXPECTED[@]} verified"
 echo "  link as  -L$ROOT/$OUT -lmind2t-vt"
-echo "  headers  ghostty/vt/*.h from libghostty-vt, unchanged"
+echo "  headers  crates/abi/include/mind2t_vt.h (ours) + ghostty/vt/*.h (drop-in)"

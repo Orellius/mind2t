@@ -502,6 +502,42 @@ mod tests {
     /// Skipped rather than failed on a machine without Kawkab, for the same reason the Hebrew
     /// stack tolerates a missing Miriam Mono CLM: it is optional and user-installed, and CI
     /// must not demand somebody else's font.
+    /// Which cursive scripts this machine can actually draw, and with which face.
+    ///
+    /// Two of the four mutants that survived the Arabic joining slice survived for an
+    /// environmental reason rather than a logical one: the segmenter's one-script and one-font run
+    /// boundaries cannot be exercised when only ONE cursive script resolves. That was recorded as
+    /// prose in `crates/render/tests/arabic.rs`, which meant it was a claim about the machine that
+    /// nobody could re-run. This is that claim as a command.
+    ///
+    /// Measured 2026-08-08: Arabic and Persian resolve, both to Kawkab Mono; N'Ko, Syriac, Adlam,
+    /// Thaana and Mongolian resolve to nothing. Install a second cursive face and those two
+    /// mutants become killable - which is the only thing that would change the verdict.
+    #[test]
+    #[ignore = "measurement: reports what this machine has, asserts nothing"]
+    fn which_cursive_scripts_resolve_here() {
+        let mut stack = FontStack::system(32.0).expect("fonts");
+        let paths = FontStack::system_paths();
+        for (name, ch) in [
+            ("Arabic", '\u{0628}'),
+            ("Persian", '\u{067E}'),
+            ("N'Ko", '\u{07D0}'),
+            ("Syriac", '\u{0710}'),
+            ("Adlam", '\u{1E900}'),
+            ("Thaana", '\u{0780}'),
+            ("Mongolian", '\u{1820}'),
+        ] {
+            match stack.resolve(ch) {
+                Some(r) => eprintln!(
+                    "{name:<10} -> {} advance {:.2}px",
+                    paths[usize::from(r.font)].rsplit('/').next().unwrap_or("?"),
+                    stack.advance(r)
+                ),
+                None => eprintln!("{name:<10} -> (nothing resolves)"),
+            }
+        }
+    }
+
     #[test]
     fn a_monospaced_arabic_face_outranks_the_proportional_ones() {
         let home = std::env::var("HOME").unwrap_or_default();

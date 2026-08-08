@@ -1687,8 +1687,7 @@ mod input {
     use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags};
     use mind2t_vt_host::session::{MouseAction, MouseMods};
     use mind2t_vt_pty::key::{
-        KEY_MODS_ALT, KEY_MODS_CTRL, KEY_MODS_SHIFT, KEY_MODS_SUPER, Key, KeyAction, KeyEvent,
-        KeyMods, encode,
+        KEY_MODS_ALT, KEY_MODS_CTRL, KEY_MODS_SHIFT, KEY_MODS_SUPER, Key, KeyMods,
     };
     use mind2t_vt_pty::keycode::key_from_macos_keycode;
 
@@ -2316,7 +2315,6 @@ mod input {
 
                     let key = key_from_macos_keycode(event.keyCode());
                     let text = event.characters().map(|value| value.to_string()).unwrap_or_default();
-                    let unshifted = key.codepoint().unwrap_or(0);
 
                     let mut mods: KeyMods = 0;
                     if flags.contains(NSEventModifierFlags::Shift) {
@@ -2332,34 +2330,15 @@ mod input {
                         mods |= KEY_MODS_SUPER;
                     }
 
-                    // Shift is CONSUMED when the layout used it to make the text; reporting it
-                    // twice turns shift+a into a modified 'A' instead of an 'A'. Compared against
-                    // the unshifted codepoint rather than assumed, because a layout may disagree
-                    // (on the Hebrew layout shift+t is a different letter entirely).
-                    let mut consumed: KeyMods = 0;
-                    if !text.is_empty()
-                        && mods & KEY_MODS_SHIFT != 0
-                        && text.chars().next().map(u32::from) != Some(unshifted)
-                    {
-                        consumed |= KEY_MODS_SHIFT;
-                    }
-
                     let canvas = canvas.borrow();
                     let Some(pane) = canvas.panes().get(index) else {
                         return pass;
                     };
-                    let bytes = encode(
-                        &KeyEvent {
-                            action: KeyAction::Press,
-                            key,
-                            mods,
-                            consumed_mods: consumed,
-                            composing: false,
-                            utf8: &text,
-                            unshifted_codepoint: unshifted,
-                        },
-                        &pane.session.key_options(),
-                    );
+                    // The consumed-shift rule lives in `keys::encode_key`, once. It used to be
+                    // written out here as well, comment for comment, and the Linux path was
+                    // about to make a third copy - which is how a subtle shared rule drifts by
+                    // one condition and presents as "shift does something strange in one build".
+                    let bytes = mind2t::keys::encode_key(key, &text, mods, &pane.session.key_options());
                     if bytes.is_empty() {
                         // Nothing to send is not the same as nothing to do: passing the event on
                         // keeps chords the terminal has no encoding for working elsewhere.

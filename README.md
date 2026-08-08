@@ -12,7 +12,7 @@
   <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg"></a>
   <img alt="Rust 1.93+" src="https://img.shields.io/badge/rust-1.93%2B-orange.svg">
   <img alt="macOS arm64" src="https://img.shields.io/badge/platform-macOS%20arm64-lightgrey.svg">
-  <img alt="692 tests" src="https://img.shields.io/badge/tests-692-brightgreen.svg">
+  <img alt="703 tests" src="https://img.shields.io/badge/tests-703-brightgreen.svg">
 </p>
 
 ---
@@ -107,10 +107,51 @@ version and watched go red. That is not a slogan; it is what found:
 - a seqlock whose torn reads carried valid generation numbers, so every cell agreed with every other cell while the frame was wrong
 - a Metal command-buffer pool deadlock that only appeared at a real window size
 - a selection that outlived the pane it was made in and underflowed the renderer, found by splitting panes in the live window until it died
+- every Arabic letter drawn in its isolated form, invisible to a suite whose other scripts have only one form per letter
+- a pty shutdown that could deadlock forever, which had been hanging a test for at least a day without ever going red
+
+### A hang is worse than a failure
+
+The last of those is worth its own note, because it is the shape of defect this project is
+least protected against. `Host::shutdown` stopped the pty pump before killing the child, and
+the pump is the only reader of the pty master; a child exiting with a controlling terminal
+blocks in the kernel until its output queue drains, so it could never finish exiting and the
+parent waited on it forever. **The reader has to outlive the child.**
+
+Nothing went red. Cargo simply never returned. One instance was found still running seven and
+a half hours after it started, holding its child processes, with two more beside it, while
+every suite run that looked green ran alongside them.
+
+What named it was a discriminating pair rather than a theory: 120 rounds of spawn-then-shutdown
+with a **silent** child pass in 0.74s, and the same loop with a child that prints **one line**
+first hangs within 40. A third attempt at a deterministic repro, using a large piped write,
+did **not** reproduce, and that was evidence too - the pipeline was slow to start, so the child
+was killed before writing anything.
+
+Two consequences, and the second matters more. The kill happens first now, so the pump keeps
+draining while the child exits. And the reap is **bounded**: a shutdown that can block forever
+is a defect whatever the ordering, because it takes the caller's thread with it. That bound is
+also what lets the regression test go **red** instead of hanging, which is the only reason it
+counts as a gate at all.
+
+### Tests measure their own claim, not the machine
+
+Two tests here were green locally and red on a shared CI runner, for reasons that had nothing
+to do with the code. A synchronized-output test split its batch 60ms apart and was measured
+against a 150ms anti-stuck budget - a 2.5x margin, which is no margin at all on a machine
+somebody else is using, so the budget correctly published a half-drawn frame and a test about
+the gate failed for the wrong reason. A seqlock test required the reader to land at least one
+accepted read inside a fixed 400ms window, which a two-core runner cannot promise.
+
+Neither was a real defect and neither was harmless: a gate that reports on how loaded the
+machine is teaches you to ignore it. The budget became a per-test setting so the gate test and
+the budget test each set the value their own claim needs, and the liveness window now extends
+while nothing has been accepted rather than failing. The workload, the race and the invariant
+are untouched in both.
 
 | gate | what it proves |
 |---|---|
-| `cargo test --workspace` | 692 tests: units, pixels, concurrency, C-surface round trips |
+| `cargo test --workspace` | 703 tests: units, pixels, concurrency, C-surface round trips |
 | `ruuah-vt-difftest` | 223 corpus cases, every verdict met, 17 of them pinned to disagree |
 | `esctest2` | 391 pinned passes of 568, both directions: a regression fails, so does an unpromoted pass |
 | `scripts/smoke-mind2t.sh` | 26 host invariants about what AppKit, WebKit, the IPC and the child processes actually did, with no screen required |

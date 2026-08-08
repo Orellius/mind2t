@@ -41,7 +41,7 @@ tauri = { version = "2.11", features = ["unstable"] }
 serde = { version = "1", features = ["derive"] }
 
 [build-dependencies]
-tauri-build = "2"
+tauri-build = { version = "2", features = [] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # T2b. The Linux key source, and the justification the no-new-dependencies rule asks for: this

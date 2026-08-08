@@ -1,109 +1,91 @@
 #!/bin/bash
-# Assembles the Swift host into a real macOS app: Mind2t.app.
+# Builds Mind2t.app - the TAURI host - and installs it to ~/Applications.
 #
-# SwiftPM builds executables, not bundles, so the bundle is assembled by hand:
-# Info.plist + the release binary + Resources (the Mind2t splash, the icon). The
-# app is INSTALLED to ~/Applications because anything launched outside a
-# terminal must not live under ~/Desktop (TCC kills disclaimed children there
-# silently -- SCAR-006). The repo stays the source of truth; the bundle is a
-# build product.
+# REWRITTEN 2026-08-08 (T7). This script used to assemble the SWIFT host by hand: SwiftPM emits
+# executables rather than bundles, so it wrote an Info.plist, copied a binary and sealed the
+# result itself. Tauri's bundler does all of that, so what is left here is the part the bundler
+# does NOT do: build the chrome first, hand it the version, and install the result.
 #
-# Inside the bundle the host is Hebrew-first: banner.sh present => splash +
-# auto base direction by default (see main.swift). The bare CLI binary is
-# untouched by any of this.
+# Anything launched outside a terminal must not live under ~/Desktop - TCC kills disclaimed
+# children there silently (SCAR-006) - which is why the install target is ~/Applications and the
+# repo stays the source of truth. The bundle is a build product.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-# The full chain including the forced relink and the headless smoke -- the bundle
-# only ever ships a binary the smoke has seen draw.
-./scripts/build-swift.sh
+ROOT="$(pwd)"
 
-APP_NAME="Mind2t VT"
-# The bundle's version comes from the TAG, never from a literal. It was hardcoded at 0.8.0 and
-# stayed there through thirteen releases, so every installed app since has claimed a version it
-# was not - and nothing errors, because a plist string is only ever read by a human or an updater.
-# Tag BEFORE building: `git describe` on an untagged tree yields the PREVIOUS version and bakes it
-# in, which is the same trap the sibling project paid for once already.
+# THE CHROME IS BUILT HERE, NOT BY `beforeBuildCommand`.
+#
+# The config carried one and it was deleted, because its working directory is not the config's
+# directory: measured 2026-08-08, `chrome` and `../../chrome` BOTH failed with ENOENT, which puts
+# the cwd at `crates/`. A path that depends on an inference about somebody else's cwd is a path
+# that breaks the first time they change it. The host embeds chrome/dist at COMPILE time, so a
+# stale bundle ships silently and this step is not optional.
+bun run --cwd chrome build >/dev/null
+
+# THE VERSION COMES FROM THE TAG, NEVER FROM THE LITERAL IN tauri.conf.json.
+#
+# The Swift script learned this the expensive way: CFBundleShortVersionString was hardcoded at
+# 0.8.0 and stayed there through thirteen releases, so every installed app claimed a version it
+# was not, and nothing errors because a plist string is only ever read by a human or an updater.
+# Passed as a `--config` OVERLAY rather than by rewriting the file, so a failed build cannot leave
+# a mutated config behind.
+#
+# TAG BEFORE BUILDING. `git describe` on an untagged tree yields the PREVIOUS tag and bakes it in.
 VERSION="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')"
 VERSION="${VERSION:-0.0.0}"
-BUILD="swift/.build/$APP_NAME.app"
-# Mind2t's own mark, in this repo (2026-08-06). It used to be Ghostty's icon out of the oracle
-# checkout, which was borrowed goods AND a build that broke the moment that checkout moved - it
-# was archived the same day. `assets/icon/mind2t.svg` is the source; the PNG beside it is committed
-# so a build needs no SVG rasteriser.
-ICON_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/assets/icon/mind2t-1024.png"
 
-rm -rf "$BUILD"
-mkdir -p "$BUILD/Contents/MacOS" "$BUILD/Contents/Resources"
+echo "building Mind2t.app at version $VERSION"
+( cd crates/mind2t && cargo tauri build --config "{\"version\":\"$VERSION\"}" )
 
-cat > "$BUILD/Contents/Info.plist" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleName</key>            <string>Mind2t VT</string>
-  <key>CFBundleDisplayName</key>     <string>Mind2t VT</string>
-  <key>CFBundleIdentifier</key>      <string>com.orellius.mind2t-vt</string>
-  <key>CFBundleExecutable</key>      <string>mind2t-host</string>
-  <key>CFBundlePackageType</key>     <string>APPL</string>
-  <key>CFBundleShortVersionString</key> <string>__VERSION__</string>
-  <key>CFBundleIconFile</key>        <string>Mind2tVT</string>
-  <key>NSHighResolutionCapable</key> <true/>
-  <key>LSMinimumSystemVersion</key>  <string>14.0</string>
-</dict>
-</plist>
-PLIST
+BUILD="$ROOT/target/release/bundle/macos/Mind2t.app"
+[ -d "$BUILD" ] || { echo "the bundler produced no app at $BUILD" >&2; exit 1; }
 
-# Quoted heredoc above, deliberately - the plist is full of characters a shell would eat. The one
-# value that must vary is substituted here instead.
-sed -i '' "s/__VERSION__/$VERSION/" "$BUILD/Contents/Info.plist"
+# THE BUNDLE MUST CARRY THE HOST, NOT THE PROBE, AND THIS IS CHECKED RATHER THAN ASSUMED.
+#
+# The crate has two binaries - `mind2t` (the Tauri host) and `probe` (the tao + wry oracle) - and
+# on the first bundle Tauri picked `probe`. The app launched, drew a terminal, and was the wrong
+# program wearing Mind2t's identity: CFBundleExecutable read `probe` and nothing anywhere said so.
+# `mainBinaryName` in tauri.conf.json fixes it; this assertion is what stops it coming back.
+EXEC="$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$BUILD/Contents/Info.plist")"
+[ "$EXEC" = "mind2t" ] || { echo "bundle ships '$EXEC', not the host binary" >&2; exit 1; }
 
-cp swift/.build/release/mind2t-host "$BUILD/Contents/MacOS/mind2t-host"
-cp swift/Resources/banner.sh "$BUILD/Contents/Resources/banner.sh"
-# S6 panels: one self-contained document, or none at all. A bundle without it still
-# runs -- WebPanel.documentURL returns nil and the chord reports rather than opening a
-# blank card. build-swift.sh above has already built it when bun is available.
-if [ -f web/dist/index.html ]; then
-  mkdir -p "$BUILD/Contents/Resources/web"
-  cp web/dist/index.html "$BUILD/Contents/Resources/web/index.html"
-fi
-# Shell integration (S2): the ZDOTDIR bootstrap + the OSC 133 hooks the blocks read.
-mkdir -p "$BUILD/Contents/Resources/shell/zdotdir"
-cp shell/mind2t-integration.zsh "$BUILD/Contents/Resources/shell/mind2t-integration.zsh"
-cp shell/zdotdir/.zshenv "$BUILD/Contents/Resources/shell/zdotdir/.zshenv"
+PLIST_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$BUILD/Contents/Info.plist")"
+[ "$PLIST_VERSION" = "$VERSION" ] || {
+  echo "bundle claims version $PLIST_VERSION, expected $VERSION" >&2; exit 1; }
 
-# Icon: Mind2t's own mark. Skipped silently if the artwork is missing -- the app runs without it.
-if [ -f "$ICON_SRC" ]; then
-  ICONSET="swift/.build/Mind2tVT.iconset"
-  rm -rf "$ICONSET"; mkdir -p "$ICONSET"
-  # Already square at 1024, so it is resized directly -- no padding pass. Padding a square source
-  # onto a square canvas insets the whole mark, which is how an icon ends up looking smaller than
-  # every other icon in the Dock.
-  for size in 16 32 128 256 512; do
-    sips -z "$size" "$size" "$ICON_SRC" --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
-    sips -z "$((size * 2))" "$((size * 2))" "$ICON_SRC" \
-      --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
-  done
-  iconutil -c icns "$ICONSET" -o "$BUILD/Contents/Resources/Mind2tVT.icns"
-fi
+# THE BUNDLED BINARY IS RUN BEFORE IT IS INSTALLED, headless, with no window on anybody's screen.
+#
+# A bundle that builds is not a bundle that works: the chrome is embedded at compile time and the
+# GPU surface is created at launch, so the failures worth catching all happen in the first second
+# of running. `MIND2T_HEADLESS=1` is the same switch the smoke uses. The host prints its geometry
+# and the chrome's ready message; the probe prints neither, which makes this a discriminating
+# check and not a liveness one.
+echo "running the bundled binary headless"
+OUT="$(timeout 60 env MIND2T_HEADLESS=1 "$BUILD/Contents/MacOS/mind2t" 2>&1 | head -40 || true)"
+echo "$OUT" | grep -q "cells at" || { echo "the bundled host never reported its geometry:"; echo "$OUT"; exit 1; }
+echo "$OUT" | grep -q '"kind":"ready"' || { echo "the bundled chrome never reported ready:"; echo "$OUT"; exit 1; }
 
-# Sign the assembled bundle. SwiftPM's binary arrives only linker-signed: Info.plist
-# unbound, no sealed resources -- and TCC identifies an app by its signature, so macOS
-# SILENTLY denies Desktop/Documents/Downloads without ever showing the permission
-# prompt (measured live 2026-07-30: "cannot cd into Desktop" inside the app). A real
-# ad-hoc signature over the bundle binds the plist and seals Resources, which is enough
-# for TCC to attribute the app and prompt. Known cost: the ad-hoc identity is the
-# cdhash, so every rebuild is a new identity and macOS may re-prompt after reinstall.
+# SIGNING. Tauri ad-hoc signs when no identity is configured, and re-signing here is belt and
+# braces for the TCC problem the Swift bundle hit: TCC identifies an app by its signature, and an
+# unsealed bundle is SILENTLY denied Desktop/Documents/Downloads with no permission prompt ever
+# shown (measured live 2026-07-30, "cannot cd into Desktop" inside the app).
+#
+# AD-HOC IS ONLY SUFFICIENT WHILE THIS REPO IS PRIVATE. A stranger who downloads an ad-hoc-signed
+# app gets "damaged and can't be opened", and macOS 15 removed the right-click-open bypass. Before
+# a public release this is either Developer ID + notarization or a release note that says
+# build-from-source. That is Orel's call and it is recorded in
+# docs/plans/2026-08-08-terminal-first-tauri.md.
 codesign --force -s - "$BUILD"
 codesign -dv "$BUILD" 2>&1 | grep -q "Info.plist=not bound" && {
   echo "codesign failed to bind Info.plist" >&2; exit 1; }
 codesign --verify --deep --strict "$BUILD"
 
-# Install (replace-in-place is fine: the bundle is regenerable by definition).
-INSTALL="$HOME/Applications/$APP_NAME.app"
-rm -rf "$INSTALL"
+INSTALL="$HOME/Applications/Mind2t.app"
 mkdir -p "$HOME/Applications"
+# Replace in place. The bundle is regenerable by definition, so this is not destroying anything a
+# rebuild cannot produce again.
+rm -rf "$INSTALL"
 cp -R "$BUILD" "$INSTALL"
 
-echo "installed $INSTALL"
+echo "installed $INSTALL (version $VERSION, executable $EXEC)"

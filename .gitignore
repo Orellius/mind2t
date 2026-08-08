@@ -29,3 +29,14 @@ node_modules/
 *.swo
 *~
 .DS_Store
+
+# Platform icon sets `cargo tauri icon` generates for targets this project does not ship.
+# It writes Android mipmaps, an iOS AppIcon set and the Windows Store logos whether you want
+# them or not; macOS needs `icon.icns` and the four PNGs, Linux needs the PNGs. Ignored rather
+# than deleted, because the generator recreates them on every run and a repo about to go public
+# should not carry fifty images for platforms it has never built for.
+crates/mind2t/icons/android/
+crates/mind2t/icons/ios/
+crates/mind2t/icons/Square*.png
+crates/mind2t/icons/StoreLogo.png
+crates/mind2t/icons/icon.ico

@@ -238,6 +238,8 @@ fn a_wheel_is_arrows_on_the_alternate_screen_and_the_hosts_on_the_primary() {
         !session.wheel(1.0, 1.0, 2, MouseMods::default()).expect("wheel"),
         "the primary screen's wheel belongs to the host"
     );
+    // INVERTED 2026-08-09: a plain wheel is the operator's everywhere, so reaching the child's
+    // alternate-scroll arrows now takes shift. The assertion below was `MouseMods::default()`.
 
     session.send(b"\x1b[?1049hALT\r\n").expect("enter the alternate screen");
     assert!(
@@ -246,7 +248,7 @@ fn a_wheel_is_arrows_on_the_alternate_screen_and_the_hosts_on_the_primary() {
     );
     assert!(
         session.wheel(1.0, 1.0, 2, MouseMods::default()).expect("wheel"),
-        "the alternate screen's wheel is the child's"
+        "the alternate screen's wheel is the child's, as arrows"
     );
     assert!(
         wait_for_text(&mut session, "^[[A^[[A", Duration::from_secs(5)),
@@ -255,7 +257,7 @@ fn a_wheel_is_arrows_on_the_alternate_screen_and_the_hosts_on_the_primary() {
     );
 }
 
-/// SHIFT TAKES THE WHEEL BACK, from a child that had it.
+/// A PLAIN WHEEL BECOMES ARROWS IN A TUI; SHIFT REACHES THE SCROLLBACK.
 ///
 /// Reported live 2026-08-09, from inside Claude Code: "you cannot scroll with the mouse scroll
 /// nor jump to bottom". Nothing was broken - a full-screen program owns the wheel, which is
@@ -272,7 +274,7 @@ fn a_wheel_is_arrows_on_the_alternate_screen_and_the_hosts_on_the_primary() {
 /// first assertion a host that ALWAYS scrolled its own view would pass, and that host breaks
 /// every program that wants the wheel.
 #[test]
-fn shift_takes_the_wheel_back_from_a_child_that_had_it() {
+fn a_plain_wheel_becomes_arrows_in_a_tui_and_shift_reaches_the_scrollback() {
     let mut session = spawn("printf 'READY\\n'; exec cat");
     assert!(wait_for_text(&mut session, "READY", Duration::from_secs(5)));
     wide_open(&mut session);
@@ -285,13 +287,80 @@ fn shift_takes_the_wheel_back_from_a_child_that_had_it() {
 
     assert!(
         session.wheel(1.0, 1.0, 2, MouseMods::default()).expect("wheel"),
-        "a plain wheel on the alternate screen is the child's"
+        "a plain wheel on the alternate screen must become arrows, or nothing scrolls in a TUI"
     );
 
     let shifted = MouseMods { shift: true, ..MouseMods::default() };
     assert!(
         !session.wheel(1.0, 1.0, 2, shifted).expect("wheel"),
-        "shift+wheel must come back to the host even while the child has the wheel"
+        "shift+wheel is the escape hatch and must come back to the operator"
+    );
+}
+
+/// DOES A WHEEL REPORT ACTUALLY REACH THE CHILD when reporting is on?
+///
+/// The question behind "you cannot scroll with the mouse scroll" (2026-08-09). Ghostty hands the
+/// wheel to the program exactly as this does; the difference a user feels is whether the program
+/// RECEIVES it. If our report never arrives, or arrives malformed, a full-screen program does
+/// nothing and the terminal looks broken while every unit test passes.
+///
+/// The modes are turned on by the CHILD's own `printf`, not by `send`. Bytes written by the
+/// child travel up the pty to the parser unmangled; bytes sent to a `cat` are echoed by the line
+/// discipline first, and ECHOCTL renders an ESC as a printable `^[`, which measures the tty
+/// rather than the terminal. Two earlier attempts failed on exactly that.
+#[test]
+fn a_wheel_report_reaches_the_child_when_reporting_is_on() {
+    let mut session = spawn(
+        "printf '\\033[?1000h\\033[?1006hREADY\\n'; exec cat",
+    );
+    assert!(wait_for_text(&mut session, "READY", Duration::from_secs(5)));
+    wide_open(&mut session);
+
+    let taken = session.wheel(20.0, 20.0, 1, MouseMods::default()).expect("wheel");
+    assert!(taken, "on the PRIMARY screen, reporting still gives the wheel to the child");
+
+    // `cat` echoes what it receives, and ECHOCTL draws the ESC as a printable `^[`, so the
+    // report arrives on the grid as ordinary text. SGR wheel-up is button 64.
+    let arrived = wait_for_text(&mut session, "^[[<64;", Duration::from_secs(5));
+    assert!(
+        arrived,
+        "the wheel report never reached the child; grid says {:?}",
+        session.visible_text()
+    );
+}
+
+/// THE STATE A REAL TUI IS IN: alternate screen AND mouse reporting, both on.
+///
+/// This is the test the suite did not have, and its absence is why a mutant that restored the
+/// original branch order passed all twelve. Every other wheel test uses a `cat` that never
+/// enables reporting, so alternate scroll was reached under either ordering and the ordering was
+/// unmeasured. Claude Code sets 1049 AND 1000/1002/1003/1006 - measured off the wire - and in
+/// that state the two policies produce completely different bytes.
+///
+/// Alternate scroll must WIN: the child gets arrow keys, not a wheel report. A report is what it
+/// gets under the old order, and it demonstrably ignores those.
+#[test]
+fn on_the_alternate_screen_with_reporting_a_wheel_is_arrows_not_a_report() {
+    let mut session = spawn(
+        "printf '\\033[?1049h\\033[?1000h\\033[?1006hREADY\\n'; exec cat",
+    );
+    assert!(wait_for_text(&mut session, "READY", Duration::from_secs(5)));
+    wide_open(&mut session);
+
+    assert!(
+        session.wheel(20.0, 20.0, 2, MouseMods::default()).expect("wheel"),
+        "the wheel must reach the child in this state"
+    );
+
+    // `cat` echoes it back, and ECHOCTL draws the ESC printable, so the bytes land on the grid.
+    assert!(
+        wait_for_text(&mut session, "^[[A^[[A", Duration::from_secs(5)),
+        "two ticks did not arrive as two arrows; grid says {:?}",
+        session.visible_text()
+    );
+    assert!(
+        !session.visible_text().contains("^[[<6"),
+        "an SGR wheel report reached the child, so reporting beat alternate scroll"
     );
 }
 

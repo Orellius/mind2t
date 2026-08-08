@@ -302,3 +302,60 @@ fn an_explicit_directory_outranks_the_home_default() {
     command.current_dir(&elsewhere);
     assert_eq!(command.get_current_dir(), Some(elsewhere.as_path()));
 }
+
+/// Does a real Claude Code ACT on our wheel reports? Diagnostic, prints rather than asserts.
+///
+///     cargo test -p mind2t --test child_env -- --ignored --nocapture wheel_at_a_real_agent
+#[test]
+#[ignore = "starts a real, authenticated agent CLI; run by hand"]
+fn wheel_at_a_real_agent() {
+    use mind2t_vt_host::session::MouseMods;
+    use std::time::{Duration, Instant};
+
+    let gpu = mind2t_vt_render::GpuContext::new().expect("a GPU");
+    let mut session = mind2t_vt_host::session::Session::spawn_fitted_on(
+        &gpu,
+        mind2t::launch::shell_command(),
+        1200,
+        700,
+        16.0,
+        None,
+    )
+    .expect("a shell pane");
+    session.set_mouse_geometry(1200, 700, 0, 0, 0, 0);
+
+    let settle = Instant::now();
+    while settle.elapsed() < Duration::from_millis(1200) {
+        session.poll();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    session.send(b"claude\n").expect("typed");
+
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(25) {
+        session.poll();
+        if session.visible_text().contains("Claude Code v") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let wait = Instant::now();
+    while wait.elapsed() < Duration::from_secs(3) {
+        session.poll();
+        std::thread::sleep(Duration::from_millis(80));
+    }
+
+    let before = session.visible_text();
+    // Plain wheel, over the middle of the pane, five ticks up.
+    let taken = session.wheel(600.0, 350.0, 5, MouseMods::default()).expect("wheel");
+    let after_wait = Instant::now();
+    while after_wait.elapsed() < Duration::from_secs(2) {
+        session.poll();
+        std::thread::sleep(Duration::from_millis(80));
+    }
+    let after = session.visible_text();
+
+    println!("wheel taken by the child: {taken}");
+    println!("grid CHANGED after the wheel: {}", before != after);
+    session.shutdown();
+}

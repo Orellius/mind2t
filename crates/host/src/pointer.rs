@@ -196,21 +196,32 @@ impl Pointer {
             return Wheel::Viewport;
         }
 
-        // SHIFT TAKES THE WHEEL BACK FROM THE CHILD, and without it the scrollback is
-        // unreachable from inside any program that captured the mouse.
+        // WHEEL POLICY, settled 2026-08-09 against measurements rather than convention.
         //
-        // Reported live 2026-08-09: "you cannot scroll with the mouse scroll nor jump to bottom",
-        // from inside Claude Code. The routing below was correct and complete - reporting on
-        // means the wheel is the child's - and that is exactly the problem: `claude`, `vim`,
-        // `htop` and every other full-screen program turn reporting on, so every tick belonged
-        // to them and the view could never move. Nothing was broken; something was missing.
+        // Orel: "why not make it intuitive like ghostty? just scroll up and scroll down? shift +
+        // something is bad UX execution." He is right, and finding out WHY plain scrolling did
+        // nothing took three measurements that are worth keeping:
         //
-        // The CLICK path has had this escape hatch since D2b (`selects_instead`, shift takes the
-        // pointer back so a line can be copied out of a program that owns the mouse). The wheel
-        // never got it. Same reasoning, same modifier, and it is what every terminal does.
+        //  1. A real Claude Code enables 1000, 1002, 1003 and 1006 - full mouse reporting with
+        //     SGR - read straight off the wire.
+        //  2. Delivered a wheel report, it does NOTHING: `Session::wheel` returned true and the
+        //     grid came back byte-identical.
+        //  3. Scrolling our own viewport instead also does nothing, because it lives on the
+        //     ALTERNATE SCREEN, and the alternate screen has no scrollback by protocol.
         //
-        // Checked BEFORE the reporting branch on purpose: an escape hatch that only works when
-        // the thing it escapes is absent is not an escape hatch.
+        // So both obvious policies - "the child owns the wheel" and "the operator owns the
+        // wheel" - move nothing at all in the one application this terminal exists to run. What
+        // moves is ALTERNATE SCROLL: the wheel becomes arrow keys, which a list-shaped TUI acts
+        // on. That is why scrolling feels natural in other terminals, and it is the whole reason
+        // the branch order below changed.
+        //
+        // The order, and every line of it is load-bearing:
+        //   shift          -> the operator's viewport, always. The escape hatch, for reaching
+        //                     scrollback from inside a program that owns the mouse.
+        //   alternate scr. -> arrow keys. FIRST, ahead of reporting, which is the fix.
+        //   reporting      -> the child's report. A program on the PRIMARY screen that asked for
+        //                     the mouse still gets the wheel.
+        //   otherwise      -> the operator's viewport. The ordinary shell case.
         if mods.shift {
             return Wheel::Viewport;
         }
@@ -218,6 +229,34 @@ impl Pointer {
         // A tick count is a gesture, not a promise: a flick can deliver an enormous number and
         // every one of them would become bytes on the pty.
         let repeats = ticks.unsigned_abs().min(64);
+
+        // ALTERNATE SCROLL WINS OVER MOUSE REPORTING, and the order is the whole fix.
+        //
+        // It used to come second, so a program with reporting on never reached it. Measured
+        // 2026-08-09 against a real Claude Code: it enables 1000/1002/1003/1006, receives our
+        // wheel reports, and DOES NOTHING - `Session::wheel` returned true and the grid was
+        // byte-identical. Scrolling the viewport instead does nothing either, because it lives on
+        // the ALTERNATE SCREEN and the alternate screen has no scrollback by protocol.
+        //
+        // So neither of the two obvious policies moves anything in the one application this
+        // terminal exists to run. What does is alternate scroll: the wheel becomes arrow keys,
+        // which a list-shaped TUI acts on. That is why scrolling feels natural in other
+        // terminals, and it is Orel's ask stated exactly - "just scroll up and scroll down".
+        //
+        // A program that genuinely wants raw wheel reports still gets them, with shift.
+        if frame.alternate_screen() && frame.mouse_alternate_scroll() {
+            let seq: &[u8] = match (frame.cursor_keys(), ticks > 0) {
+                (true, true) => b"\x1bOA",
+                (true, false) => b"\x1bOB",
+                (false, true) => b"\x1b[A",
+                (false, false) => b"\x1b[B",
+            };
+            let mut out = Vec::with_capacity(seq.len() * repeats as usize);
+            for _ in 0..repeats {
+                out.extend_from_slice(seq);
+            }
+            return Wheel::Send(out);
+        }
 
         if frame.mouse_event() != mind2t_vt_core::mouse::MouseEvent::None {
             let Some(size) = self.size(cell) else {
@@ -242,20 +281,6 @@ impl Pointer {
             // Reporting is ON, so the wheel is the child's even when the encoding produced
             // nothing (X10 cannot name a wheel button). Falling through to the viewport here
             // would scroll the view under a program that had captured the mouse.
-            return Wheel::Send(out);
-        }
-
-        if frame.alternate_screen() && frame.mouse_alternate_scroll() {
-            let seq: &[u8] = match (frame.cursor_keys(), ticks > 0) {
-                (true, true) => b"\x1bOA",
-                (true, false) => b"\x1bOB",
-                (false, true) => b"\x1b[A",
-                (false, false) => b"\x1b[B",
-            };
-            let mut out = Vec::with_capacity(seq.len() * repeats as usize);
-            for _ in 0..repeats {
-                out.extend_from_slice(seq);
-            }
             return Wheel::Send(out);
         }
 

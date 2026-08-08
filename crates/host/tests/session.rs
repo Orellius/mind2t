@@ -255,6 +255,46 @@ fn a_wheel_is_arrows_on_the_alternate_screen_and_the_hosts_on_the_primary() {
     );
 }
 
+/// SHIFT TAKES THE WHEEL BACK, from a child that had it.
+///
+/// Reported live 2026-08-09, from inside Claude Code: "you cannot scroll with the mouse scroll
+/// nor jump to bottom". Nothing was broken - a full-screen program owns the wheel, which is
+/// correct - but there was no way to OVERRULE it, so the scrollback was unreachable from inside
+/// `claude`, `vim`, `htop` or anything else that takes the mouse.
+///
+/// Driven through the ALTERNATE SCREEN rather than mode 1000, and that is a deliberate choice
+/// after two failures: getting reporting genuinely enabled through `cat` needs the echo, the
+/// parser and the mouse geometry all to line up, and when the assertion failed it could not say
+/// which of the three was missing. The alternate-scroll path is proven reachable by the test
+/// above it, so this measures the escape hatch and nothing else.
+///
+/// Both directions, because either half alone passes against a wrong implementation: without the
+/// first assertion a host that ALWAYS scrolled its own view would pass, and that host breaks
+/// every program that wants the wheel.
+#[test]
+fn shift_takes_the_wheel_back_from_a_child_that_had_it() {
+    let mut session = spawn("printf 'READY\\n'; exec cat");
+    assert!(wait_for_text(&mut session, "READY", Duration::from_secs(5)));
+    wide_open(&mut session);
+
+    session.send(b"\x1b[?1049hALT\r\n").expect("enter the alternate screen");
+    assert!(
+        wait_for_text(&mut session, "ALT", Duration::from_secs(5)),
+        "the alternate screen never appeared"
+    );
+
+    assert!(
+        session.wheel(1.0, 1.0, 2, MouseMods::default()).expect("wheel"),
+        "a plain wheel on the alternate screen is the child's"
+    );
+
+    let shifted = MouseMods { shift: true, ..MouseMods::default() };
+    assert!(
+        !session.wheel(1.0, 1.0, 2, shifted).expect("wheel"),
+        "shift+wheel must come back to the host even while the child has the wheel"
+    );
+}
+
 /// Drains events until the session holds a cwd, or the deadline passes.
 ///
 /// Draining is what advances it - `Session::cwd` is a reader with no side effect - so a test

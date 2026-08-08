@@ -2489,6 +2489,29 @@ mod input {
                             }
                             return std::ptr::null_mut();
                         }
+
+                        // THE SCROLLBACK CHORDS, HANDLED HERE AND NOT ONLY BELOW.
+                        //
+                        // This branch ends in `return pass`, so every cmd chord it does not
+                        // recognise leaves the handler two hundred lines before the scrollback
+                        // check runs. cmd+End, cmd+Home and cmd+PageUp were therefore dead from
+                        // the moment they were written - the module was correct, its tests
+                        // passed, and the key never reached it. Reported live 2026-08-09 as
+                        // "nor jump to bottom".
+                        //
+                        // Only the cmd half is handled here; the shift half falls through to the
+                        // check below, which is the one place the decision is made either way.
+                        if let Some(scroll) = mind2t::scrollback::action(chord, KEY_MODS_SUPER) {
+                            let canvas = canvas.borrow();
+                            if let Some(pane) = canvas.panes().get(index) {
+                                pane.session.scroll(mind2t::scrollback::rows(
+                                    scroll,
+                                    pane.session.geometry().rows,
+                                ));
+                            }
+                            return std::ptr::null_mut();
+                        }
+
                         return pass;
                     }
 

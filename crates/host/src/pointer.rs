@@ -195,6 +195,26 @@ impl Pointer {
         if ticks == 0 {
             return Wheel::Viewport;
         }
+
+        // SHIFT TAKES THE WHEEL BACK FROM THE CHILD, and without it the scrollback is
+        // unreachable from inside any program that captured the mouse.
+        //
+        // Reported live 2026-08-09: "you cannot scroll with the mouse scroll nor jump to bottom",
+        // from inside Claude Code. The routing below was correct and complete - reporting on
+        // means the wheel is the child's - and that is exactly the problem: `claude`, `vim`,
+        // `htop` and every other full-screen program turn reporting on, so every tick belonged
+        // to them and the view could never move. Nothing was broken; something was missing.
+        //
+        // The CLICK path has had this escape hatch since D2b (`selects_instead`, shift takes the
+        // pointer back so a line can be copied out of a program that owns the mouse). The wheel
+        // never got it. Same reasoning, same modifier, and it is what every terminal does.
+        //
+        // Checked BEFORE the reporting branch on purpose: an escape hatch that only works when
+        // the thing it escapes is absent is not an escape hatch.
+        if mods.shift {
+            return Wheel::Viewport;
+        }
+
         // A tick count is a gesture, not a promise: a flick can deliver an enormous number and
         // every one of them would become bytes on the pty.
         let repeats = ticks.unsigned_abs().min(64);

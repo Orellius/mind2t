@@ -88,4 +88,18 @@ mkdir -p "$HOME/Applications"
 rm -rf "$INSTALL"
 cp -R "$BUILD" "$INSTALL"
 
+# THE STAGING BUNDLE IS REMOVED, and Spotlight is told never to index what replaces it.
+#
+# `cargo tauri build` writes its .app under target/, which Spotlight indexes, so Launchpad and
+# Spotlight showed TWO Mind2t apps - the installed one and the build product. They are the same
+# bytes, which makes it worse rather than better: the operator cannot tell which is which, and
+# the answer "they are identical" is only true until the next build half-finishes.
+#
+# The marker is written BEFORE the removal so a build that fails after this point still leaves
+# an unindexed tree. It lives in target/, which `cargo clean` wipes - hence recreated every run
+# rather than committed.
+: > "$ROOT/target/.metadata_never_index"
+rm -rf "$BUILD"
+
 echo "installed $INSTALL (version $VERSION, executable $EXEC)"
+echo "staging bundle removed; target/ marked never-index so only one Mind2t is discoverable"

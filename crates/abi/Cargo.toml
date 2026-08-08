@@ -2,15 +2,20 @@
 name = "mind2t-vt-abi"
 version = "0.1.0"
 edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The C ABI mind2t-vt publishes, matching the subset of libghostty-vt it is gated against."
 
 [lib]
 name = "mind2t_vt"
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-mind2t-vt-abi-types = { path = "../abi-types" }
-mind2t-vt-core = { path = "../core" }
-mind2t-vt-snapshot = { path = "../snapshot" }
+mind2t-vt-abi-types = { path = "../abi-types", version = "0.1.0" }
+mind2t-vt-core = { path = "../core", version = "0.1.0" }
+mind2t-vt-snapshot = { path = "../snapshot", version = "0.1.0" }
 
 [dev-dependencies]
 serde = { workspace = true }

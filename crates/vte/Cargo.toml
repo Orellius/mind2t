@@ -5,8 +5,17 @@
 # APC. Diff deliberately minimal so upstream releases can be re-vendored by re-applying
 # it; if upstream ever grows APC dispatch, this fork retires (see README.md).
 [package]
-name = "vte"
+name = "mind2t-vt-vte"
 version = "0.15.0"
+# The PACKAGE is renamed because `vte` on crates.io belongs to the upstream project this forks.
+# The LIB TARGET keeps the name `vte`, so every `use vte::...` in this workspace is untouched and
+# the fork stays a re-vendorable diff rather than a rewrite.
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+name = "vte"
+path = "src/lib.rs"
 edition = "2021"
 license = "Apache-2.0 OR MIT"
 description = "Parser for implementing terminal emulators (mind2t-vt APC fork)"

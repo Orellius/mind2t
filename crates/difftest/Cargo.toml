@@ -3,7 +3,8 @@ name = "mind2t-vt-difftest"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+# A binary, and it depends on the oracle crate above, so it is unpublishable for both reasons.
+publish = false
 
 [dependencies]
 mind2t-vt-snapshot.workspace = true

@@ -4,6 +4,9 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Publishing terminal frames from the parse thread to a renderer, with bidi reordering."
 
 [dependencies]
 mind2t-vt-snapshot.workspace = true

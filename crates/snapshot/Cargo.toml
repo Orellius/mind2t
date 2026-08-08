@@ -4,3 +4,6 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The observable state of a terminal, and the difference between two of them."

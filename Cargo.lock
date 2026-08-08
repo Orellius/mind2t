@@ -2136,9 +2136,9 @@ name = "mind2t-vt-core"
 version = "0.1.0"
 dependencies = [
  "mind2t-vt-snapshot",
+ "mind2t-vt-vte",
  "png 0.17.16",
  "unicode-width",
- "vte",
 ]
 
 [[package]]
@@ -2218,6 +2218,14 @@ dependencies = [
 [[package]]
 name = "mind2t-vt-snapshot"
 version = "0.1.0"
+
+[[package]]
+name = "mind2t-vt-vte"
+version = "0.15.0"
+dependencies = [
+ "arrayvec",
+ "memchr",
+]
 
 [[package]]
 name = "minimal-lexical"
@@ -4375,14 +4383,6 @@ checksum = "fb067e4cbd1ff067d1df46c9194b5de0e98efd2810bbc95c5d5e5f25a3231150"
 dependencies = [
  "cc",
  "libc",
-]
-
-[[package]]
-name = "vte"
-version = "0.15.0"
-dependencies = [
- "arrayvec",
- "memchr",
 ]
 
 [[package]]

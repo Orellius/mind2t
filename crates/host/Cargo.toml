@@ -2,6 +2,11 @@
 name = "mind2t-vt-host"
 version = "0.1.0"
 edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The mind2t-vt embedder C surface: spawn a shell, poll rendered pixels, send bytes."
 
 # One archive, both surfaces: depending on mind2t-vt-abi as an rlib carries its 13
 # `ghostty_*` #[no_mangle] exports into this staticlib alongside `mind2t_host_*`. A second
@@ -12,11 +17,11 @@ name = "mind2t_vt_host"
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-mind2t-vt-abi = { path = "../abi" }
-mind2t-vt-core = { path = "../core" }
-mind2t-vt-frame = { path = "../frame" }
-mind2t-vt-pty = { path = "../pty" }
-mind2t-vt-render = { path = "../render" }
+mind2t-vt-abi = { path = "../abi", version = "0.1.0" }
+mind2t-vt-core = { path = "../core", version = "0.1.0" }
+mind2t-vt-frame = { path = "../frame", version = "0.1.0" }
+mind2t-vt-pty = { path = "../pty", version = "0.1.0" }
+mind2t-vt-render = { path = "../render", version = "0.1.0" }
 mind2t-vt-snapshot = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }

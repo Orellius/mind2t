@@ -1,94 +1,84 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
   <!--
-    Mind2t - the app mark. REDRAWN 2026-08-08 on Orel's word: "change the icon, create an icon
-    with 'M2T'". It replaces a cabinet-maker's screwdriver, which was drawn for the product's
-    previous reading as a workshop and stopped describing a terminal the day the workbench was
-    parked.
+    Mind2t - the app mark. Orel's pick, 2026-08-08, after twelve rejected attempts. It is worth
+    recording what those attempts ruled OUT, because every one of them died for a structural
+    reason and the next person to open this file will otherwise try them again:
 
-    THE GLYPHS ARE DRAWN ON A COARSE GRID, ON PURPOSE, and that is the whole design argument.
-    Three characters in one icon is one more than this mark has ever survived - the note in
-    CLAUDE.md says two elements is the ceiling, learned across four attempts that died at 32
-    pixels. What makes three viable is refusing curves: every stroke here is axis-aligned and 80
-    design units wide, which is 2.5 device pixels at 32, and a rectangle at 2.5px is still a
-    rectangle. A drawn '2' with a bowl and a tail is not - it turns to porridge, which is exactly
-    how the earlier rounded attempts failed.
+    - LETTERS CENTRED ON A PLATE, in any weight or colour, was rejected outright as a pattern.
+    - A HAIRLINE T BETWEEN THE M AND THE 2 spells MT2. Reading order is not negotiable.
+    - A NEGATIVE-SPACE T in the gap between the M and the 2 cannot work: a 2's left side is not a
+      straight wall, so the channel widens in the middle and stops being a stem.
+    - SQUARING THE M'S NOTCH to make that channel uniform turns the M into an H.
+    - THE FAIRGAMES TRICK (one stroke weight, the second letter built from strokes the first
+      already needed) works there because the G ENCLOSES the F. Nothing in M2T encloses anything,
+      and at the weight an M needs, its three counters fuse.
 
-    It is also the honest mark for this product. A terminal draws glyphs on a cell grid; the icon
-    is the product's own rasteriser applied to its own name. The '2' is a seven-segment form (the
-    a, b, g, e and d segments) for the same reason.
+    WHAT THIS MARK DOES INSTEAD. The M is drawn as one polyline in a single heavy stroke, and the
+    T is the crossbar cutting across its two stems - the same shared-stroke idea, but the T is
+    made of ONE stroke the M did not already have rather than several. The 2 sits in the M's
+    central counter.
 
-    LAYOUT, stated so a later edit does not have to re-derive it. Content box x 112..912,
-    y 300..724. Three cells 240 wide with 40 between them: 240*3 + 40*2 = 800. Cap height 424,
-    which is 41 percent of the canvas - large enough that each glyph owns about 8 device pixels
-    at 32, and any smaller was unreadable when measured.
+    THE FENCE IS THE LOAD-BEARING PART. The M's counter is a downward-pointing triangle and a 2 is
+    bottom-heavy, so the glyph's bottom bar collides with the diagonals no matter how it is
+    placed - that is why the two earlier "2 in the middle" versions failed. The 2 is therefore
+    drawn TWICE: once at stroke 150 in the plate's own colour, which carves a clearance around it,
+    and once at stroke 70 in white. The dark pass is not a shadow and not decoration; without it
+    the 2 is unreadable at any size.
 
-    COLOUR is the terminal's own, from crates/render/src/color.rs: ground #0d0d0d
-    (default_background) over the same #1c1c1c gradient the previous mark used, ink #ffffff
-    (default_foreground), and the '2' in #f0c674, palette index 3. The accent is on the middle
-    glyph deliberately - at 32 pixels a colour difference survives where a shape difference does
-    not, so the three characters keep their rhythm even when the strokes start to blur.
+    The fence uses the SAME gradient object as the plate, in userSpaceOnUse coordinates. A flat
+    fill would be a visible patch, because the plate is a gradient and the fence sits two thirds
+    of the way down it. Sharing one gradient in user space makes them identical by construction
+    rather than by a matched pair of numbers somebody has to keep in step.
 
-    Regenerate BOTH raster copies after any edit; nothing does it automatically:
+    KNOWN COST, stated rather than discovered: the crossbar cuts the M's diagonals, so the M reads
+    as a crown before it reads as a letter. Orel saw that and chose this anyway.
+
+    Colour is the terminal's own, from crates/render/src/color.rs: ground #0d0d0d
+    (default_background) under the same #1e1e1e lift the plate has always had, ink #ffffff
+    (default_foreground). No third hue.
+
+    Regenerate BOTH raster copies and the platform set after any edit; nothing does it
+    automatically:
       rsvg-convert -w 1024 -h 1024 assets/icon/mind2t.svg -o assets/icon/mind2t-1024.png
       cp assets/icon/mind2t-1024.png crates/mind2t/icons/icon.png
-    And judge the result at 32, which is what the Dock draws:
+      (cd crates/mind2t && cargo tauri icon ../../assets/icon/mind2t-1024.png -o icons)
+    And judge at 32, which is what the Dock draws:
       rsvg-convert -w 32 assets/icon/mind2t.svg | magick - -filter point -resize 900% out.png
   -->
   <defs>
-    <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1c1c1c"/>
-      <stop offset="1" stop-color="#0d0d0d"/>
+    <!-- userSpaceOnUse, spanning the plate exactly, so the fence below can share it. -->
+    <linearGradient id="ground" gradientUnits="userSpaceOnUse" x1="0" y1="64" x2="0" y2="960">
+      <stop offset="0" stop-color="#1e1e1e"/>
+      <stop offset="1" stop-color="#0b0b0b"/>
     </linearGradient>
     <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.24"/>
-      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0.05"/>
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.20"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.03"/>
       <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
   </defs>
 
   <rect x="64" y="64" width="896" height="896" rx="200" ry="200" fill="url(#ground)"/>
+
+  <!--
+    The M and the T, one weight. The M is a single polyline so its stems and diagonals cannot
+    drift apart; the crossbar spans both stems at y=330, which is where a T's arm sits relative
+    to a cap height of 210..856.
+  -->
+  <g fill="none" stroke="#ffffff" stroke-width="104" stroke-linecap="butt" stroke-linejoin="miter">
+    <path d="M156 856 L156 210 L512 690 L868 210 L868 856"/>
+    <path d="M156 330 L868 330"/>
+  </g>
+
+  <!-- The clearance. Same path, plate colour, wider stroke. See the card above. -->
+  <path d="M414 500 C414 462 442 436 480 436 C520 436 548 460 548 498
+           C548 528 526 546 490 574 L414 640 L556 640"
+        fill="none" stroke="url(#ground)" stroke-width="150" stroke-linejoin="round"/>
+  <!-- The 2 itself. -->
+  <path d="M414 500 C414 462 442 436 480 436 C520 436 548 460 548 498
+           C548 528 526 546 490 574 L414 640 L556 640"
+        fill="none" stroke="#ffffff" stroke-width="70" stroke-linejoin="round"/>
+
   <rect x="65" y="65" width="894" height="894" rx="199" ry="199"
         fill="none" stroke="url(#rim)" stroke-width="2"/>
-
-  <!--
-    M, cell x 112..352. One filled outline rather than three shapes, so the V notch cannot drift
-    away from the two stems. The notch bottoms at y 560, well above the baseline: a deep V eats
-    the middle of the glyph and at 32 pixels an M with a deep notch reads as two separate bars.
-  -->
-  <path d="M112 724 L112 300 L192 300 L232 430 L272 300 L352 300 L352 724
-           L272 724 L272 470 L232 560 L192 470 L192 724 Z" fill="#ffffff"/>
-
-  <!--
-    2, cell x 392..632, seven-segment: top, upper-right, middle, lower-left, bottom. Five
-    rectangles and no curve anywhere. The verticals overlap the horizontals by a full stroke, so
-    the corners are solid rather than mitred - a mitre is sub-pixel detail at 32 and reads as a
-    notch.
-
-    Two things here were measured at 32 rather than reasoned about, and the first render had both
-    wrong:
-    - THE GAPS MUST BE EQUAL. They were 52 units above the middle bar and 132 below, and at 32
-      pixels 52 units is 1.6 device pixels - the top bar and the middle bar fused into one block
-      and the glyph became a solid amber slab with a notch. The three bars now sit at 300, 472
-      and 644 with 92 units of air on both sides of the middle one, which is 2.9 pixels.
-    - THE TOP BAR IS INSET 40 UNITS ON THE LEFT, and that inset is what stops it reading as a Z.
-      A seven-segment 2 and a Z are otherwise the same five strokes; a real 2 begins its top
-      stroke to the right of its left edge because that stroke is the start of a curve. The
-      bottom bar stays full width, which is the other half of the distinction.
-  -->
-  <g fill="#f0c674">
-    <rect x="432" y="300" width="200" height="80"/>
-    <rect x="552" y="300" width="80" height="252"/>
-    <rect x="392" y="472" width="240" height="80"/>
-    <rect x="392" y="472" width="80" height="252"/>
-    <rect x="392" y="644" width="240" height="80"/>
-  </g>
-
-  <!--
-    T, cell x 672..912. The stem is centred on the cell and the arms are symmetric, because an
-    asymmetric T is the one letter people notice immediately even when they cannot say why.
-  -->
-  <g fill="#ffffff">
-    <rect x="672" y="300" width="240" height="80"/>
-    <rect x="752" y="380" width="80" height="344"/>
-  </g>
 </svg>

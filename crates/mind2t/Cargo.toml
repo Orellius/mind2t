@@ -37,11 +37,6 @@ muda = "0.19"
 # polish: it is what exposes `Window::add_child`, the only way to create a window BEFORE its
 # webview - and B2.2 measured that a wgpu surface created after the webview lands on top of it.
 tauri = { version = "2.11", features = ["unstable"] }
-# The event monitor Tauri makes necessary: `tauri::WindowEvent` carries no keyboard variant at
-# all, so the terminal's keys are read from AppKit directly. They must not come through the
-# webview - that is project law 2.
-block2 = "0.6"
-objc2 = "0.6"
 # Only for the chrome payload struct; the terminal side crosses no serialization boundary.
 serde = { version = "1", features = ["derive"] }
 
@@ -49,6 +44,17 @@ serde = { version = "1", features = ["derive"] }
 tauri-build = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# T1, 2026-08-08. These two were in the portable `[dependencies]` table until now, which is why
+# `cargo tree -p mind2t --target x86_64-unknown-linux-gnu` resolved `block2` and `objc2` for a
+# Linux build and the crate could not compile off macOS at all. Every USE of them was already
+# behind `#[cfg(target_os = "macos")]`; the manifest was the only thing that was not, and a
+# dependency table is not covered by any cfg the source carries.
+#
+# They are still here rather than deleted: the AppKit event monitor (`mod input` in main.rs) is
+# the macOS key and mouse source until T2 finds a portable one, and `mod input` reads raw
+# `NSEvent` through `objc2` and installs its handler as a `block2::RcBlock`.
+block2 = "0.6"
+objc2 = "0.6"
 # Already in the tree under wry and muda, so this is a direct path to NSPasteboard. Feature-scoped
 # rather than default: the default set pulls objc2-core-video, which a clipboard read has no use
 # for. Reading the clipboard is the HOST's job - the terminal core does no I/O.

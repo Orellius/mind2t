@@ -15,6 +15,10 @@ name: Rust
 # bidi conformance suite. That last one is the crown jewel and it is fully portable, which is
 # the happy accident of keeping bidi out of the core.
 #
+# One job here is NOT a subset of the local gate, and is the only place its property can be
+# checked at all: `linux-host` compiles the product crate for Linux. A Mac cannot fail that
+# check, so a Mac cannot gate it either.
+#
 # Everything else stays a local gate, and README says so.
 
 on:
@@ -80,6 +84,44 @@ jobs:
           -p mind2t-vt-snapshot
           -p mind2t-vt-frame
           --all-targets
+
+  linux-host:
+    name: the host compiles off macOS (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      # Tauri v2's Debian prerequisites, verified 2026-08-08 against
+      # https://v2.tauri.app/start/prerequisites/ rather than recalled. Without them the wry and
+      # tauri build scripts fail in pkg-config and the job goes red for a reason that has nothing
+      # to do with our own portability.
+      - name: Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential curl wget file \
+            libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: Swatinem/rust-cache@v2
+
+      # THIS JOB IS THE DEFINITION OF DONE FOR T1, and it is the only thing that can be.
+      # `block2` and `objc2` sat in the portable `[dependencies]` table until 2026-08-08, so the
+      # product crate could not compile off macOS at all - and nothing on a Mac can notice that,
+      # because every target a developer here builds for resolves them happily. The gate has to
+      # live on a runner that is not a Mac or it does not exist.
+      #
+      # `check`, not `test`: the tests in this crate open a window and drive AppKit. What is
+      # being asserted here is that the source COMPILES for Linux, which is the property that
+      # regresses silently every time a macOS path is added without a cfg.
+      - name: The product crate compiles for Linux
+        run: cargo check -p mind2t --all-targets
 
   macos:
     name: pty and renderer (macOS)

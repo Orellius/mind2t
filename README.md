@@ -12,7 +12,7 @@
   <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg"></a>
   <img alt="Rust 1.93+" src="https://img.shields.io/badge/rust-1.93%2B-orange.svg">
   <img alt="macOS arm64" src="https://img.shields.io/badge/platform-macOS%20arm64-lightgrey.svg">
-  <img alt="703 tests" src="https://img.shields.io/badge/tests-703-brightgreen.svg">
+  <img alt="706 tests" src="https://img.shields.io/badge/tests-706-brightgreen.svg">
 </p>
 
 ---
@@ -151,7 +151,7 @@ are untouched in both.
 
 | gate | what it proves |
 |---|---|
-| `cargo test --workspace` | 703 tests: units, pixels, concurrency, C-surface round trips |
+| `cargo test --workspace` | 706 tests: units, pixels, concurrency, C-surface round trips |
 | `mind2t-vt-difftest` | 223 corpus cases, every verdict met, 17 of them pinned to disagree |
 | `esctest2` | 391 pinned passes of 568, both directions: a regression fails, so does an unpromoted pass |
 | `scripts/smoke-mind2t.sh` | 26 host invariants about what AppKit, WebKit, the IPC and the child processes actually did, with no screen required |
@@ -178,6 +178,43 @@ Every line in that image is a rule that a plausible implementation gets wrong:
 - **Brackets mirror** inside an RTL run.
 - **Box drawing bounds the segment**, so a framed table keeps its frame where the program drew it. Whole-line reordering across a table moves the frame relative to the text it encloses.
 - **Niqqud are placed by the font's own GPOS tables**, one cell each, rather than at default bearings.
+
+### What you type, and what lands on the grid
+
+Logical order is what the program writes; visual order is what the terminal draws. Read the right
+column right-to-left where it is Hebrew or Arabic, and note what does **not** move.
+
+| script | logical (what the program writes) | visual (what this terminal draws) |
+|---|---|---|
+| Hebrew | `שלום עולם` | `םלוע םולש` |
+| Hebrew + digits | `גיל 42 שנה` | `הנש 42 ליג` |
+| Hebrew in code | `let msg = "שלום";` | `let msg = "םולש";` |
+| Hebrew in a frame | `│אבג│abc│` | `│גבא│abc│` |
+| Arabic | `مرحبا بالعالم` | joined, right-to-left, each letter in its contextual form |
+| Persian | `سلام دنیا` | same, and `پ چ ژ گ` resolve through the same stack |
+
+Three of those are the cases a plausible implementation gets wrong. **`42` stays `42`** - reversing
+the run wholesale yields `24`, and it reads as perfectly normal until somebody types a port number
+backwards. **The code keeps its direction** while the string inside it reorders. **The box drawing
+stays in columns 0, 4 and 8**, because whole-line reordering across a table moves the frame
+relative to the text it encloses.
+
+Arabic and Persian go through the same reordering as Hebrew - the algorithm is script agnostic -
+and additionally through the shaper, because they are cursive: a contiguous run in one cursive
+script is shaped as a run so each letter takes its initial, medial, final or isolated form.
+
+Render any of them yourself. The example runs a command in a real pty and draws the result with
+this terminal's own CPU backend, so it needs no window and no display:
+
+```sh
+cargo run -p mind2t-vt-render --example screenshot -- \
+  --cols 30 --rows 3 --font 32 --out /tmp/shot.bmp --until "42" -- \
+  /bin/sh -c "printf 'gil 42 shana\nגיל 42 שנה'"
+```
+
+`--until` is the text the example waits to see on the grid before capturing; without it you
+photograph an empty screen. The output is a BMP, and it is deliberately not a PNG: writing one
+would mean an encoder in the render crate's dependency tree to serve a debugging tool.
 
 ### The proof
 
@@ -218,8 +255,8 @@ stack rather than by the reordering.
 |---|---|---|
 | Latin, box drawing, powerline | Menlo | ships with macOS |
 | Hebrew | **Miriam Mono CLM** (Culmus, GPL-2.0) | optional, worth installing; monospaced, GSUB composes shin-dot and dagesh, GPOS centres niqqud, marks carry zero advance so a pointed cluster stays one cell |
-| Arabic, Persian | **Kawkab Mono** (SIL OFL 1.1) | optional, worth installing; monospaced, so Arabic shares the grid |
-| Arabic fallback | SF Arabic, Geeza Pro | ship with macOS, **proportional**, so Arabic renders but sits unevenly |
+| Arabic, Persian | **Kawkab Mono** (SIL OFL 1.1) | optional, worth installing; covers both blocks and joins correctly. It does **not** fix the grid - see below |
+| Arabic fallback | SF Arabic, Geeza Pro | ship with macOS, so Arabic and Persian render on a bare machine |
 
 Both optional faces are user-installed and the stack drops them silently when absent, so nothing
 here demands somebody else's font.
@@ -230,10 +267,33 @@ algorithm reordered them perfectly. Correct algorithm, empty row, no error anywh
 by rendering the sheet above across three scripts and looking at it, not by a test, and
 `arabic_and_persian_resolve_somewhere_in_the_stack` is that omission turned into one.
 
-Coverage alone was not the fix. Adding a proportional face stopped the blank cells and left
-Arabic sitting off the grid; `a_monospaced_arabic_face_outranks_the_proportional_ones` pins the
-ordering that fixes the second half, and checks that the monospaced face is the one which
-actually answers rather than merely the one listed first.
+Coverage alone was not the fix. Adding a face stopped the blank cells and left Arabic sitting off
+the grid, so `a_monospaced_arabic_face_outranks_the_proportional_ones` pins the ordering and
+checks that the monospaced face is the one which actually answers rather than merely the one
+listed first.
+
+**And that is still not enough, which this file claimed otherwise until 2026-08-08.** Installing a
+monospaced Arabic face does not put Arabic on the grid. Measured at 32px against a 19px cell:
+
+| codepoint | face that answers | advance |
+|---|---|---|
+| `A` | Menlo | 19.27px |
+| `א` | Miriam Mono CLM | 19.20px |
+| `ب` | **Kawkab Mono** | **22.40px** |
+
+Monospaced is a property of a face on its own - uniform advance within itself. A terminal grid
+needs something else entirely: an advance equal to the **primary** face's, and no font ships
+promising that. Miriam Mono matching Menlo to 0.07px is luck rather than design, and it is the
+whole reason Hebrew has never shown this and Arabic always will. The visible symptom is a letter
+overhanging its cell: because a run paints in logical order, on a right-to-left row each letter's
+spill lands on a cell already painted and never cleared, so an empty space beside an Arabic letter
+keeps 50 inked pixels of its neighbour.
+
+The fix is named rather than guessed at - rasterise each fallback at `size * cell / advance`,
+27.1px here, which is uniform scaling so letter shapes survive. Not built. Until it is, the defect
+is pinned by `an_arabic_glyph_still_overhangs_its_cell`, which asserts it **as it stands** the way
+a corpus case marked `diff` does: when the fix lands that test fails, and the failure is the
+feature. Detail in [`docs/BACKLOG-2026.md`](docs/BACKLOG-2026.md) under P2.
 
 **Arabic letters take their contextual forms.** A contiguous run of cells in one cursive script
 is shaped as a run, so each letter resolves to its initial, medial, final or isolated glyph, and

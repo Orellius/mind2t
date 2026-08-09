@@ -45,3 +45,5 @@ crates/mind2t/icons/icon.ico
 # the operator directly and name product direction. They are not documentation of
 # the product, and they stay on disk.
 docs/plans/
+docs/APP-BACKLOG-2026.md
+docs/BACKLOG-2026.md

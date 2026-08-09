@@ -13,9 +13,35 @@
 
 use std::collections::VecDeque;
 
-use mind2t_vt_snapshot::Row;
+use mind2t_vt_snapshot::{Row, RowSemantic};
 
 use crate::page::{HistoryRow, Page};
+
+/// Which viewport offset a prompt jump lands on, or `None` when there is nowhere to go.
+///
+/// `offsets` is `History::prompt_offsets` and `current` is the viewport offset now - both in
+/// offsets-from-end, which is the coordinate the pump's viewport already speaks. Free function
+/// rather than a method so the pty crate can reach it without owning a `History`, and so the
+/// arithmetic is testable against a literal slice with no scrollback to build.
+///
+/// `None` is a real answer and the load-bearing one: at the oldest prompt there is nowhere
+/// further to go, and staying put is correct. Clamping to the top of history instead would
+/// silently turn a prompt jump into a jump-to-top, moving the operator somewhere they never
+/// asked to go and losing their place.
+///
+/// Strictly above / strictly below, never equal - a jump that could return `current` is a key
+/// that sometimes does nothing while looking like it worked.
+pub fn prompt_jump_offset(offsets: &[usize], current: usize, back: bool) -> Option<usize> {
+    if back {
+        // Further INTO history is a LARGER offset; `prompt_offsets` runs ascending, so the
+        // first entry past `current` is the nearest mark above the viewport.
+        offsets.iter().copied().find(|&offset| offset > current)
+    } else {
+        // Back toward the live bottom: the largest offset still under where we are. Asked as a
+        // `max` rather than by position, so it stays correct if that ordering ever changes.
+        offsets.iter().copied().filter(|&offset| offset < current).max()
+    }
+}
 
 /// Scrollback for one screen.
 #[derive(Debug)]
@@ -113,6 +139,44 @@ impl History {
             skip = 0;
         }
         rows
+    }
+
+    /// Offsets-from-end of every row that BEGINS a shell prompt, nearest the live bottom first.
+    ///
+    /// The coordinate is deliberately the one `rows_from_end` and the pump's viewport offset
+    /// already speak, so an answer can be handed straight back as a scroll position with no
+    /// conversion - the seam class that made the D2a selection probe dangerous was exactly two
+    /// row-coordinate spaces that looked alike.
+    ///
+    /// `Prompt` only, never `PromptContinuation`. A wrapped two-line prompt is ONE place the
+    /// operator wants to land on, and stopping on its second row would scroll the command they
+    /// were looking for off the top of the viewport.
+    ///
+    /// Walks the WHOLE history, O(rows) per call - stated rather than hidden. At the 10,000-row
+    /// default that is ten thousand metadata reads on a key press, far inside a frame budget. If
+    /// the budget ever grows enough to matter, the fix is an index maintained in `push`, not a
+    /// cache here that can go stale against a prune.
+    pub fn prompt_offsets(&self) -> Vec<usize> {
+        let mut offsets = Vec::new();
+        // Pages run oldest-first, so a count from the front converts to an offset-from-end by
+        // subtraction. One pass, and no intermediate materialisation of rows.
+        let mut from_start = 0usize;
+        for page in &self.pages {
+            for index in 0..page.len() {
+                if let Some(row) = page.row(index) {
+                    if row.semantic_prompt == RowSemantic::Prompt {
+                        // `len - from_start`: the newest history row is offset 1, matching
+                        // `rows_from_end`, where offset 0 is the live bottom and is not a
+                        // history row at all.
+                        offsets.push(self.len - from_start);
+                    }
+                }
+                from_start += 1;
+            }
+        }
+        // Nearest the bottom first - the order both jump directions read in.
+        offsets.reverse();
+        offsets
     }
 
     /// Drops the oldest rows until the budget is met, releasing whole pages as they empty.
@@ -369,5 +433,99 @@ mod tests {
         history.clear();
         assert!(history.is_empty());
         assert_eq!(history.to_rows().len(), 0);
+    }
+
+    /// Offsets-from-end, ascending, exactly as `prompt_offsets` returns them: three prompts
+    /// 5, 12 and 30 rows above the live bottom.
+    const PROMPTS: &[usize] = &[5, 12, 30];
+
+    #[test]
+    fn a_jump_back_lands_on_the_nearest_prompt_above() {
+        // From the live bottom the first jump is the NEWEST prompt, not the oldest.
+        assert_eq!(prompt_jump_offset(PROMPTS, 0, true), Some(5));
+        assert_eq!(prompt_jump_offset(PROMPTS, 5, true), Some(12));
+        assert_eq!(prompt_jump_offset(PROMPTS, 12, true), Some(30));
+    }
+
+    #[test]
+    fn a_jump_forward_lands_on_the_nearest_prompt_below() {
+        assert_eq!(prompt_jump_offset(PROMPTS, 30, false), Some(12));
+        assert_eq!(prompt_jump_offset(PROMPTS, 12, false), Some(5));
+    }
+
+    /// The load-bearing assertion. `None` at the ends, never a clamp: clamping would silently
+    /// turn a prompt jump into a jump-to-top, moving the operator somewhere they never asked
+    /// to go and losing their place in the scrollback.
+    #[test]
+    fn past_the_ends_is_none_and_never_a_clamp() {
+        assert_eq!(prompt_jump_offset(PROMPTS, 30, true), None);
+        assert_eq!(prompt_jump_offset(PROMPTS, 99, true), None);
+        assert_eq!(prompt_jump_offset(PROMPTS, 5, false), None);
+        assert_eq!(prompt_jump_offset(PROMPTS, 0, false), None);
+        assert_eq!(prompt_jump_offset(&[], 0, true), None);
+    }
+
+    /// Landing where you already are is a key that does nothing while looking like it worked.
+    #[test]
+    fn a_jump_never_returns_the_offset_it_started_on() {
+        for &at in PROMPTS {
+            assert_ne!(prompt_jump_offset(PROMPTS, at, true), Some(at));
+            assert_ne!(prompt_jump_offset(PROMPTS, at, false), Some(at));
+        }
+    }
+
+    /// A history with no OSC 133 marks - the shell-integration-absent case, which is the
+    /// common one until the operator installs it. Empty, not an error, and the jump no-ops.
+    #[test]
+    fn unmarked_history_has_no_prompts() {
+        let mut history = History::new(4, 16);
+        for _ in 0..8 {
+            history.push(HistoryRow { cells: Vec::new(), meta: RowMeta::default() });
+        }
+        assert_eq!(history.len(), 8);
+        assert!(history.prompt_offsets().is_empty());
+        assert_eq!(prompt_jump_offset(&history.prompt_offsets(), 0, true), None);
+    }
+
+    /// The offsets a real history reports, in the SAME coordinate `rows_from_end` reads - the
+    /// seam worth pinning, because two row spaces that look alike is what made the D2a
+    /// selection probe dangerous. Rows go in oldest-first; the newest is offset 1.
+    #[test]
+    fn prompt_offsets_are_the_same_coordinate_rows_from_end_speaks() {
+        let mut history = History::new(4, 16);
+        let prompt = RowMeta { semantic_prompt: RowSemantic::Prompt, ..RowMeta::default() };
+        // Six rows: prompts at push-order 1 and 4 (0-indexed).
+        for index in 0..6 {
+            let meta = if index == 1 || index == 4 { prompt } else { RowMeta::default() };
+            history.push(HistoryRow { cells: Vec::new(), meta });
+        }
+        // len 6: push-order 4 is one from the newest -> offset 2; push-order 1 -> offset 5.
+        assert_eq!(history.prompt_offsets(), vec![2, 5]);
+        // And the coordinate really is rows_from_end's: asking for one row at that offset
+        // returns a row carrying the mark. This is what makes the two spaces provably one.
+        for offset in history.prompt_offsets() {
+            let rows = history.rows_from_end(offset, 1);
+            assert_eq!(rows.len(), 1, "offset {offset} names a real row");
+            assert_eq!(rows[0].semantic_prompt, RowSemantic::Prompt, "offset {offset}");
+        }
+    }
+
+    /// A continuation row is NOT a jump target: a wrapped two-line prompt is one place to land,
+    /// and stopping on its second row scrolls the command being looked for off the top.
+    #[test]
+    fn a_prompt_continuation_is_not_a_target() {
+        let mut history = History::new(4, 16);
+        history.push(HistoryRow {
+            cells: Vec::new(),
+            meta: RowMeta { semantic_prompt: RowSemantic::Prompt, ..RowMeta::default() },
+        });
+        history.push(HistoryRow {
+            cells: Vec::new(),
+            meta: RowMeta {
+                semantic_prompt: RowSemantic::PromptContinuation,
+                ..RowMeta::default()
+            },
+        });
+        assert_eq!(history.prompt_offsets(), vec![2]);
     }
 }

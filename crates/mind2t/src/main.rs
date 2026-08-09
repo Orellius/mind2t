@@ -1021,6 +1021,24 @@ fn dress(session: &mut mind2t_vt_host::session::Session, config: &Config) {
     }
 }
 
+/// Applies a scrollback chord to a pane, whichever key source produced it.
+///
+/// ONE function, called from all three call sites (the AppKit cmd branch, the AppKit general
+/// branch, and GTK), because a prompt jump and a page scroll take DIFFERENT paths - the jump
+/// goes to the pump, which owns the history the marks live in, while a page is a distance this
+/// side can compute. Writing that fork inline at each site is precisely the shape that left
+/// cmd+End dead for a day: correct in one branch, absent from another, and invisible until
+/// somebody pressed the key.
+fn apply_scroll(session: &mind2t_vt_host::session::Session, scroll: mind2t::scrollback::Scroll) {
+    // The fork comes from `prompt_direction`, which is unit-tested, rather than from a `match`
+    // written out here where nothing can reach it - the same reason the chord table itself
+    // lives in that module instead of in each key source.
+    match mind2t::scrollback::prompt_direction(scroll) {
+        Some(back) => session.jump_to_prompt(back),
+        None => session.scroll(mind2t::scrollback::rows(scroll, session.geometry().rows)),
+    }
+}
+
 /// The shell a new pane runs, honouring the config's own `shell` line.
 ///
 /// Run through `/bin/sh -c` when configured, because the key is a COMMAND LINE and not a path -
@@ -1852,8 +1870,11 @@ mod gtk_input {
         // The scrollback chords, before the encoder gets a look. `scrollback::action` answers
         // `None` for everything the child owns, which is nearly everything.
         if let Some(scroll) = scrollback::action(key, mods) {
-            pane.session
-                .scroll(scrollback::rows(scroll, pane.session.geometry().rows));
+            // `super::` because this is a submodule and `apply_scroll` is at file scope - the
+            // same import shape `Focus` and `tracing` already use above. An unresolved name
+            // here costs a CI round trip rather than a local error, because nothing on this
+            // machine compiles the GTK path (T2b's lesson, paid once already).
+            super::apply_scroll(&pane.session, scroll);
             return Propagation::Stop;
         }
 
@@ -2516,10 +2537,7 @@ mod input {
                         if let Some(scroll) = mind2t::scrollback::action(chord, KEY_MODS_SUPER) {
                             let canvas = canvas.borrow();
                             if let Some(pane) = canvas.panes().get(index) {
-                                pane.session.scroll(mind2t::scrollback::rows(
-                                    scroll,
-                                    pane.session.geometry().rows,
-                                ));
+                                super::apply_scroll(&pane.session, scroll);
                             }
                             return std::ptr::null_mut();
                         }
@@ -2552,10 +2570,7 @@ mod input {
                     // the GTK path, and the same `scrollback::action` deciding - which is the
                     // point of that module existing rather than a match arm in each host.
                     if let Some(scroll) = mind2t::scrollback::action(key, mods) {
-                        pane.session.scroll(mind2t::scrollback::rows(
-                            scroll,
-                            pane.session.geometry().rows,
-                        ));
+                        super::apply_scroll(&pane.session, scroll);
                         return std::ptr::null_mut();
                     }
 

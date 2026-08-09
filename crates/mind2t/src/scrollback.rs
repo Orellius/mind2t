@@ -32,6 +32,28 @@ pub enum Scroll {
     ToTop,
     /// The live bottom, where new output appears.
     ToBottom,
+    /// The nearest OSC 133 prompt mark ABOVE the current viewport - the previous command.
+    PrevPrompt,
+    /// The nearest prompt mark BELOW the current viewport - the next command.
+    NextPrompt,
+}
+
+/// Whether a chord is a prompt jump, and which way: `Some(true)` climbs into history.
+///
+/// The fork every key source needs before it can act, because the two kinds of scroll take
+/// different paths - a distance this side computes versus a jump only the pump can resolve
+/// against the history the marks live in. Answering `None` for the distance chords is what
+/// keeps that decision in one tested place instead of an `if` per host.
+///
+/// The offset arithmetic is deliberately NOT here: it lives in
+/// `mind2t_vt_core::history::prompt_jump_offset`, beside the data, where the pty crate can also
+/// reach it. One implementation, two callers, no copy to drift.
+pub fn prompt_direction(scroll: Scroll) -> Option<bool> {
+    match scroll {
+        Scroll::PrevPrompt => Some(true),
+        Scroll::NextPrompt => Some(false),
+        _ => None,
+    }
 }
 
 /// The scroll a chord asks for, or `None` when the key belongs to the child.
@@ -51,6 +73,19 @@ pub fn action(key: Key, mods: KeyMods) -> Option<Scroll> {
         Key::PageDown | Key::NumpadPageDown => Some(Scroll::PageDown),
         Key::Home | Key::NumpadHome => Some(Scroll::ToTop),
         Key::End | Key::NumpadEnd => Some(Scroll::ToBottom),
+        // Prompt jumping is CMD-ONLY, and that asymmetry is the point rather than an oversight.
+        //
+        // Shift+Up and Shift+Down are REAL sequences (`ESC[1;2A` / `ESC[1;2B`) that programs
+        // consume - a TUI extends a selection with them. The page/home/end family above can
+        // claim shift because every Linux terminal already does and the convention is settled;
+        // no such convention exists for shift+arrow, so claiming it here would break selection
+        // in TUIs and look like the PROGRAM's fault, which is the most expensive kind of wrong.
+        //
+        // Cmd takes nothing from anybody: no terminal program can see it, the encoder cannot
+        // express it. The cost is that Linux has no prompt-jump chord yet - a real gap, named
+        // rather than papered over by taking a sequence that was not ours.
+        Key::ArrowUp if mods == KEY_MODS_SUPER => Some(Scroll::PrevPrompt),
+        Key::ArrowDown if mods == KEY_MODS_SUPER => Some(Scroll::NextPrompt),
         _ => None,
     }
 }
@@ -73,6 +108,12 @@ pub fn rows(scroll: Scroll, viewport_rows: u16) -> i32 {
         Scroll::PageDown => -page,
         Scroll::ToTop => i32::MAX,
         Scroll::ToBottom => i32::MIN,
+        // A prompt jump is not a distance - where it lands depends on where the marks are, and
+        // the viewport height says nothing about that. Zero rather than a panic because this is
+        // reachable from a host that forgot to route the variant, and a terminal that aborts on
+        // a key press is worse than one where a key does nothing. `a_prompt_jump_is_not_a_
+        // distance` and the call sites' own routing are what keep it from being reached.
+        Scroll::PrevPrompt | Scroll::NextPrompt => 0,
     }
 }
 
@@ -140,5 +181,49 @@ mod tests {
     fn the_ends_ask_for_more_than_exists_and_let_the_pump_clamp() {
         assert_eq!(rows(Scroll::ToTop, 40), i32::MAX);
         assert_eq!(rows(Scroll::ToBottom, 40), i32::MIN);
+    }
+
+    #[test]
+    fn cmd_arrows_jump_between_prompts() {
+        assert_eq!(action(Key::ArrowUp, KEY_MODS_SUPER), Some(Scroll::PrevPrompt));
+        assert_eq!(action(Key::ArrowDown, KEY_MODS_SUPER), Some(Scroll::NextPrompt));
+    }
+
+    /// The control for the chord choice, and the reason the arrows are cmd-only.
+    ///
+    /// Shift+Up is `ESC[1;2A` - a TUI extends a selection with it. If this ever starts
+    /// answering `Some`, selection breaks in every full-screen program and looks like the
+    /// program's bug. That is a louder failure than losing the jump, so it is pinned here.
+    #[test]
+    fn shift_arrows_still_belong_to_the_child() {
+        assert_eq!(action(Key::ArrowUp, KEY_MODS_SHIFT), None);
+        assert_eq!(action(Key::ArrowDown, KEY_MODS_SHIFT), None);
+        assert_eq!(action(Key::ArrowUp, 0), None);
+        assert_eq!(action(Key::ArrowDown, KEY_MODS_CTRL), None);
+    }
+
+    /// The direction fork, which is the half that lives in this crate. The offset arithmetic
+    /// it feeds is tested in `mind2t_vt_core::history` against literal slices.
+    #[test]
+    fn only_the_arrow_chords_are_prompt_jumps() {
+        assert_eq!(prompt_direction(Scroll::PrevPrompt), Some(true));
+        assert_eq!(prompt_direction(Scroll::NextPrompt), Some(false));
+        // The distance chords must answer None, or a host would route a page scroll to the
+        // pump as a jump and the page keys would quietly stop paging.
+        for distance in [Scroll::PageUp, Scroll::PageDown, Scroll::ToTop, Scroll::ToBottom] {
+            assert_eq!(prompt_direction(distance), None, "{distance:?} is a distance");
+        }
+    }
+
+    /// `rows` has no answer for a prompt jump, because the distance is not a function of the
+    /// viewport - it comes from where the marks actually are. Pinned so a future edit that
+    /// wires a jump through `rows` fails here rather than scrolling by a page.
+    #[test]
+    fn a_prompt_jump_is_not_a_distance() {
+        // `rows` answers zero for a jump - it cannot know the distance. The guard that keeps
+        // that zero unreachable is `apply_scroll` routing on `prompt_direction` first.
+        assert_eq!(rows(Scroll::PrevPrompt, 40), 0);
+        assert_eq!(rows(Scroll::NextPrompt, 40), 0);
+        assert!(prompt_direction(Scroll::PrevPrompt).is_some());
     }
 }

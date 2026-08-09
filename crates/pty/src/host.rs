@@ -147,6 +147,13 @@ pub struct Host {
     /// ticks. Positive scrolls up into history; the pump swaps it to zero, clamps the
     /// resulting offset against what history actually holds, and republishes.
     scroll: Arc<AtomicI64>,
+    /// A pending prompt jump: +1 asks for the previous prompt, -1 for the next, 0 for none.
+    ///
+    /// Separate from `scroll` and NOT expressible as one, because the distance is not knowable
+    /// on this side: only the pump can see the history the marks live in. Latest-wins rather
+    /// than accumulating - two presses in one tick should land one prompt away, not two, and a
+    /// jump the operator can no longer see the start of is worse than a slow one.
+    jump: Arc<AtomicI64>,
     /// The frame channel's fixed geometry ceiling; `resize` refuses anything past it.
     capacity: Geometry,
     /// Host-facing events the pump drained from the core (OSC 52, notifications, BEL).
@@ -284,6 +291,7 @@ impl Host {
         let images: Arc<Mutex<HashMap<u32, (u32, u32, Arc<Vec<u8>>)>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let scroll = Arc::new(AtomicI64::new(0));
+        let jump = Arc::new(AtomicI64::new(0));
         let pump = thread::Builder::new()
             .name("mind2t-vt-pty".to_string())
             .spawn({
@@ -293,6 +301,7 @@ impl Host {
                 let events = Arc::clone(&events);
                 let images = Arc::clone(&images);
                 let scroll = Arc::clone(&scroll);
+                let jump = Arc::clone(&jump);
                 move || {
                     pump(
                         master,
@@ -303,6 +312,7 @@ impl Host {
                         events,
                         images,
                         scroll,
+                        jump,
                     )
                 }
             })
@@ -320,6 +330,7 @@ impl Host {
                 events,
                 images,
                 scroll,
+                jump,
             },
             reader,
         ))
@@ -352,6 +363,21 @@ impl Host {
     /// pump's clamp instead of being overwritten.
     pub fn scroll_to_bottom(&self) {
         self.scroll.fetch_sub(1 << 40, Ordering::Relaxed);
+    }
+
+    /// Asks the pump to move the view to the nearest OSC 133 prompt mark: `back` climbs into
+    /// history to the previous command, otherwise it returns toward the newest.
+    ///
+    /// A STORE, unlike `scroll`'s accumulating add. Two presses inside one 16ms tick mean the
+    /// operator wants to be one prompt away and pressed twice, not two prompts away - and the
+    /// distances are not addable anyway, since each depends on where the previous jump landed.
+    ///
+    /// Silently does nothing when there is no prompt in that direction (no shell integration,
+    /// or already at the oldest mark). That is the pump's decision to make, because only it can
+    /// see the history; the alternative is this call blocking on an answer, which would put the
+    /// GUI thread behind a pty read.
+    pub fn jump_to_prompt(&self, back: bool) {
+        self.jump.store(if back { 1 } else { -1 }, Ordering::Relaxed);
     }
 
     pub fn send(&self, bytes: &[u8]) -> Result<(), Errno> {
@@ -477,6 +503,7 @@ fn pump(
     events: Arc<Mutex<VecDeque<Event>>>,
     images: Arc<Mutex<HashMap<u32, (u32, u32, Arc<Vec<u8>>)>>>,
     scroll: Arc<AtomicI64>,
+    jump: Arc<AtomicI64>,
 ) {
     let mut terminal =
         Terminal::with_scrollback(options.size.cols, options.size.rows, options.scrollback);
@@ -531,6 +558,29 @@ fn pump(
             let next = (offset as i64).saturating_add(delta).clamp(0, limit as i64) as usize;
             if next != offset {
                 offset = next;
+                publisher
+                    .publish_scrolled(&mut terminal, offset as u32)
+                    .expect(GATED);
+            }
+        }
+
+        // Prompt jumping. Resolved HERE and nowhere else, because the marks live in the
+        // history this thread owns - the GUI side can only say which direction it wants.
+        //
+        // Refused outright on the alternate screen: a full-screen program has no scrollback
+        // and no prompts, so jumping there would move a viewport that is not scrollable and
+        // land on marks belonging to the primary screen underneath it.
+        let direction = jump.swap(0, Ordering::Relaxed);
+        if direction != 0 && !terminal.on_alternate_screen() {
+            let offsets = terminal.screen().history.prompt_offsets();
+            // `None` means no mark in that direction - stay exactly where we are. Deliberately
+            // NOT a clamp to the nearest end: turning a jump into a scroll-to-top would move
+            // the operator somewhere they never asked to go.
+            if let Some(next) =
+                mind2t_vt_core::history::prompt_jump_offset(&offsets, offset, direction > 0)
+            {
+                offset = next;
+                anchored_pushed = terminal.screen().history.total_pushed();
                 publisher
                     .publish_scrolled(&mut terminal, offset as u32)
                     .expect(GATED);

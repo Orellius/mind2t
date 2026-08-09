@@ -491,6 +491,18 @@ impl Session {
         self.host.scroll(rows);
     }
 
+    /// Moves the view to the nearest OSC 133 prompt mark: `back` climbs into history to the
+    /// previous command, otherwise it returns toward the newest.
+    ///
+    /// Needs shell integration to do anything - the marks come from the shell emitting OSC 133,
+    /// and a shell that emits none leaves the history unmarked. That is a silent no-op by
+    /// design and NOT a failure to report: a terminal cannot tell "no marks yet" from "no
+    /// integration", and popping an error on a key press for the first case would be wrong.
+    /// The honest tell is that the view does not move.
+    pub fn jump_to_prompt(&self, back: bool) {
+        self.host.jump_to_prompt(back);
+    }
+
     /// The view pointer positions are measured in: surface size and the insets around the grid,
     /// in PHYSICAL pixels - the same space the frame's pixels use.
     ///

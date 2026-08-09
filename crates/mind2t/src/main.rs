@@ -1052,6 +1052,18 @@ fn shell_from(config: &Config) -> Command {
     // `claude` in a pane came to report "Transcript saving is off - inherited
     // CLAUDE_CODE_CHILD_SESSION marker" while this path was perfectly correct.
     mind2t::launch::dress(&mut command);
+    // What was actually built, under MIND2T_TRACE=1. Added 2026-08-09 because every layer of
+    // this path READ correctly - the closure, `shell_from`, `dress`, and `Host::spawn` which
+    // uses the `Command` it is handed - while the live child had neither the login flag nor the
+    // directory. Four rounds of inference lost to that; one line of measurement ends it.
+    if tracing() {
+        println!(
+            "mind2t: TRACE shell_from built {:?} args={:?} cwd={:?}",
+            command.get_program(),
+            command.get_args().collect::<Vec<_>>(),
+            command.get_current_dir(),
+        );
+    }
     command
 }
 

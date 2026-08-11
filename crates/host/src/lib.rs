@@ -78,6 +78,10 @@ pub enum Mind2tHostResult {
     /// the event deduplicated away, or wheel routing left the event to the embedder
     /// (viewport scroll). Not an error -- the embedder's own handling is next.
     Ignored = 6,
+    /// The argv carried a flag that turns an agent's approvals off. Nothing was spawned
+    /// and nothing was stripped: which flag, and where it sat, comes from
+    /// `mind2t_agent_screen` on the same argv.
+    Refused = 7,
 }
 
 /// Mirrors `Mind2tHostOptions` in `mind2t_host.h`.
@@ -408,6 +412,19 @@ fn build_command(options: &Mind2tHostOptions) -> Option<Command> {
         command.args(["-c", text]);
         command
     };
+    apply_cwd(&mut command, options);
+    command.env("TERM", "xterm-256color");
+    command.env_remove("CLAUDECODE");
+    command.env_remove("CLAUDE_CODE_CHILD_SESSION");
+    Some(command)
+}
+
+/// Applies `options.cwd`, which outranks whatever default the command already carries.
+///
+/// Shared by both spawn paths, and extracted rather than copied for the reason the whole
+/// `launch::dress` card gives: this rule was applied on one spawn path and absent on three
+/// others once already, and the symptom was a pane opening on the sealed read-only root.
+fn apply_cwd(command: &mut Command, options: &Mind2tHostOptions) {
     // An explicit working directory outranks both defaults above (S5 workspaces: a
     // session belongs to a worktree). Set LAST so it wins over the home default without
     // that branch having to know this option exists.
@@ -429,10 +446,6 @@ fn build_command(options: &Mind2tHostOptions) -> Option<Command> {
             }
         }
     }
-    command.env("TERM", "xterm-256color");
-    command.env_remove("CLAUDECODE");
-    command.env_remove("CLAUDE_CODE_CHILD_SESSION");
-    Some(command)
 }
 
 /// Spawns the command on a fresh pty and starts the parse/publish pipeline.
@@ -451,14 +464,37 @@ pub unsafe extern "C" fn mind2t_host_spawn(
     // The failure contract: the out-param never dangles.
     unsafe { out.write(std::ptr::null_mut()) };
     let options = unsafe { options.read() };
+    unsafe { spawn_into(&options, || build_command(&options), out) }
+}
+
+/// Everything both spawn entry points do once a `Command` exists: build the renderer, open
+/// the pty, start the pump, and hand back one handle.
+///
+/// EXTRACTED 2026-08-11 for `mind2t_host_spawn_agent`. An agent pane is the same pipeline
+/// with a different child, and the alternative -- a second copy of the retry loop, the
+/// palette precedence and the handle construction -- is the shape that has already cost this
+/// project the font-family bug and the cwd bug twice each: a rule applied on one spawn path
+/// and silently absent on the other.
+///
+/// `build` is called once PER ATTEMPT, not once: `Host::spawn` consumes the `Command` and the
+/// EAGAIN retry below needs a fresh one. `None` means the caller's command was malformed.
+///
+/// # Safety
+/// `out` must be non-NULL and valid for the duration of the call, and the caller must already
+/// have written NULL to it -- that is the never-dangle contract, and it belongs to the caller
+/// because only the caller knows what it validated before getting here.
+unsafe fn spawn_into(
+    options: &Mind2tHostOptions,
+    mut build: impl FnMut() -> Option<Command>,
+    out: *mut *mut Mind2tHost,
+) -> Mind2tHostResult {
     if options.cols == 0 || options.rows == 0 {
         return Mind2tHostResult::InvalidValue;
     }
 
-    let Some(mut command) = build_command(&options) else {
+    let Some(mut command) = build() else {
         return Mind2tHostResult::InvalidValue;
     };
-    let _ = &mut command; // rebuilt per retry below; the binding must stay mutable
 
     let font_size = if options.font_size > 0.0 {
         options.font_size
@@ -520,7 +556,7 @@ pub unsafe extern "C" fn mind2t_host_spawn(
             Err(_) if attempt < 2 => {
                 attempt += 1;
                 std::thread::sleep(std::time::Duration::from_millis(25));
-                command = match build_command(&options) {
+                command = match build() {
                     Some(rebuilt) => rebuilt,
                     None => return Mind2tHostResult::InvalidValue,
                 };
@@ -1938,4 +1974,293 @@ pub unsafe extern "C" fn mind2t_config_free(config: *mut Mind2tConfig) {
         return;
     }
     drop(unsafe { Box::from_raw(config) });
+}
+
+// -- agents ------------------------------------------------------------------------------
+//
+// The registry in `agent.rs` has been correct and unreachable since the Swift host came back
+// on 2026-08-11: zero exports, so the shipped app could not launch an agent into a pane at
+// all. This is that surface, and it is deliberately four small calls rather than one big one.
+//
+// The guard is the reason for the shape. `agent::screen` refuses to auto-type an
+// approval-bypassing flag on the operator's behalf, and a policy that lives in Rust while the
+// UI builds its own argv in Swift is a policy with a hole in it. So the embedder gets the
+// registry as DATA (`count`/`info`), the machine's answer about what is installed
+// (`resolve`), the guard as a QUESTION it can ask before it even enables a button
+// (`screen`), and a spawn that asks the guard again itself (`spawn_agent`) -- because a check
+// the caller may forget is not a guard.
+
+/// Mirrors `Mind2tAgentInfo` in `mind2t_host.h`. Every string is a borrowed static: valid for
+/// the life of the process, never freed by the caller.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct Mind2tAgentInfo {
+    /// The stable id `mind2t_agent_resolve` and `mind2t_host_spawn_agent` take.
+    pub id: *const c_char,
+    /// For a menu.
+    pub name: *const c_char,
+    /// What to tell an operator who does not have it. Shown instead of a disabled row.
+    pub install_hint: *const c_char,
+    /// How long this agent may sit silent after launch before the silence means failure.
+    /// Agents differ by more than 2x here, which is why it is data rather than a constant.
+    pub spawn_grace_ms: u32,
+    /// True for agents that ignore a prompt passed as argv and must be typed into after they
+    /// come up. The embedder needs this before it decides what to do with the operator's
+    /// first message, and getting it wrong is silent: the prompt is taken as a filename.
+    pub type_after_launch: bool,
+}
+
+/// The C strings the info struct lends out, built once.
+///
+/// `AgentDef`'s fields are Rust `&'static str`, which have no terminator, so a C surface
+/// needs its own copies. They are made once and never freed -- the registry is a compile-time
+/// constant and so is the number of them.
+fn agent_strings() -> &'static [(CString, CString, CString)] {
+    static TABLE: std::sync::OnceLock<Vec<(CString, CString, CString)>> =
+        std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        agent::REGISTRY
+            .iter()
+            .map(|def| {
+                let cstring = |text: &str| {
+                    CString::new(text).expect("registry strings are literals with no interior NUL")
+                };
+                (cstring(def.id), cstring(def.name), cstring(def.install_hint))
+            })
+            .collect()
+    })
+}
+
+/// The probe, app-global.
+///
+/// One cache rather than one per call: its whole value is not walking `PATH` ten times every
+/// time a menu opens, and a fresh `Probe` per call would be a cache that never hits. The
+/// asymmetric freshness (5 minutes for a hit, 10 seconds for a miss) is what makes an agent
+/// installed mid-session appear without a restart -- see `agent::Probe`.
+fn agent_probe() -> &'static std::sync::Mutex<agent::Probe> {
+    static PROBE: std::sync::OnceLock<std::sync::Mutex<agent::Probe>> = std::sync::OnceLock::new();
+    PROBE.get_or_init(|| std::sync::Mutex::new(agent::Probe::default()))
+    // Poison is taken rather than propagated at the lock sites below: a panic elsewhere has
+    // already reported itself, and turning it into a second failure in every later menu open
+    // buries the first one.
+}
+
+/// # Safety
+/// `id` must be NULL or a NUL-terminated string.
+unsafe fn agent_by_id(id: *const c_char) -> Option<&'static agent::AgentDef> {
+    if id.is_null() {
+        return None;
+    }
+    agent::find(unsafe { CStr::from_ptr(id) }.to_str().ok()?)
+}
+
+/// An argv from C as owned strings, or `None` when any element is NULL or not UTF-8.
+///
+/// # Safety
+/// `argv` must be NULL when `argc` is 0, or point to `argc` NUL-terminated strings.
+unsafe fn agent_argv(argv: *const *const c_char, argc: usize) -> Option<Vec<String>> {
+    if argc == 0 {
+        return Some(Vec::new());
+    }
+    if argv.is_null() {
+        return None;
+    }
+    let mut words = Vec::with_capacity(argc);
+    for index in 0..argc {
+        let word = unsafe { *argv.add(index) };
+        if word.is_null() {
+            return None;
+        }
+        words.push(unsafe { CStr::from_ptr(word) }.to_str().ok()?.to_string());
+    }
+    Some(words)
+}
+
+/// How many agent CLIs the registry knows. Indices below `mind2t_agent_info` accepts.
+#[unsafe(no_mangle)]
+pub extern "C" fn mind2t_agent_count() -> u32 {
+    agent::REGISTRY.len() as u32
+}
+
+/// Describes the agent at `index`. `InvalidValue` for an out-of-range index or a NULL `out`.
+///
+/// Says nothing about whether the agent is INSTALLED -- that is the machine's answer, not the
+/// registry's, and it is `mind2t_agent_resolve`.
+///
+/// # Safety
+/// `out` must be non-NULL and valid for the duration of the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mind2t_agent_info(
+    index: u32,
+    out: *mut Mind2tAgentInfo,
+) -> Mind2tHostResult {
+    if out.is_null() {
+        return Mind2tHostResult::InvalidValue;
+    }
+    let Some(def) = agent::REGISTRY.get(index as usize) else {
+        return Mind2tHostResult::InvalidValue;
+    };
+    let (id, name, hint) = &agent_strings()[index as usize];
+    unsafe {
+        out.write(Mind2tAgentInfo {
+            id: id.as_ptr(),
+            name: name.as_ptr(),
+            install_hint: hint.as_ptr(),
+            spawn_grace_ms: def.spawn_grace.as_millis() as u32,
+            type_after_launch: def.prompt == agent::Prompt::TypeAfterLaunch,
+        })
+    };
+    Mind2tHostResult::Success
+}
+
+/// Where `id`'s binary lives on THIS machine, written to `out` as UTF-8 (no NUL).
+///
+/// `Success` with the path, or `Ignored` with `*out_len` 0 when the agent is not installed --
+/// which is a fact about the machine and not an error, so an embedder can tell it apart from
+/// a bad call and show the install hint instead. `InvalidValue` for an unknown id.
+/// Call with `out` NULL and `cap` 0 to size the buffer first.
+///
+/// The answer is cached; see `agent_probe`.
+///
+/// # Safety
+/// `id` must be a NUL-terminated string; `out` must point to `cap` writable bytes or be NULL
+/// when `cap` is 0; `out_len` must be non-NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mind2t_agent_resolve(
+    id: *const c_char,
+    out: *mut u8,
+    cap: usize,
+    out_len: *mut usize,
+) -> Mind2tHostResult {
+    if out_len.is_null() {
+        return Mind2tHostResult::InvalidValue;
+    }
+    unsafe { out_len.write(0) };
+    let Some(def) = (unsafe { agent_by_id(id) }) else {
+        return Mind2tHostResult::InvalidValue;
+    };
+    let resolved = agent_probe()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .resolve(def);
+    match resolved {
+        Some(path) => copy_out(&path, out, cap, out_len),
+        None => Mind2tHostResult::Ignored,
+    }
+}
+
+/// Asks whether an argv is ours to send: `Success` when it is, `Refused` when it carries a
+/// flag that turns the agent's approvals off.
+///
+/// On a refusal the offending flag is written to `out` and its argv position to `at`, because
+/// an operator has to be told WHICH word to remove -- a message naming the wrong one sends
+/// them hunting. Both out-params are optional; call with `out` NULL and `cap` 0 to size.
+///
+/// Whole argv tokens are matched, never substrings: `--auto` is Factory's auto-approve and
+/// `--autosave` is not, and a guard that refuses the second teaches the operator to route
+/// around the first.
+///
+/// # Safety
+/// `argv` must be NULL when `argc` is 0, or point to `argc` NUL-terminated strings; `out`
+/// must point to `cap` writable bytes or be NULL when `cap` is 0; `at` may be NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mind2t_agent_screen(
+    argv: *const *const c_char,
+    argc: usize,
+    at: *mut u32,
+    out: *mut u8,
+    cap: usize,
+    out_len: *mut usize,
+) -> Mind2tHostResult {
+    if out_len.is_null() {
+        return Mind2tHostResult::InvalidValue;
+    }
+    unsafe { out_len.write(0) };
+    if !at.is_null() {
+        unsafe { at.write(0) };
+    }
+    let Some(words) = (unsafe { agent_argv(argv, argc) }) else {
+        return Mind2tHostResult::InvalidValue;
+    };
+    let Some(found) = agent::screen(&words) else {
+        return Mind2tHostResult::Success;
+    };
+    if !at.is_null() {
+        unsafe { at.write(found.at as u32) };
+    }
+    // The copy can still fail on a short buffer, and that failure must not be reported as
+    // "clean": the caller learns the flag did not fit from `*out_len`, and the verdict stays
+    // the refusal it is.
+    let _ = copy_out(&found.flag, out, cap, out_len);
+    Mind2tHostResult::Refused
+}
+
+/// Spawns a registry agent into a pane: the same pty, pump and renderer as
+/// `mind2t_host_spawn`, with the agent's own binary as the child.
+///
+/// `options.command` is IGNORED -- the child is the agent, resolved from `agent_id`.
+/// Everything else in `options` applies unchanged, `cwd` included.
+///
+/// Returns `Refused` when `argv` carries an approval bypass; nothing is spawned and nothing
+/// is stripped, and `mind2t_agent_screen` on the same argv names the flag. `Ignored` when the
+/// agent is simply not installed here. `InvalidValue` for an unknown id or a malformed argv.
+///
+/// The child's environment comes from `launch::dress`, the one place that owns it: HOME as
+/// the working directory unless `options.cwd` says otherwise, a declared TERM (a
+/// Finder-launched app inherits none, and a child with an empty TERM finds no terminfo and
+/// exits before drawing a cell), and the Claude Code session markers scrubbed so an agent in
+/// a pane is its own session rather than a child of whatever launched Mind2t.
+///
+/// NOT here: the first prompt. `Mind2tAgentInfo.type_after_launch` says which agents need it
+/// typed rather than passed, and sending it is `mind2t_host_send` once the pane is up.
+///
+/// # Safety
+/// `options`, `agent_id` and `out` must be non-NULL and valid for the duration of the call;
+/// `argv` must be NULL when `argc` is 0, or point to `argc` NUL-terminated strings.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mind2t_host_spawn_agent(
+    options: *const Mind2tHostOptions,
+    agent_id: *const c_char,
+    argv: *const *const c_char,
+    argc: usize,
+    out: *mut *mut Mind2tHost,
+) -> Mind2tHostResult {
+    if options.is_null() || out.is_null() {
+        return Mind2tHostResult::InvalidValue;
+    }
+    // The failure contract, same as the shell spawn: the out-param never dangles.
+    unsafe { out.write(std::ptr::null_mut()) };
+    let options = unsafe { options.read() };
+
+    let Some(def) = (unsafe { agent_by_id(agent_id) }) else {
+        return Mind2tHostResult::InvalidValue;
+    };
+    let Some(extra) = (unsafe { agent_argv(argv, argc) }) else {
+        return Mind2tHostResult::InvalidValue;
+    };
+    // Asked here even though `agent::launch` asks again below. Not redundant: this is the
+    // only refusal the caller can be TOLD apart from a spawn failure, and the one inside
+    // `launch` is what makes it impossible to route around by calling from somewhere else.
+    if agent::screen(&extra).is_some() {
+        return Mind2tHostResult::Refused;
+    }
+    let resolved = agent_probe()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .resolve(def);
+    let Some(binary) = resolved else {
+        return Mind2tHostResult::Ignored;
+    };
+
+    unsafe {
+        spawn_into(
+            &options,
+            || {
+                let mut command = agent::launch(def, &binary, &extra).ok()?;
+                apply_cwd(&mut command, &options);
+                Some(command)
+            },
+            out,
+        )
+    }
 }

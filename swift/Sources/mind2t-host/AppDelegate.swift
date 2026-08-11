@@ -68,10 +68,6 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// refused rather than handed to git, so the panel cannot widen its own reach.
     private var panelRoot: String?
     private var panelFiles: [ChangedFile] = []
-    /// The docked workspace sidebar (S5.5), or nil when it is closed.
-    private var sidebar: WebPanel?
-    /// Points the sidebar takes from the terminal pane when docked.
-    private static let sidebarWidth: CGFloat = 300
     /// git runs here, never on the main thread -- `status` on a large tree is tens of
     /// milliseconds and the terminal is blitting at 60 Hz on the other side of it.
     private let gitQueue = DispatchQueue(label: "mind2t.git", qos: .userInitiated)
@@ -281,15 +277,11 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             // seeing it in a real window. Opening it from the environment is what lets
             // that be a scripted capture instead of synthesized keystrokes into
             // whatever the operator happens to be doing.
-            // "1"/"diff" opens the review card, "sidebar" docks the workspace sidebar.
+            // "1"/"diff" opens the review card.
             let open = ProcessInfo.processInfo.environment["MIND2T_PANEL_OPEN"]
-            if open == "1" || open == "diff" || open == "sidebar" {
+            if open == "1" || open == "diff" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                    if open == "sidebar" {
-                        self?.toggleSidebar()
-                    } else {
-                        self?.toggleDiffPanel()
-                    }
+                    self?.toggleDiffPanel()
                 }
             }
         }
@@ -356,24 +348,15 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// resize (manual frames; two views do not earn Auto Layout here).
     private func layoutChrome() {
         guard let content = window.contentView else { return }
-        // The sidebar is DOCKED: it takes width away from the terminal rather than
-        // floating over it. Everything downstream follows for free, because
-        // `gridForPane` derives cols and rows from `view.bounds` -- so shrinking the
-        // view is what resizes the pty, and no geometry math learns about sidebars.
         let layout = ChromeLayout.compute(
-            content: content.bounds.size, tabHeight: TabBarView.height,
-            sidebarWidth: sidebar == nil ? nil : HostAppDelegate.sidebarWidth)
+            content: content.bounds.size, tabHeight: TabBarView.height)
         tabBar.frame = layout.tabBar
         tabBar.autoresizingMask = [.width, .minYMargin]
         view.frame = layout.pane
-        // Manual frames only: with the sidebar docked the pane is no longer the full
-        // width, and an autoresizing mask would silently stretch it back over the
-        // sidebar on the next window resize.
+        // Manual frames, still: `gridForPane` derives cols and rows from `view.bounds`, so the
+        // frame set here is what resizes the pty. An autoresizing mask would let AppKit move it
+        // behind that derivation's back.
         view.autoresizingMask = []
-        if let sidebar, let frame = layout.sidebar {
-            sidebar.frame = frame
-            sidebar.autoresizingMask = []
-        }
     }
 
     private var activeSession: Session? {
@@ -545,7 +528,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         if activeIndex >= index {
             activate(index: max(0, activeIndex - 1))
         } else {
-            refreshSidebar()
+            refreshTabBar()
         }
     }
 
@@ -555,7 +538,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         let session = sessions[index]
         session.markSeen()
         window.title = session.title
-        refreshSidebar()
+        refreshTabBar()
         fitToPane(session)
         syncPresentTarget(to: session)
         showFrame(session.poll() ?? session.lastImage)
@@ -576,11 +559,11 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         view.layer?.backgroundColor = background
     }
 
-    private func refreshSidebar() {
+    private func refreshTabBar() {
         // A workspace session is labelled by its workspace, prefixed so the strip groups
-        // by eye without a second row. The backlog assumed a sidebar to group in; the
-        // sidebar was replaced by this strip on 2026-07-30, and one flat row of pills
-        // with a visible prefix is a smaller change than reintroducing a tree.
+        // by eye without a second row. The backlog assumed a sidebar to group in; that
+        // sidebar was replaced by this strip on 2026-07-30 and deleted outright on
+        // 2026-08-11, so this strip is the only place a workspace is named.
         let titles = sessions.map { session -> String in
             guard let workspace = session.workspace else { return session.title }
             return "\u{2387} \(workspace)"
@@ -663,7 +646,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             }
         }
         if chromeChanged {
-            refreshSidebar()
+            refreshTabBar()
             if session === activeSession {
                 window.title = session.title
             }
@@ -703,7 +686,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
                 if activeIndex > index { activeIndex -= 1 }
             }
         }
-        refreshSidebar()
+        refreshTabBar()
     }
 
     // MARK: geometry
@@ -799,8 +782,8 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// REGRESSION FIXED HERE (found by the operator, 2026-08-02, the same day S5.5
     /// shipped): the chrome used to be laid out ONCE and kept correct during a resize by
     /// autoresizing masks. S5.5 removed those masks -- correctly, because `.width` on the
-    /// pane stretches it straight under a docked sidebar -- and did not put anything back
-    /// in their place, so the pane and sidebar simply kept their old frames while the
+    /// pane stretches it past its computed frame -- and did not put anything back
+    /// in their place, so the views simply kept their old frames while the
     /// window moved around them. The masks were half of a mechanism and only half was
     /// replaced.
     ///
@@ -1186,88 +1169,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         panel.focus()
     }
 
-    // MARK: workspace sidebar (S5.5)
 
-    /// Docks or undocks the sidebar. The window does not change size; the terminal pane
-    /// gives up the width, which is what makes this a resize of the pty.
-    func toggleSidebar() {
-        // A toggle mid-animation would leave the pane at whatever width the interrupted
-        // run had reached, because the closing pass reads the CURRENT frame as its start.
-        guard !sidebarAnimating else { return }
 
-        if let sidebar {
-            let content = window.contentView?.bounds ?? .zero
-            let closed = ChromeLayout.compute(
-                content: content.size, tabHeight: TabBarView.height, sidebarWidth: nil)
-            animateSidebar(
-                paneTo: closed.pane,
-                // Slid out past the right edge rather than faded: the sidebar is a
-                // physical wall of the window, and a wall that dissolves reads as a
-                // rendering fault while one that slides reads as a wall.
-                sidebarTo: NSRect(
-                    x: content.width, y: 0, width: sidebar.frame.width,
-                    height: sidebar.frame.height)
-            ) { [weak self] in
-                guard let self else { return }
-                sidebar.removeFromSuperview()
-                self.sidebar = nil
-                self.layoutChrome()
-                self.refitAll()
-                self.window.makeFirstResponder(self.view)
-            }
-            return
-        }
 
-        guard let url = WebPanel.documentURL(override: webDir) else {
-            report("sidebar: the panel document was not found (build web/)")
-            return
-        }
-        guard let panel = WebPanel(documentURL: url, docked: true, background: panelBackground())
-        else { return }
-        panel.onProtocolError = { [weak self] detail in self?.report("sidebar: \(detail)") }
-        panel.onMessage = { [weak self] message in self?.handleSidebar(message) }
-
-        let content = window.contentView?.bounds ?? .zero
-        let open = ChromeLayout.compute(
-            content: content.size, tabHeight: TabBarView.height,
-            sidebarWidth: HostAppDelegate.sidebarWidth)
-        guard let target = open.sidebar else { return }
-        // Starts off the right edge at its final size, so the slide is a translation and
-        // the document inside never lays out at a width it will not keep.
-        panel.frame = NSRect(x: content.width, y: target.minY, width: target.width, height: target.height)
-        window.contentView?.addSubview(panel)
-        sidebar = panel
-        animateSidebar(paneTo: open.pane, sidebarTo: target) { [weak self] in
-            self?.layoutChrome()
-            self?.refitAll()
-        }
-    }
-
-    /// True while the dock animation runs; see `toggleSidebar`.
-    private var sidebarAnimating = false
-
-    /// Slides the pane and the sidebar to their new frames together.
-    ///
-    /// The pty is resized ONCE, in the completion, never per frame: a SIGWINCH per
-    /// display refresh would make the child redraw ~12 times for one toggle, and vim or
-    /// a full-screen TUI reflowing at that rate is exactly the flicker this is meant to
-    /// remove. During the slide the terminal keeps its last frame, anchored top-left
-    /// (`contentsGravity`), so it is CLIPPED by the moving edge instead of squashed.
-    private func animateSidebar(
-        paneTo pane: NSRect, sidebarTo sidebar: NSRect, completion: @escaping () -> Void
-    ) {
-        sidebarAnimating = true
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.18
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            context.allowsImplicitAnimation = true
-            view.animator().frame = pane
-            self.sidebar?.animator().frame = sidebar
-        } completionHandler: { [weak self] in
-            self?.sidebarAnimating = false
-            completion()
-        }
-    }
 
     /// Every session is refitted, not just the active one: a background session keeps
     /// running with its own geometry, and one that missed the dock would repaint at the
@@ -1279,25 +1183,6 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         showFrame(activeSession?.poll() ?? activeSession?.lastImage)
     }
 
-    private func handleSidebar(_ message: PanelMessage) {
-        switch message {
-        case .ready:
-            sidebar?.post(.initialize(theme: panelTheme(), panel: .workspaces))
-            refreshSidebarPanel()
-        case .refresh:
-            refreshSidebarPanel()
-        case .dismiss:
-            if sidebar != nil { toggleSidebar() }
-        case .createWorkspace:
-            DispatchQueue.main.async { [weak self] in self?.newWorkspace() }
-        case .openWorkspace(let path):
-            openWorkspace(path: path)
-        case .decodeError(let detail):
-            report("sidebar could not read a host message: \(detail)")
-        default:
-            break
-        }
-    }
 
     /// Focuses the session already living in `path`, or opens one there.
     ///
@@ -1309,60 +1194,16 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             case .success(let trees) = Worktrees.list(containing: directory),
             let worktree = trees.first(where: { $0.path == path })
         else {
-            report("sidebar asked to open an unlisted worktree: \(path)")
+            report("asked to open an unlisted worktree: \(path)")
             return
         }
         if let index = sessions.firstIndex(where: { $0.workspace == worktree.branch }) {
             activate(index: index)
-            refreshSidebarPanel()
             return
         }
         newSession(in: worktree.path, workspace: worktree.label)
-        refreshSidebarPanel()
     }
 
-    /// Recomputes the worktree list off the main thread and posts it.
-    private func refreshSidebarPanel() {
-        guard sidebar != nil else { return }
-        guard let directory = activeDirectory() else {
-            sidebar?.post(.workspaces(repo: nil, rows: [], error: nil))
-            return
-        }
-        let openSessions = sessions.map { ($0.workspace, $0.title) }
-        let activeWorkspace = activeSession?.workspace
-        gitQueue.async { [weak self] in
-            let root = Git.repositoryRoot(containing: directory)
-            let outcome = Worktrees.list(containing: directory)
-            DispatchQueue.main.async {
-                guard let self, self.sidebar != nil else { return }
-                switch outcome {
-                case .success(let trees):
-                    let rows = trees.map { tree in
-                        // Sessions in the PRIMARY tree carry no workspace label -- they
-                        // are ordinary sessions that happen to be in the repository, and
-                        // labelling them would mean every window claimed a workspace it
-                        // never opened. So the primary row claims the unlabelled ones,
-                        // or it renders as active-with-no-session, which is a
-                        // contradiction the operator sees immediately (caught in the
-                        // S5.5 live tap).
-                        let mine =
-                            tree.isPrimary
-                            ? openSessions.filter { $0.0 == nil }
-                            : openSessions.filter { $0.0 == tree.branch }
-                        return WorkspaceRow(
-                            branch: tree.label, path: tree.path, isPrimary: tree.isPrimary,
-                            sessions: mine.map(\.1),
-                            isActive: activeWorkspace == tree.branch
-                                || (tree.isPrimary && activeWorkspace == nil))
-                    }
-                    self.sidebar?.post(.workspaces(repo: root, rows: rows, error: nil))
-                case .failure(let error):
-                    self.sidebar?.post(
-                        .workspaces(repo: root, rows: [], error: error.description))
-                }
-            }
-        }
-    }
 
     private func handle(_ message: PanelMessage) {
         switch message {
@@ -1528,11 +1369,4 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         closeSession(index: index)
     }
 
-    func tabBarCanToggleSidebar() -> Bool {
-        mind2t_config_panels(config)
-    }
-
-    func tabBarDidToggleSidebar() {
-        toggleSidebar()
-    }
 }

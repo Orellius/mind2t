@@ -11,9 +11,6 @@ protocol TabBarDelegate: AnyObject {
     func tabBarDidSelect(index: Int)
     func tabBarDidRequestNew()
     func tabBarDidRequestClose(index: Int)
-    /// Whether the sidebar toggle should do anything (S5.5: only with panels enabled).
-    func tabBarCanToggleSidebar() -> Bool
-    func tabBarDidToggleSidebar()
 }
 
 final class TabBarView: NSView {
@@ -81,17 +78,6 @@ final class TabBarView: NSView {
         plus.frame = NSRect(x: x + 2, y: y, width: 26, height: pillHeight)
         addSubview(plus)
         pills.append(plus)
-
-        // The workspace sidebar toggle, pinned right as in the reference. It carried the
-        // reference's shape and no behaviour until S5.5; `nil` action when panels are off
-        // keeps it inert rather than opening something that cannot exist.
-        let panel = makeButton(
-            symbol: "sidebar.right",
-            action: delegate?.tabBarCanToggleSidebar() == true ? #selector(toggleSidebar) : nil)
-        panel.frame = NSRect(x: bounds.width - 38, y: y, width: 26, height: pillHeight)
-        panel.autoresizingMask = [.minXMargin]
-        addSubview(panel)
-        pills.append(panel)
     }
 
     // Work-state indicator colors: amber while an agent works, red on error, green
@@ -180,10 +166,6 @@ final class TabBarView: NSView {
 
     @objc private func closeClicked(_ sender: NSButton) {
         delegate?.tabBarDidRequestClose(index: sender.tag)
-    }
-
-    @objc private func toggleSidebar() {
-        delegate?.tabBarDidToggleSidebar()
     }
 }
 

@@ -3,9 +3,8 @@
 #
 # Orel's call, 2026-08-11: the host goes back to Swift. This script is the Swift-era bundler
 # (last seen at 0c72892, before T7 replaced it with the Tauri one) brought back and brought
-# forward. It carries a NEW name on purpose - `build-app.sh` still builds the Tauri bundle and
-# stays until that host is deleted, because a repo that can only ship after a rewrite lands is a
-# repo that cannot ship.
+# forward. It shipped briefly as `build-swift-app.sh` while the Tauri host was still alive and
+# took this name back the moment that host was deleted, because one product has one install path.
 #
 # SwiftPM emits executables, not bundles, so the bundle is assembled by hand: Info.plist, the
 # release binary, Resources. Tauri's bundler did this part for free and that convenience is the
@@ -103,14 +102,64 @@ if [ -f "$ICON_SRC" ]; then
   # Already square at 1024, so it is resized directly - no padding pass. Padding a square source
   # onto a square canvas insets the whole mark, which is how an icon ends up looking smaller
   # than every other icon in the Dock.
+  # LANCZOS, AND THE FILTER IS THE WHOLE POINT OF THIS BLOCK.
+  #
+  # The mark carries a SILVER HAIRLINE around the squircle (855e507). A hairline is one or two
+  # pixels at 1024, so what happens to it on the way down to 32 is decided entirely by the
+  # resampling filter. `sips -z` uses a soft one: measured 2026-08-11 at 128px, the rim row read
+  # 48 71 07 - the bright edge smeared one pixel INWARD and dimmed - against 7A 43 00 in the
+  # artwork Orel approved. RMSE 0.0817. At Dock sizes that reads as the rim being gone, and it
+  # was reported twice as "the icon reverted to the old one".
+  #
+  # ImageMagick with -filter Lanczos reproduces the approved rim EXACTLY (7A 43 00 02) at
+  # RMSE 0.0027, a thirty-fold improvement, because that is the filter the original per-size
+  # renders were made with. Mitchell, Catrom, Triangle and Point were all measured and all lose.
+  #
+  # THE FALLBACK IS LOUD. A softened hairline is invisible unless you know to look, which is
+  # exactly how this shipped twice; if magick is absent the build says so rather than quietly
+  # producing the wrong icon again.
+  if command -v magick >/dev/null 2>&1; then
+    RESIZE_NOTE="magick -filter Lanczos"
+  else
+    RESIZE_NOTE="sips (SOFT: the silver hairline will not survive the downsample)"
+    echo "WARNING: ImageMagick not found. The icon's hairline will soften at small sizes." >&2
+    echo "         brew install imagemagick, then rebuild." >&2
+  fi
   for size in 16 32 128 256 512; do
-    sips -z "$size" "$size" "$ICON_SRC" --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
-    sips -z "$((size * 2))" "$((size * 2))" "$ICON_SRC" \
-      --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
+    for target in "$size" "$((size * 2))"; do
+      if [ "$target" = "$size" ]; then
+        out="$ICONSET/icon_${size}x${size}.png"
+      else
+        out="$ICONSET/icon_${size}x${size}@2x.png"
+      fi
+      if command -v magick >/dev/null 2>&1; then
+        magick "$ICON_SRC" -filter Lanczos -resize "${target}x${target}" "$out"
+      else
+        sips -z "$target" "$target" "$ICON_SRC" --out "$out" >/dev/null
+      fi
+    done
   done
   iconutil -c icns "$ICONSET" -o "$BUILD/Contents/Resources/Mind2t.icns"
+
+  # THE HAIRLINE IS ASSERTED, not assumed. The whole defect was that a wrong icon looks like a
+  # right icon, so the build measures the rim rather than trusting the filter it just chose.
+  # Row 64 of the 128px face, leftmost pixel: the approved artwork puts the rim's brightest
+  # value ON the edge (0x7A). A soft downsample moves the peak inward and leaves the edge dark,
+  # so a dim edge pixel is the signature of the bug and is what this refuses.
+  if command -v magick >/dev/null 2>&1; then
+    edge=$(magick "$ICONSET/icon_128x128.png" -crop 1x1+0+64 +repage -depth 8 -format "%[fx:int(255*r)]" info:)
+    if [ "$edge" -lt 90 ]; then
+      echo "error: the icon's silver hairline did not survive the downsample" >&2
+      echo "       edge pixel at (0,64) of the 128px face is $edge, expected ~122" >&2
+      exit 1
+    fi
+    ICON_NOTE="hairline ok (edge $edge, $RESIZE_NOTE)"
+  else
+    ICON_NOTE="UNVERIFIED ($RESIZE_NOTE)"
+  fi
 else
   echo "WARNING: $ICON_SRC missing, the bundle ships without an icon" >&2
+  ICON_NOTE="ABSENT"
 fi
 
 # THE BUNDLED BINARY MUST BE THE ONE JUST BUILT. b0a1d30 added this to the Tauri script after a
@@ -207,3 +256,4 @@ echo "installed $INSTALL"
 echo "  version    $VERSION"
 echo "  host       swift"
 echo "  smoke      $(echo "$SMOKE_OUT" | grep 'SMOKE OK' | head -1)"
+echo "  icon       ${ICON_NOTE:-unknown}"

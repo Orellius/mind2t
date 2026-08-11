@@ -34,11 +34,6 @@ body {
   user-select: none;
 }
 
-.brand {
-  font-weight: 600;
-  letter-spacing: 0.09em;
-}
-
 .cwd {
   color: #a7a7b8;
   overflow: hidden;
@@ -54,15 +49,13 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #35c46a;
-  box-shadow: 0 0 0 3px rgba(53, 196, 106, 0.16);
+.folder {
+  flex: 0 0 auto;
+  color: #8a8aa0;
+  display: block;
 }
 
-.dot[data-exited="true"] {
-  background: #d64545;
-  box-shadow: 0 0 0 3px rgba(214, 69, 69, 0.16);
+/* The session died. Same glyph, so the strip never reflows; only the colour carries it. */
+.folder[data-exited="true"] {
+  color: #d64545;
 }

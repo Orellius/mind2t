@@ -35,6 +35,12 @@ use tauri::{Emitter, Listener, LogicalPosition, LogicalSize, Manager, RunEvent, 
 
 /// Logical height of the chrome strip. Must match the CSS that draws it.
 const BAR_HEIGHT: f64 = 36.0;
+/// Breathing room between the glyphs and the window edge, in LOGICAL points.
+///
+/// Without it the first column sits against the frame and the top row against the strip, which
+/// reads as text bleeding off the surface rather than sitting on it. Scaled at the call sites,
+/// never here, because this constant is a document about points.
+const PAD: f64 = 10.0;
 
 /// Logical point size. The session is built at `FONT_SIZE * scale` so one buffer pixel is one
 /// DEVICE pixel. This repo has learned it twice already: a renderer handed point sizes on a 2x display rasterizes the whole grid at half resolution, and nothing errors.
@@ -1091,12 +1097,25 @@ fn shell_from(config: &Config) -> Command {
 /// else in the host has to know that a chrome exists - which is the same rule the Swift host's
 /// `ChromeLayout` follows and for the same reason: a second place that reasons about the strip
 /// is a second place that can disagree with the first.
-fn canvas_area(width: u32, height: u32, strip: u32) -> Rect {
+/// The area the canvas tiles, inset by [`PAD`] so glyphs do not touch the window edge.
+///
+/// The inset is applied HERE, to the area, rather than by the renderer drawing a border. The
+/// grid is derived from this rect, so padding taken here costs whole cells and the pty is told
+/// the smaller size at spawn. A renderer-side border would instead paint OVER columns the child
+/// still believes it owns, which is the shape where `stty size` and the screen disagree.
+///
+/// `pad` arrives in PHYSICAL pixels, already scaled by the caller, for the same reason `strip`
+/// does: this function knows nothing about the display.
+fn canvas_area(width: u32, height: u32, strip: u32, pad: u32) -> Rect {
+    // Saturating throughout: a window dragged smaller than the padding must yield an empty rect
+    // rather than wrap around to an enormous one.
     Rect {
-        x: 0,
-        y: strip,
-        width,
-        height: height.saturating_sub(strip),
+        x: pad,
+        y: strip + pad,
+        width: width.saturating_sub(pad.saturating_mul(2)),
+        height: height
+            .saturating_sub(strip)
+            .saturating_sub(pad.saturating_mul(2)),
     }
 }
 
@@ -1147,7 +1166,7 @@ fn main() {
     let canvas = match Canvas::spawn(
         &gpu,
         grid(scale),
-        canvas_area(physical.width, physical.height, strip),
+        canvas_area(physical.width, physical.height, strip, (PAD * scale) as u32),
         &specs,
         // The configured size, scaled. The scale is applied HERE and not in the config, because
         // the config is a document about points and this is the only place that knows the display.
@@ -1690,7 +1709,9 @@ fn main() {
             // cells against a stale view and the child acts on the column the pointer used to be
             // over. A canvas that resized only the rects would leave every child at its old size,
             // drawing under its neighbour and looking entirely healthy.
-            if let Err(error) = canvas.resize(canvas_area(width, height, strip)) {
+            if let Err(error) =
+                canvas.resize(canvas_area(width, height, strip, (PAD * scale) as u32))
+            {
                 // Reported, not fatal: a window dragged smaller than the grid can hold is the
                 // operator asking for something impossible, and the last good tiling stays on
                 // screen until they let go.

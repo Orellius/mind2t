@@ -25,3 +25,23 @@ mind2t-vt-render = { path = "../render", version = "0.1.0" }
 mind2t-vt-snapshot = { workspace = true }
 serde = { workspace = true }
 toml = { workspace = true }
+
+# `clipboard`, which arrived here on 2026-08-11 with the move back to a Swift host. Platform
+# tables, not the portable one, for the reason T1 recorded on 2026-08-08 after the app crate got
+# it wrong the other way: every USE is behind `#[cfg(target_os = ...)]`, but a dependency table
+# is not covered by any cfg the source carries, so a portable entry makes the crate unbuildable
+# on the platform that lacks the package.
+[target.'cfg(target_os = "macos")'.dependencies]
+# A NARROWER feature set than the app crate's copy on purpose. That one carries NSEvent,
+# NSApplication, NSView, NSWindow and NSResponder because its AppKit event monitor needs them;
+# a clipboard needs a pasteboard and nothing else, and the C surface is the only caller here.
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSPasteboard",
+] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The GTK half of the same module. Pinned to 0.18 for the reason the app crate pins it: a second
+# major would be a DIFFERENT `Clipboard` type than the one already resolved in Cargo.lock.
+gtk = "0.18"

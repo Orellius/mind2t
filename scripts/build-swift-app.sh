@@ -163,6 +163,25 @@ rm -rf "$INSTALL"
 mkdir -p "$HOME/Applications"
 cp -R "$BUILD" "$INSTALL"
 
+# BUST THE ICON CACHE, EVERY TIME, because replacing in place guarantees this problem.
+#
+# macOS caches an app's icon against its bundle identifier and path, and this script deliberately
+# keeps BOTH constant so the install replaces rather than duplicates. The cost of that choice is
+# that the Dock and Finder keep serving the icon they already had: measured 2026-08-11, the
+# freshly installed bundle carried the correct silver-rimmed artwork at all ten sizes while every
+# on-screen surface still drew the previous one, and Orel reported it as the icon having reverted.
+#
+# The artwork was never wrong, and that is the trap worth naming: the on-disk .icns is not
+# evidence about what is on screen. Check `Contents/Resources/*.icns` before touching any
+# artwork, because regenerating a correct icon to fix a cache produces a second wrong answer.
+#
+# `touch` alone is not enough - LaunchServices caches independently of mtime - so the bundle is
+# re-registered and the Dock restarted. The Dock reappears immediately and no window is lost.
+touch "$INSTALL"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+[ -x "$LSREGISTER" ] && "$LSREGISTER" -f "$INSTALL"
+killall Dock 2>/dev/null || true
+
 echo "installed $INSTALL"
 echo "  version    $VERSION"
 echo "  host       swift"

@@ -183,14 +183,66 @@ BUNDLED_SUM="$(shasum -a 256 "$BUILD/Contents/MacOS/mind2t-host" | cut -d' ' -f1
 # 2026-07-30: "cannot cd into Desktop" inside the app). A real ad-hoc signature binds the plist
 # and seals Resources, which is enough for TCC to attribute the app and prompt.
 #
-# Known cost, unchanged: the ad-hoc identity IS the cdhash, so every rebuild is a new identity
-# and macOS may re-prompt after a reinstall. Insufficient for distribution now the repo is
-# public - a downloaded artifact reports "damaged and can't be opened" - which is an open item
-# for a Developer ID, not something this script can fix.
-codesign --force -s - "$BUILD"
+# A STABLE IDENTITY, AND THIS IS WHY IT IS NOT AD-HOC ANY MORE.
+#
+# `codesign -s -` makes the app's DESIGNATED REQUIREMENT a bare cdhash:
+#
+#   # designated => cdhash H"f0c23e67af5314117812a89791b1f076fa32f97f"
+#
+# The cdhash is a hash of the code, so EVERY REBUILD IS A DIFFERENT APPLICATION as far as macOS
+# is concerned. Everything that remembers an app by identity then accumulates a row per build:
+# TCC's Privacy panes, Launchpad, login items, "open with". Measured 2026-08-11, after Orel
+# reported duplicate Mind2t apps for the second time - the first time it was diagnosed as a
+# LaunchServices staging-bundle registration, which was a real and different bug, fixed, and
+# NOT this one. Two causes, same symptom; that is why the first fix did not end it.
+#
+# Signing with a stable certificate instead makes the requirement
+#
+#   identifier "com.orellius.mind2t" and certificate leaf = H"<cert hash>"
+#
+# which does not move when the code does. One app, permanently, and TCC grants survive rebuilds
+# so Screen Recording and friends stop needing to be re-granted.
+#
+# SELF-SIGNED, deliberately. This is NOT Developer ID and NOT notarization: it costs nothing,
+# needs no Apple account, and a downloaded copy is still refused - which is correct, because
+# Mind2t is a local driver tool until Orel says it ships (his call, 2026-08-11). It fixes the
+# LOCAL identity churn and claims nothing about distribution.
+#
+# Absent the identity the build still works, ad-hoc, with the consequence named out loud rather
+# than a silent regression to the behaviour above. `scripts/make-signing-identity.sh` creates it.
+SIGN_IDENTITY="${MIND2T_SIGN_IDENTITY:-Mind2t Local Signing}"
+if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$SIGN_IDENTITY"; then
+  codesign --force --options runtime -s "$SIGN_IDENTITY" "$BUILD"
+  SIGNED_AS="$SIGN_IDENTITY"
+else
+  codesign --force -s - "$BUILD"
+  SIGNED_AS="ad-hoc"
+  echo "warning: no '$SIGN_IDENTITY' code-signing identity; signed ad-hoc." >&2
+  echo "         Every rebuild will be a NEW identity to macOS, so duplicate Mind2t entries" >&2
+  echo "         will accumulate in Privacy & Security and Launchpad. Fix it once with:" >&2
+  echo "           ./scripts/make-signing-identity.sh" >&2
+fi
 codesign -dv "$BUILD" 2>&1 | grep -q "Info.plist=not bound" && {
   echo "codesign failed to bind Info.plist" >&2; exit 1; }
 codesign --verify --deep --strict "$BUILD"
+
+# THE GATE, and it is the whole point of the block above: the requirement must not be a bare
+# cdhash. Asserting "we signed with an identity" would pass on a signature that produced a
+# cdhash requirement anyway; this asserts the PROPERTY that makes the duplicates stop.
+# `#* *` because codesign prints the derived requirement with a comment marker in some cases and
+# bare in others, and `certificate` rather than `certificate leaf` because a self-signed leaf IS
+# the root and reports as `certificate root`. Both measured 2026-08-11.
+REQUIREMENT="$(codesign -d -r- "$BUILD" 2>/dev/null | sed -n 's/^#* *designated => //p')"
+if [ "$SIGNED_AS" != "ad-hoc" ]; then
+  case "$REQUIREMENT" in
+    *certificate*) : ;;
+    *)
+      echo "signed as '$SIGNED_AS' and the requirement is still identity-unstable:" >&2
+      echo "  $REQUIREMENT" >&2
+      echo "Every rebuild would keep minting a new app identity. Refusing to install." >&2
+      exit 1 ;;
+  esac
+fi
 
 # THE BUNDLE ITSELF RUNS, not just the loose binary. This is the assertion that discriminates:
 # `--smoke` drives a child's output all the way to pixels and prints SMOKE OK, and no other

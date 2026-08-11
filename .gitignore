@@ -22,6 +22,13 @@ node_modules/
 # Launch copy. Local working material, not something a public repository should carry.
 /docs/launch
 
+# Session handover state, written by `/fold` and read by the SessionStart hook. Same reasoning
+# as the two above and the same shape of near-miss: on 2026-08-11 a `git add -A` swept
+# RESUME-PROMPT.md toward this PUBLIC remote and the M11 gate stopped it at the push. These
+# files describe one machine's absolute paths, its open items and its unshipped work, and they
+# are deliberately blunt about what is broken - useful to the next session, nobody else.
+/docs/checkpoints
+
 # Editor and OS droppings. A vim swap file was committed once and carried the machine's
 # account name and hostname in its header, which is not something a public repository
 # should be publishing on the author's behalf.

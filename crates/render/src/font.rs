@@ -301,11 +301,67 @@ impl FontStack {
         FontStack::load(&present, size)
     }
 
+    /// Where a face that SHIPS WITH THE APP is looked for, in order.
+    ///
+    /// Two of the fallbacks below are not system fonts and never were: Miriam Mono CLM and
+    /// Kawkab Mono are the only monospaced faces in the stack for Hebrew and for Arabic, and
+    /// the code used to read them out of `~/Library/Fonts` while calling them "optional and
+    /// user-installed". That made a correct grid depend on a manual step, and the failure when
+    /// the step is missed is SILENT: Hebrew falls through to proportional Arial Hebrew, advances
+    /// 9.0 against Latin's 10.0 at a 19px cell, and simply drifts. A machine format on
+    /// 2026-08-11 demonstrated it - a fresh Mac rendered Hebrew off the grid on first launch and
+    /// nothing anywhere said so.
+    ///
+    /// So they are vendored in `assets/fonts` and bundled. The directories are tried in this
+    /// order, first hit wins:
+    ///
+    /// 1. `<exe>/../Resources/fonts` - inside a macOS `.app`, which is where the shipped app
+    ///    finds them and why no install step exists.
+    /// 2. `<exe>/fonts` - a portable directory beside the binary, and the Linux tarball layout.
+    /// 3. `/usr/share/mind2t/fonts` - a Linux package install.
+    /// 4. `$HOME/Library/Fonts` - a user's own copy, which still wins over nothing and is what
+    ///    a `cargo run` in a checkout falls back to.
+    ///
+    /// A missing directory is skipped rather than erroring: every caller already treats an
+    /// unresolvable face as absent, and the system faces beneath still answer.
+    fn bundled_font(file: &str) -> Option<String> {
+        let mut dirs: Vec<std::path::PathBuf> = Vec::new();
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                // `Contents/MacOS/mind2t` -> `Contents/Resources/fonts`.
+                dirs.push(dir.join("../Resources/fonts"));
+                dirs.push(dir.join("fonts"));
+            }
+        }
+        dirs.push(std::path::PathBuf::from("/usr/share/mind2t/fonts"));
+        if let Ok(home) = std::env::var("HOME") {
+            dirs.push(std::path::PathBuf::from(home).join("Library/Fonts"));
+        }
+        // The checkout itself, last. Under `cargo test` and `cargo run` the executable lives in
+        // `target/debug/deps`, so none of the directories above exist and the grid assertions
+        // would measure a machine WITHOUT the fonts this repo ships - which is what they are
+        // there to prevent. Baked at compile time from this crate's manifest directory, so a
+        // shipped binary carries a path that simply is not a file on the user's machine and is
+        // skipped like any other miss.
+        dirs.push(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../assets/fonts"),
+        );
+        dirs.into_iter()
+            .map(|dir| dir.join(file))
+            .find(|path| path.is_file())
+            .map(|path| path.to_string_lossy().into_owned())
+    }
+
     fn system_paths() -> Vec<String> {
         let home = std::env::var("HOME").unwrap_or_default();
         let candidates = [
             ("/System/Library/Fonts/Menlo.ttc".to_string(), 0),
-            (format!("{home}/Library/Fonts/MiriamMonoCLM-Book.ttf"), 0),
+            // SHIPPED WITH THE APP, not hoped for. See `bundled_font`.
+            (
+                FontStack::bundled_font("MiriamMonoCLM-Book.ttf").unwrap_or_default(),
+                0,
+            ),
             ("/System/Library/Fonts/ArialHB.ttc".to_string(), 0),
             // Arabic and Persian (2026-08-07). The stack above carries NONE of the Arabic
             // block, so every Arabic and Persian codepoint resolved to nothing and drew as a
@@ -323,7 +379,13 @@ impl FontStack {
             // Measured 2026-08-07 on this machine: NOTHING monospaced with Arabic coverage was
             // installed, and the Iosevka already at the end of this stack carries no Arabic at
             // all (its cmap has no U+0628), so there was no existing candidate to promote.
-            (format!("{home}/Library/Fonts/KawkabMono-Regular.ttf"), 0),
+            // SHIPPED WITH THE APP, same reason as Miriam above. It was described here as
+            // "optional and user-installed", and on a machine where nobody installed it every
+            // Arabic codepoint fell to a proportional face.
+            (
+                FontStack::bundled_font("KawkabMono-Regular.ttf").unwrap_or_default(),
+                0,
+            ),
             // SF Arabic and Geeza Pro backstop it. SF Arabic first because it ships on current
             // macOS and carries the Persian letters an Arabic-only face omits (peh U+067E,
             // gaf U+06AF). Both are PROPORTIONAL, exactly like Arial Hebrew above, so without

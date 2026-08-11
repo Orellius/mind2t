@@ -92,6 +92,11 @@ EXPECTED=(
   mind2t_host_detach_layer
   mind2t_host_resize_layer
   mind2t_host_present
+  mind2t_agent_count
+  mind2t_agent_info
+  mind2t_agent_resolve
+  mind2t_agent_screen
+  mind2t_host_spawn_agent
 )
 
 # Captured once, not piped per symbol: `nm` exits non-zero on members with no symbols, and

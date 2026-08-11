@@ -42,6 +42,10 @@ typedef enum {
    * deduplicated, or a wheel left to the embedder's viewport scroll. Not an error --
    * the embedder's own handling of the event is next. */
   MIND2T_HOST_IGNORED = 6,
+  /* The argv carried a flag that turns an agent's approvals off. Nothing was spawned and
+   * nothing was stripped: mind2t_agent_screen on the same argv names the flag and its
+   * position. */
+  MIND2T_HOST_REFUSED = 7,
 } Mind2tHostResult;
 
 /* mind2t_host_mouse vocabularies. */
@@ -394,6 +398,85 @@ Mind2tHostResult mind2t_host_resize_layer(Mind2tHost *host, uint32_t width, uint
  * drives them at different rates - a resize presents without polling, and a quiet
  * terminal polls without needing to present. INVALID_VALUE when no layer is attached. */
 Mind2tHostResult mind2t_host_present(Mind2tHost *host);
+
+/* ---- Agents ---------------------------------------------------------------------
+ *
+ * Which coding-agent CLIs a pane can launch, whether this machine actually has them, and
+ * the one policy that must not live in the embedder: an approval-bypassing flag is the
+ * operator's to type and never ours to add.
+ *
+ * Four calls, deliberately not one. The registry is DATA (count/info), what is installed
+ * is the machine's answer and not the registry's (resolve), the guard is a QUESTION the UI
+ * can ask before it even enables a button (screen), and the spawn asks the guard again
+ * itself (spawn_agent) -- a check the caller may forget is not a guard. */
+
+/* One agent CLI as the embedder needs it. Every string is a borrowed static, valid for the
+ * life of the process and never freed by the caller. */
+typedef struct {
+  /* The stable id mind2t_agent_resolve and mind2t_host_spawn_agent take. */
+  const char *id;
+  /* For a menu. */
+  const char *name;
+  /* What to tell an operator who does not have it, instead of a disabled row. */
+  const char *install_hint;
+  /* How long this agent may sit silent after launch before the silence means failure.
+   * Agents differ by more than 2x, which is why it is data rather than a constant. */
+  uint32_t spawn_grace_ms;
+  /* True for agents that IGNORE a prompt passed as argv and must be typed into once they
+   * are up. Getting this wrong is silent: the prompt is taken as a filename. */
+  bool type_after_launch;
+} Mind2tAgentInfo;
+
+/* How many agents the registry knows; indices below this are valid for mind2t_agent_info. */
+uint32_t mind2t_agent_count(void);
+
+/* Describes the agent at index. INVALID_VALUE for an out-of-range index or a NULL out.
+ * Says nothing about whether it is INSTALLED -- that is mind2t_agent_resolve. */
+Mind2tHostResult mind2t_agent_info(uint32_t index, Mind2tAgentInfo *out);
+
+/* Where id's binary lives on THIS machine, written to out as UTF-8 with no terminator.
+ *
+ * SUCCESS with the path, or IGNORED with *out_len 0 when the agent is not installed --
+ * a fact about the machine rather than an error, so it can be told apart from a bad call
+ * and answered with the install hint. INVALID_VALUE for an unknown id. Call with out NULL
+ * and cap 0 to size the buffer first.
+ *
+ * Cached: a hit stays fresh for five minutes and a miss is re-checked after ten seconds,
+ * so an agent installed mid-session appears without a restart. */
+Mind2tHostResult mind2t_agent_resolve(const char *id, uint8_t *out, size_t cap,
+                                      size_t *out_len);
+
+/* Asks whether an argv is ours to send. SUCCESS when it is; REFUSED when it carries a flag
+ * that turns the agent's approvals off, with the offending flag written to out and its argv
+ * position to at -- the operator has to be told WHICH word to remove.
+ *
+ * Whole argv tokens are matched, never substrings: `--auto` is Factory's auto-approve and
+ * `--autosave` is not, and a guard that refuses the second teaches the operator to route
+ * around the first. at may be NULL; out may be NULL with cap 0 to size. */
+Mind2tHostResult mind2t_agent_screen(const char *const *argv, size_t argc, uint32_t *at,
+                                     uint8_t *out, size_t cap, size_t *out_len);
+
+/* Spawns a registry agent into a pane: the same pty, pump and renderer as
+ * mind2t_host_spawn, with the agent's binary as the child.
+ *
+ * options.command is IGNORED -- the child is the agent named by agent_id. Everything else
+ * in options applies unchanged, cwd included.
+ *
+ * REFUSED when argv carries an approval bypass; nothing is spawned and nothing is
+ * stripped, and mind2t_agent_screen on the same argv names the flag. IGNORED when the agent
+ * is not installed here. INVALID_VALUE for an unknown id or a malformed argv.
+ *
+ * The child gets HOME as its working directory unless options.cwd says otherwise, a
+ * DECLARED TERM (an app launched from Finder inherits none, and a child with an empty TERM
+ * finds no terminfo entry and exits before drawing a cell), and the Claude Code session
+ * markers scrubbed so an agent in a pane is its own session rather than a child of whatever
+ * launched Mind2t.
+ *
+ * NOT here: the first prompt. Mind2tAgentInfo.type_after_launch says which agents need it
+ * typed rather than passed; sending it is mind2t_host_send once the pane is up. */
+Mind2tHostResult mind2t_host_spawn_agent(const Mind2tHostOptions *options,
+                                         const char *agent_id, const char *const *argv,
+                                         size_t argc, Mind2tHost **out);
 
 #ifdef __cplusplus
 }

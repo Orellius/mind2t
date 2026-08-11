@@ -44,8 +44,25 @@ export function Chrome(): React.JSX.Element {
 
   return (
     <div className="bar">
-      <span className="dot" data-exited={String(session?.exited ?? false)} />
-      <span className="brand">MIND2T</span>
+      {/* A folder, not a status light and a wordmark. The strip already prints the path
+          immediately to the right, so a dot that meant "alive" and a brand that never changed
+          were both spending width to say nothing the operator could not already see. The
+          exited signal is not lost: it colours this icon, which is the thing the path belongs
+          to, so one glyph carries both facts. */}
+      <svg
+        className="folder"
+        data-exited={String(session?.exited ?? false)}
+        viewBox="0 0 16 16"
+        width="14"
+        height="14"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <path
+          fill="currentColor"
+          d="M1.5 3.25c0-.69.56-1.25 1.25-1.25h3.09c.4 0 .78.19 1.02.51l.79 1.05c.05.06.12.1.2.1h5.4c.69 0 1.25.56 1.25 1.25v7.34c0 .69-.56 1.25-1.25 1.25H2.75c-.69 0-1.25-.56-1.25-1.25V3.25Z"
+        />
+      </svg>
       <span className="cwd">{session?.cwd || "-"}</span>
       <span className="grid">{session ? `${session.cols}x${session.rows}` : "-"}</span>
     </div>

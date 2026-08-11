@@ -2185,12 +2185,15 @@ dependencies = [
 name = "mind2t-vt-host"
 version = "0.1.0"
 dependencies = [
+ "gtk",
  "mind2t-vt-abi",
  "mind2t-vt-core",
  "mind2t-vt-frame",
  "mind2t-vt-pty",
  "mind2t-vt-render",
  "mind2t-vt-snapshot",
+ "objc2-app-kit",
+ "objc2-foundation",
  "serde",
  "toml 0.9.12+spec-1.1.0",
 ]

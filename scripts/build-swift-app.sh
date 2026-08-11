@@ -21,6 +21,9 @@ cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
 APP_NAME="Mind2t"
+# Used twice below - to UNREGISTER the staging bundle and to RE-REGISTER the installed one - so
+# it is named once here rather than spelled out at both sites.
+LSREGISTER_TOOL="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 # The SAME identifier the Tauri bundle uses. This is a replacement, not a sibling: a second
 # identifier would give macOS two apps to disagree about, two Dock entries and two sets of TCC
 # grants, which is exactly the duplication the standing order forbids.
@@ -163,6 +166,25 @@ rm -rf "$INSTALL"
 mkdir -p "$HOME/Applications"
 cp -R "$BUILD" "$INSTALL"
 
+# THE STAGING BUNDLE IS REMOVED, and Spotlight is told never to index what replaces it.
+#
+# `build-app.sh` has carried this block since the Tauri host shipped and it says why: the build
+# product and the installed app are the SAME BYTES, which makes two of them worse rather than
+# better - the operator cannot tell which is which, and "they are identical" is only true until
+# the next build half-finishes. This script shipped without it in #48 and Orel reported "there
+# are double apps now" within the hour. Reintroducing a defect another script had already fixed
+# and documented is the argument for reading the sibling before writing the replacement.
+#
+# Three steps, because two of them are not enough. LaunchServices had the staging path REGISTERED
+# (`lsregister -dump` listed both), and it keeps that registration after the directory is gone,
+# so the bundle is unregistered explicitly rather than left for LS to notice. The marker is
+# written BEFORE the removal so a build that dies after this point still leaves an unindexed
+# tree, and it lives under swift/.build, which `swift package clean` wipes - hence written every
+# run rather than committed.
+: > "$ROOT/swift/.build/.metadata_never_index"
+[ -x "$LSREGISTER_TOOL" ] && "$LSREGISTER_TOOL" -u "$BUILD" 2>/dev/null || true
+rm -rf "$BUILD"
+
 # BUST THE ICON CACHE, EVERY TIME, because replacing in place guarantees this problem.
 #
 # macOS caches an app's icon against its bundle identifier and path, and this script deliberately
@@ -178,8 +200,7 @@ cp -R "$BUILD" "$INSTALL"
 # `touch` alone is not enough - LaunchServices caches independently of mtime - so the bundle is
 # re-registered and the Dock restarted. The Dock reappears immediately and no window is lost.
 touch "$INSTALL"
-LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
-[ -x "$LSREGISTER" ] && "$LSREGISTER" -f "$INSTALL"
+[ -x "$LSREGISTER_TOOL" ] && "$LSREGISTER_TOOL" -f "$INSTALL"
 killall Dock 2>/dev/null || true
 
 echo "installed $INSTALL"

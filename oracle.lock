@@ -4,6 +4,6 @@
 # mind2t-vt has no git upstream. This is the upstream that matters: the oracle is the
 # reference implementation, and when it moves the corpus can move with it.
 source = "a local Ghostty checkout"
-commit = "b2afcdc1deda92b4ea667bfc283636fa2a9a3a7b"
-describe = "v1.3.2-ruuah.1-1-gb2afcdc1d"
+commit = "f4c68d65e5008b950c9a2aac9fa928b244dc3b99"
+describe = "v1.3.1-1489-gf4c68d65e"
 zig = "0.16.0"

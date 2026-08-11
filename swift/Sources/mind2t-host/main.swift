@@ -425,67 +425,6 @@ func runWorktreeSmoke() -> Int32 {
     return 0
 }
 
-/// The S5.5 dock geometry: the pane and the sidebar must TILE the content exactly.
-///
-/// This is the silent one. A pane that keeps its full width while a sidebar is docked
-/// draws underneath it: the terminal looks perfectly normal and its right-hand columns
-/// are simply covered, which no screenshot of the sidebar would reveal. Overlap and gap
-/// are both failures, and both are invisible to "does it look right".
-func runDockSmoke() -> Int32 {
-    let tab: CGFloat = 38
-    let width: CGFloat = 300
-
-    func fail(_ message: String) -> Int32 {
-        FileHandle.standardError.write(Data("DOCK SMOKE FAILED: \(message)\n".utf8))
-        return 1
-    }
-
-    // Undocked: the pane owns the whole width and there is no sidebar rect at all.
-    let open = ChromeLayout.compute(
-        content: NSSize(width: 1120, height: 700), tabHeight: tab, sidebarWidth: nil)
-    guard open.sidebar == nil, open.pane.width == 1120 else {
-        return fail("undocked pane must own the full width, got \(open.pane.width)")
-    }
-
-    // Docked: exact tiling, and the pane genuinely gave up the width.
-    let docked = ChromeLayout.compute(
-        content: NSSize(width: 1120, height: 700), tabHeight: tab, sidebarWidth: width)
-    guard let sidebar = docked.sidebar else { return fail("docked layout has no sidebar rect") }
-    guard docked.pane.width == 1120 - width else {
-        return fail("docked pane should be \(1120 - width), got \(docked.pane.width)")
-    }
-    guard sidebar.minX == docked.pane.maxX else {
-        return fail(
-            "pane ends at \(docked.pane.maxX) and the sidebar starts at \(sidebar.minX): "
-                + (sidebar.minX < docked.pane.maxX ? "they OVERLAP" : "there is a GAP"))
-    }
-    guard docked.pane.width + sidebar.width == 1120 else {
-        return fail("pane + sidebar = \(docked.pane.width + sidebar.width), content is 1120")
-    }
-    guard docked.pane.height == sidebar.height, docked.pane.height == 700 - tab else {
-        return fail("pane and sidebar must share the band below the tab bar")
-    }
-
-    // A window narrower than the sidebar's preferred width: the pane's floor wins and
-    // the sidebar takes the remainder. Computing the sidebar as a constant instead of a
-    // remainder puts them back on top of each other exactly here.
-    let narrow = ChromeLayout.compute(
-        content: NSSize(width: 200, height: 400), tabHeight: tab, sidebarWidth: width)
-    guard let narrowSidebar = narrow.sidebar else { return fail("narrow layout has no sidebar") }
-    guard narrow.pane.width == ChromeLayout.minimumPaneWidth else {
-        return fail("the pane floor must hold, got \(narrow.pane.width)")
-    }
-    guard narrow.pane.width + narrowSidebar.width == 200, narrowSidebar.width >= 0 else {
-        return fail(
-            "narrow window does not tile: pane \(narrow.pane.width) + sidebar "
-                + "\(narrowSidebar.width) != 200")
-    }
-
-    print(
-        "DOCK SMOKE OK: 1120 tiles as \(docked.pane.width) + \(sidebar.width); "
-            + "at 200 the pane floor holds and the sidebar takes \(narrowSidebar.width)")
-    return 0
-}
 
 let arguments = CommandLine.arguments
 if arguments.contains("--smoke") {
@@ -493,9 +432,6 @@ if arguments.contains("--smoke") {
 }
 if arguments.contains("--smoke-worktree") {
     exit(runWorktreeSmoke())
-}
-if arguments.contains("--smoke-dock") {
-    exit(runDockSmoke())
 }
 if arguments.contains("--smoke-history") {
     exit(runHistorySmoke())

@@ -15,39 +15,24 @@ import AppKit
 /// notice the right-hand columns are covered. The invariant worth asserting is that the
 /// pane and the sidebar TILE the content exactly -- no overlap, no gap -- and that is
 /// only assertable if the arithmetic exists apart from the NSViews.
+/// Where the tab strip and the terminal pane sit inside the window's content rect.
+///
+/// It used to carry a third rect for a docked workspace sidebar, with the pane computed as a
+/// remainder so the two tiled exactly on a narrow window. Orel removed the sidebar on
+/// 2026-08-11: it had been empty since the workspace strip replaced its contents on 2026-07-30,
+/// and a docked panel that shows nothing costs a button, an animation, a geometry branch and a
+/// smoke stage to keep saying nothing. The pane is now simply everything below the strip, which
+/// is what the code said before S5.5 and says again.
 struct ChromeLayout: Equatable {
     let tabBar: NSRect
     let pane: NSRect
-    /// nil when the sidebar is not docked.
-    let sidebar: NSRect?
 
-    /// The narrowest the terminal pane may become; past this the sidebar is what gives.
-    static let minimumPaneWidth: CGFloat = 120
-
-    static func compute(
-        content: NSSize, tabHeight: CGFloat, sidebarWidth: CGFloat?
-    ) -> ChromeLayout {
+    static func compute(content: NSSize, tabHeight: CGFloat) -> ChromeLayout {
         let below = max(0, content.height - tabHeight)
-        let tabBar = NSRect(
-            x: 0, y: below, width: content.width, height: min(tabHeight, content.height))
-
-        guard let requested = sidebarWidth else {
-            return ChromeLayout(
-                tabBar: tabBar,
-                pane: NSRect(x: 0, y: 0, width: content.width, height: below),
-                sidebar: nil)
-        }
-        // The pane's floor wins over the sidebar's preferred width, and the sidebar
-        // takes whatever is left. Computing the sidebar as a REMAINDER rather than as a
-        // constant is what keeps the two tiling exactly on a narrow window, where
-        // subtracting a fixed 300 would leave them overlapping.
-        let paneWidth = max(minimumPaneWidth, content.width - requested)
-        let clampedPane = min(paneWidth, content.width)
         return ChromeLayout(
-            tabBar: tabBar,
-            pane: NSRect(x: 0, y: 0, width: clampedPane, height: below),
-            sidebar: NSRect(
-                x: clampedPane, y: 0, width: content.width - clampedPane, height: below))
+            tabBar: NSRect(
+                x: 0, y: below, width: content.width, height: min(tabHeight, content.height)),
+            pane: NSRect(x: 0, y: 0, width: content.width, height: below))
     }
 }
 

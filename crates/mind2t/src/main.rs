@@ -234,6 +234,11 @@ struct Smoke {
     resize_applied: bool,
     /// Title bar inset plus strip, in physical pixels: what the origin MUST clear.
     reserved: Option<u32>,
+    /// [`PAD`] in physical pixels: how far the canvas is inset from every window edge.
+    ///
+    /// Carried rather than recomputed because the arms below assert EXACT positions, and a gate
+    /// that derived the number itself would agree with a renderer that had derived it wrongly.
+    pad: Option<u32>,
     /// Every distinct directory the SESSION decoded, in the order it decoded them.
     ///
     /// A LIST rather than the final value, and that is a measurement rather than a preference:
@@ -425,10 +430,14 @@ impl Smoke {
                 .after_resize
                 .windows(2)
                 .all(|pair| pair[1].0.x == pair[0].0.x + pair[0].0.width + gutter)
-            && self.after_resize[0].0.x == 0
+            // The canvas is inset by PAD on every edge, so the leftmost pane starts AT the pad and
+            // the rightmost ends one pad short of the window. Asserted as equality in both
+            // directions: `x >= 0` would pass on a canvas that lost its inset entirely, which is
+            // the exact defect the padding slice was added to fix.
+            && self.after_resize[0].0.x == self.pad.unwrap_or(0)
             && self.resized_to.is_some_and(|width| {
                 let last = self.after_resize[self.after_resize.len() - 1].0;
-                last.x + last.width == width
+                last.x + last.width == width.saturating_sub(self.pad.unwrap_or(0))
             })
             && self
                 .before_resize
@@ -464,11 +473,14 @@ impl Smoke {
                  measured in points is half as thick as asked at scale 2",
             ),
             (
-                self.origin
-                    .zip(self.reserved)
-                    .is_some_and(|((x, y), reserved)| x == 0 && y >= reserved),
-                "the terminal clears the title bar AND the strip - `y > 0` was too weak a check \
-                 and passed while the chrome sat behind the title bar with 8pt showing",
+                self.origin.zip(self.reserved).zip(self.pad).is_some_and(
+                    |(((x, y), reserved), pad)| x == pad && y == reserved + pad,
+                ),
+                "the terminal clears the strip and is inset by the pad on both axes - `y > 0` \
+                 was too weak and passed while the chrome sat behind the title bar with 8pt \
+                 showing, and `x == 0` was too strong and failed the moment the canvas gained \
+                 its inset. Equality names the one correct origin, so both a lost inset and a \
+                 doubled one are caught",
             ),
             (
                 self.chrome_url.as_deref() == Some("tauri://localhost"),
@@ -1129,12 +1141,28 @@ fn main() {
     // monitor - is main-thread-bound by construction. Building the window in main keeps it all
     // on one thread with no locks and no `Send` gymnastics around types that must never leave
     // this thread anyway.
-    let window = WindowBuilder::new(&app, "main")
-        .title("Mind2t")
-        .inner_size(900.0, 560.0)
-        .visible(!headless())
-        .build()
-        .expect("a window");
+    let builder = WindowBuilder::new(&app, "main").title("Mind2t").inner_size(900.0, 560.0);
+
+    // The strip lives IN the title bar rather than under it. Without this the window spends two
+    // separate bands on chrome - a 28pt system title bar showing a name that never changes, and
+    // our own strip below it - which is 12% of a 560pt window given over to saying "Mind2t".
+    // `Overlay` is Tauri's name for `fullSizeContentView` plus a transparent title bar, so the
+    // content view starts at the top of the frame and the traffic lights float over whatever we
+    // draw there. Terminal.app does the same thing.
+    //
+    // The consequence downstream is that `titlebar_inset` now measures zero, because
+    // `contentLayoutRect` becomes the whole content view. Nothing else changes: every call site
+    // already ADDS the inset rather than assuming a number, so they all follow for free.
+    //
+    // Gated because `title_bar_style` exists only on macOS, and this crate compiles on Linux
+    // (the `linux-host` CI job is the gate a Mac cannot pass by default). The attribute is on
+    // the `let`, which rebinds the builder - an attribute here gates that statement and nothing
+    // after it, so the non-macOS build simply keeps the previous binding.
+    #[cfg(target_os = "macos")]
+    let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay);
+
+    let window = builder.visible(!headless()).build().expect("a window");
+    hide_window_title(&window);
 
     let scale = window.scale_factor().unwrap_or(1.0);
     let physical = window.inner_size().expect("the window size");
@@ -1645,6 +1673,7 @@ fn main() {
                         ((BAR_HEIGHT + titlebar_inset(&window)) * window.scale_factor().unwrap_or(1.0))
                             as u32,
                     );
+                    record.pad = Some((PAD * window.scale_factor().unwrap_or(1.0)) as u32);
                 }
                 #[cfg(target_os = "macos")]
                 probe_document(&window, std::rc::Rc::clone(&smoke));
@@ -2737,13 +2766,24 @@ fn view_tree(window: &tauri::Window) -> Vec<String> {
     layers
 }
 
-/// The height of the window's title bar, in POINTS.
+/// What the chrome's origin must clear at the top of the window, in POINTS.
 ///
 /// Tauri's content view spans the WHOLE window, title bar included, so point zero is behind the
-/// traffic lights rather than below them. Placing the chrome at zero puts it under the title bar
-/// where about eight points of it show - which reads exactly like "the terminal overlaps the top
-/// bar", and is what Orel saw on first sight. Asked of AppKit rather than hardcoded to 28,
-/// because the answer changes with the title bar style and with the system.
+/// traffic lights rather than below them. Placing the chrome at zero USED to put it under an
+/// opaque title bar where about eight points of it show - which reads exactly like "the terminal
+/// overlaps the top bar", and is what Orel saw on first sight.
+///
+/// **A transparent title bar changes the answer to zero, and that is the whole point of this
+/// function returning a measurement rather than a constant.** Under `TitleBarStyle::Overlay`
+/// AppKit paints nothing in that band except the traffic lights, so the chrome belongs at the
+/// very top and the lights are cleared sideways by the strip's own left padding. Pushing the
+/// content down there would spend 28 points drawing an empty bar above a bar.
+///
+/// The number itself is asked of AppKit rather than hardcoded, because it changes with the
+/// title bar style and with the system. `contentLayoutRect` cannot answer this alone: it
+/// reports the region unobscured by the title bar whether or not that bar draws anything, so it
+/// returns the same 32 in both styles. `titlebarAppearsTransparent` is the discriminator, and
+/// it was verified in both directions - false under `Visible`, true under `Overlay`.
 #[cfg(target_os = "macos")]
 fn titlebar_inset(window: &tauri::Window) -> f64 {
     use objc2::rc::Retained;
@@ -2768,19 +2808,33 @@ fn titlebar_inset(window: &tauri::Window) -> f64 {
         let layout: NSRect = objc2::msg_send![ns_window, contentLayoutRect];
         let frame: NSRect = objc2::msg_send![ns_window, frame];
         let inset = (content.frame().size.height - layout.size.height).max(0.0);
-        // Printed because the derived number was wrong once and the gate could not see it: an
-        // inset of 0 and a correct inset both satisfy "origin clears the strip".
         // Printed only when something is measuring: the derived number was wrong once and the
         // gate could not see it, so the raw inputs stay available - but not on every launch.
+        // The style flags are printed beside the geometry because the geometry ALONE cannot tell
+        // an overlay title bar from a plain one: `contentLayoutRect` reports the region not
+        // obscured by the title bar in BOTH cases, so `inset` reads 32 either way.
+        // `fullSizeContent` is NOT the discriminator either - wry sets bit 15 unconditionally,
+        // measured true under both styles. `transparentTitlebar` is the one that moves.
+        let mask: usize = objc2::msg_send![ns_window, styleMask];
+        let transparent: bool = objc2::msg_send![ns_window, titlebarAppearsTransparent];
+        let title_vis: isize = objc2::msg_send![ns_window, titleVisibility];
         if headless() || std::env::var("MIND2T_PROBE").is_ok() {
             println!(
-                "mind2t: window frame h={} contentView h={} contentLayoutRect h={} inset={inset}",
+                "mind2t: styleMask={mask:#x} fullSizeContent={} transparentTitlebar={transparent} titleVisibility={title_vis} window frame h={} contentView h={} contentLayoutRect h={} inset={inset}",
+                mask & 0x8000 != 0,
                 frame.size.height,
                 content.frame().size.height,
                 layout.size.height,
             );
         }
-        inset
+        // A transparent title bar draws nothing to clear. The traffic lights still sit in that
+        // band, but they are cleared HORIZONTALLY by the strip's left padding, not by pushing
+        // every row of the terminal down past them.
+        if transparent {
+            0.0
+        } else {
+            inset
+        }
     }
 }
 
@@ -2788,6 +2842,33 @@ fn titlebar_inset(window: &tauri::Window) -> f64 {
 fn titlebar_inset(_window: &tauri::Window) -> f64 {
     0.0
 }
+
+/// Stops AppKit drawing the window's title across the chrome strip.
+///
+/// `TitleBarStyle::Overlay` makes the bar transparent but leaves `titleVisibility` at Visible -
+/// measured, 0 under both styles - so "Mind2t" would render centred over the strip and collide
+/// with the path. The window keeps its title for the places a title is genuinely useful (Mission
+/// Control, the Window menu, the accessibility tree); only the drawn text goes.
+///
+/// Setting an empty title would have done it in one line and been wrong for exactly that reason.
+#[cfg(target_os = "macos")]
+fn hide_window_title(window: &tauri::Window) {
+    use objc2::runtime::AnyObject;
+
+    let Ok(handle) = window.ns_window() else { return };
+    let ns_window: *mut AnyObject = handle.cast();
+    if ns_window.is_null() {
+        return;
+    }
+    // Safety: a single setter on the live NSWindow Tauri owns, on the main thread.
+    // 1 is NSWindowTitleVisibilityHidden.
+    unsafe {
+        let _: () = objc2::msg_send![ns_window, setTitleVisibility: 1isize];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn hide_window_title(_window: &tauri::Window) {}
 
 /// Docks the chrome webview across the top of the window.
 ///

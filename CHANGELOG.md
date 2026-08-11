@@ -29,10 +29,10 @@ The engine was built in numbered slices, and the tags follow them.
 | `v0.9.0` | backfilled: a 57-merge feature train that had shipped with no tags at all, which is why the release discipline above exists |
 | `v0.10.0` to `v0.16.0` | protocol depth: OSC colour, rectangle ops, DECRQSS, selective erase, left and right margins, XTERMWINOPS, and the esctest2 conformance climb |
 | `v0.17.0` to `v0.19.x` | web-rendered panels, git-worktree workspaces, the docked workspace sidebar |
+| `v0.20.0` to `v0.24.0` | the product host: panes, selection, zoom, the agent launcher, and the rename of the repository and the product from `mind2t-vt` to Mind2t |
+| `v0.25.0` | the host returns to Swift and Tauri is deleted; the differential oracle is re-pinned to upstream Ghostty after the original fork was lost |
 
-Work after `v0.19.3` is unreleased and lives on `main`: the product host gaining panes,
-selection, zoom and the agent launcher, and the rename of the repository and the product from
-`mind2t-vt` to Mind2t. The engine crates keep the `mind2t-vt-` prefix.
+The engine crates keep the `mind2t-vt-` prefix; only the product was renamed.
 
 ## Notes on reading the history
 

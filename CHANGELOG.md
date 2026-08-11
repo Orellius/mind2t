@@ -31,6 +31,7 @@ The engine was built in numbered slices, and the tags follow them.
 | `v0.17.0` to `v0.19.x` | web-rendered panels, git-worktree workspaces, the docked workspace sidebar |
 | `v0.20.0` to `v0.24.0` | the product host: panes, selection, zoom, the agent launcher, and the rename of the repository and the product from `mind2t-vt` to Mind2t |
 | `v0.25.0` | the host returns to Swift and Tauri is deleted; the differential oracle is re-pinned to upstream Ghostty after the original fork was lost |
+| `v0.26.0` | the agent registry becomes reachable: a C surface over it, and a Swift launcher that opens Claude, Codex or any installed agent CLI into a pane |
 
 The engine crates keep the `mind2t-vt-` prefix; only the product was renamed.
 

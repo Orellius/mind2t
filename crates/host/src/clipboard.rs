@@ -11,7 +11,7 @@
 //! Test strategy: `paste_text` is proven end to end by the Mind2t smoke (a fixture is sent and
 //!   must appear on the grid); `text` is a live-tap item by construction.
 
-use mind2t_vt_host::session::Session;
+use crate::session::Session;
 
 /// Sends the clipboard to the child, fenced when the child asked for fences.
 ///

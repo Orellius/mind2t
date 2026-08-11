@@ -15,11 +15,24 @@
 // The rlib dependency is what carries the 13 `ghostty_*` exports into this staticlib.
 use mind2t_vt as _;
 
+/// Selection copy and bracketed paste, over a `session`.
+///
+/// Moved here from the Tauri crate on 2026-08-11 with `wheel` and `scrollback`, when the host
+/// went back to Swift. None of the three ever touched Tauri: this one speaks only to `Session`,
+/// `wheel` imports nothing at all, and `scrollback` imports one key module. They sat in the app
+/// crate for the accidental reason that the app crate was the only host. A Swift host reaches
+/// them through the C surface below, and a second implementation in Swift would be a second
+/// place for the chord table and the wheel accumulator to disagree with this one.
+pub mod clipboard;
 pub mod config;
 pub mod cwd;
 /// Mouse-reporting state and routing, shared by the C surface below and by `session`. One
 /// policy, two callers - see its module card.
 pub mod pointer;
+/// Scrollback chords and prompt jumps: which key means what distance.
+pub mod scrollback;
+/// Wheel accumulation and its escape hatch. Pure arithmetic, no dependencies whatsoever.
+pub mod wheel;
 /// The same pipeline as the C surface below, offered to Rust callers in this workspace.
 /// See its module card for why both exist and when they converge.
 pub mod session;

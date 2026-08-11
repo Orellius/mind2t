@@ -141,6 +141,15 @@ fn spawn_zsh(with_integration: bool) -> *mut Mind2tHost {
     unsafe {
         std::env::set_var("HOME", &home);
         std::env::remove_var("MIND2T_USER_ZDOTDIR");
+        // The hostile home isolates the USER's rc files and nothing else. `/etc/zshrc` runs
+        // regardless of ZDOTDIR, and its line 74 sources `/etc/zshrc_$TERM_PROGRAM` - so a suite
+        // run from Terminal.app inherits `TERM_PROGRAM=Apple_Terminal`, loads Apple's own shell
+        // integration, and that file emits OSC 7 itself. The control then reports "an
+        // unintegrated zsh reported a working directory", which is TRUE and about the wrong
+        // integration. Measured 2026-08-11: red from Terminal.app, green under `env -u
+        // TERM_PROGRAM`, same commit. Scrubbed here so the control is a statement about OUR
+        // file rather than about which terminal the developer happened to be sitting in.
+        std::env::remove_var("TERM_PROGRAM");
         if with_integration {
             std::env::set_var("ZDOTDIR", shell.join("zdotdir"));
             std::env::set_var("MIND2T_INTEGRATION", shell.join("mind2t-integration.zsh"));

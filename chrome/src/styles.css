@@ -25,7 +25,12 @@ body {
   align-items: center;
   gap: 14px;
   height: 100%;
-  padding: 0 14px;
+  /* The left inset clears the traffic lights, which now float OVER this strip: the host asks
+   * macOS for an overlay title bar, so the close/minimise/zoom buttons are drawn on top of
+   * whatever occupies the first ~72pt. Anything laid out under them is unreachable and looks
+   * like a rendering fault rather than a collision. 78 leaves a hair of air past the zoom
+   * button rather than butting the folder against it. */
+  padding: 0 14px 0 78px;
   box-sizing: border-box;
   background: #101016;
   border-bottom: 1px solid rgba(255, 255, 255, 0.12);

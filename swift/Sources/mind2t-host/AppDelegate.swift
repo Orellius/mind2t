@@ -382,6 +382,60 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         activate(index: sessions.count - 1)
     }
 
+    // MARK: agents
+
+    /// Opens a tab running `agent`, in the active session's directory.
+    ///
+    /// The directory is the point. "Launch Claude" nearly always means "launch it HERE", and
+    /// an agent that opens at HOME while the operator is three levels into a repository has to
+    /// be told where it is before it can do anything. `activeDirectory` is the live OSC 7
+    /// report, so it follows the shell rather than where the pane started; nil (no shell
+    /// integration, or nothing reported yet) falls back to HOME, which is the archive's own
+    /// default and a defensible place to be.
+    private func newAgentSession(_ agent: Agent) {
+        spawnCount += 1
+        let (cols, rows) = gridForPane()
+        let scale = Float(window.backingScaleFactor)
+        let outcome = Session.agent(
+            agent, cols: cols, rows: rows, fontSize: baseFontSize * scale * fontScale,
+            autoDirection: autoDirection, config: config, cwd: activeDirectory())
+        switch outcome {
+        case .success(let session):
+            report("agent \(agent.id) at \(agent.path ?? "?") in \(activeDirectory() ?? "~")")
+            sessions.append(session)
+            activate(index: sessions.count - 1)
+        case .failure(let why):
+            // Named, never silent. A launch that fails without saying why is the shape that
+            // sends an operator hunting through their own PATH for our bug.
+            report("agent \(agent.id) did not launch: \(why.summary)")
+            warn("Could not launch \(agent.name)", why.summary)
+        }
+    }
+
+    /// One palette row per agent: installed ones launch, the rest hand over their install
+    /// command.
+    ///
+    /// The uninstalled ones are LISTED rather than hidden, and they are not dead rows -- they
+    /// copy the install line. Hiding them makes the feature invisible to anyone who has not
+    /// already installed an agent, which is everyone the first time.
+    private func agentPaletteItems() -> [PaletteItem] {
+        let agents = Agent.all()
+        let here = activeDirectory().map { ($0 as NSString).lastPathComponent }
+        return agents.sorted { $0.isInstalled && !$1.isInstalled }.map { agent in
+            if agent.isInstalled {
+                return PaletteItem(
+                    title: "Agent: \(agent.name)",
+                    subtitle: here.map { "a new tab in \($0)" } ?? "a new tab",
+                    workflowIndex: nil,
+                    action: { [weak self] in self?.newAgentSession(agent) })
+            }
+            return PaletteItem(
+                title: "Agent: \(agent.name)", subtitle: "not installed \u{2022} \(agent.installHint)",
+                workflowIndex: nil,
+                action: { [weak self] in self?.clip(agent.installHint) })
+        }
+    }
+
     // MARK: workspaces (S5)
 
     /// Spawns a session placed in `directory`, labelled with its workspace.
@@ -961,6 +1015,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
                     self.closeSession(index: self.activeIndex)
                 }),
         ]
+        // Above workspaces: launching an agent is the thing this terminal exists for, and a
+        // palette is read from the top.
+        items.append(contentsOf: agentPaletteItems())
         items.append(
             PaletteItem(
                 title: "New Workspace", subtitle: "a git worktree and a session in it",

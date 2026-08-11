@@ -16,7 +16,10 @@ import CMind2tHost
 /// `withCString` has no optional form, and the alternative -- a branch per optional
 /// argument -- doubles with each one. Two of them would already be four spawn sites
 /// that have to stay in step.
-private func withOptionalCString<R>(
+///
+/// Module-wide rather than private since the agent spawn in `Agents.swift` is a third site.
+/// A second copy of a borrow helper is a second chance to get a lifetime wrong.
+func withOptionalCString<R>(
     _ value: String?, _ body: (UnsafePointer<CChar>?) -> R
 ) -> R {
     guard let value else { return body(nil) }
@@ -426,9 +429,97 @@ func runWorktreeSmoke() -> Int32 {
 }
 
 
+/// Headless proof that an agent really reaches a pane THROUGH THE SWIFT SEAM, and that the
+/// approval guard survives the trip.
+///
+/// The Rust side is gated in `crates/host/tests/agent_abi.rs`. This is the half that suite
+/// cannot see: `Agent.all`, the argv borrow, `Session.agent`, and the failure classification
+/// the UI shows. Every one of those can be wrong while the C surface underneath is perfect,
+/// and the way they would be wrong is silent - a dangling argv pointer, a `Result` mapped to
+/// the wrong case, a menu that lists nothing.
+///
+/// A FAKE agent on PATH, not a real one: an automated gate must not start authenticated agent
+/// processes on somebody's machine every time it builds. `opencode` is a real registry entry,
+/// and our directory goes first on PATH so this behaves identically on a machine that has the
+/// real one installed.
+func runAgentSmoke() -> Int32 {
+    func fail(_ why: String) -> Int32 {
+        FileHandle.standardError.write(Data("agent smoke: \(why)\n".utf8))
+        return 1
+    }
+
+    let directory = "/tmp/mind2t-agent-smoke-\(getpid())"
+    let binary = "\(directory)/opencode"
+    try? FileManager.default.createDirectory(
+        atPath: directory, withIntermediateDirectories: true)
+    guard
+        FileManager.default.createFile(
+            atPath: binary,
+            contents: Data("#!/bin/sh\nprintf 'AGENT-SMOKE-UP\\n'\nexec cat\n".utf8),
+            attributes: [.posixPermissions: 0o755])
+    else { return fail("could not write the fake agent at \(binary)") }
+    defer { try? FileManager.default.removeItem(atPath: directory) }
+    setenv("PATH", "\(directory):\(ProcessInfo.processInfo.environment["PATH"] ?? "")", 1)
+
+    // The registry, as a menu would read it.
+    let agents = Agent.all()
+    guard !agents.isEmpty else { return fail("the registry came back empty") }
+    guard let opencode = agents.first(where: { $0.id == "opencode" }) else {
+        return fail("opencode is not in the registry")
+    }
+    guard opencode.path == binary else {
+        return fail("resolved \(opencode.path ?? "nothing"), expected our fake at \(binary)")
+    }
+    guard agents.contains(where: { $0.typeAfterLaunch }),
+        agents.contains(where: { !$0.typeAfterLaunch })
+    else { return fail("both prompt strategies did not survive the trip into Swift") }
+
+    // THE CONTROL, FIRST. A bypass must be refused rather than stripped, and it must be
+    // refused with the FLAG NAMED - a Swift layer that mapped every failure onto one case
+    // would still "work" and would tell the operator nothing.
+    switch Session.agent(
+        opencode, argv: ["--yolo"], cols: 80, rows: 24, fontSize: 0, autoDirection: false)
+    {
+    case .success: return fail("a --yolo launch was allowed through the Swift seam")
+    case .failure(.refused(let flag, let at)):
+        guard flag == "--yolo", at == 0 else {
+            return fail("refused, but named \(flag) at \(at)")
+        }
+    case .failure(let other): return fail("refused for the wrong reason: \(other.summary)")
+    }
+
+    // And the launch itself, with the operator's own near-miss flag riding along - so the
+    // refusal above is about the FLAG and not about this path being broken.
+    let launched = Session.agent(
+        opencode, argv: ["--autosave"], cols: 80, rows: 24, fontSize: 0, autoDirection: false)
+    guard case .success(let session) = launched else {
+        guard case .failure(let why) = launched else { return fail("unreachable") }
+        return fail("the agent did not launch: \(why.summary)")
+    }
+    defer { session.close() }
+
+    let deadline = Date().addingTimeInterval(15)
+    while Date() < deadline {
+        _ = session.poll()
+        // Read off the TYPED GRID, never off the byte stream: that is the whole wedge, and a
+        // byte-scraping version of this could be fooled by an agent that repaints its banner.
+        if (0..<24).contains(where: { session.rowText(UInt16($0), semantic: UInt8(MIND2T_TEXT_ALL)).contains("AGENT-SMOKE-UP") }) {
+            print(
+                "AGENT SMOKE OK: \(agents.count) agents listed, --yolo refused by name, "
+                    + "\(opencode.name) up in a pane from \(binary)")
+            return 0
+        }
+        usleep(10_000)
+    }
+    return fail("the agent never appeared on the grid within 15s")
+}
+
 let arguments = CommandLine.arguments
 if arguments.contains("--smoke") {
     exit(runSmoke())
+}
+if arguments.contains("--smoke-agent") {
+    exit(runAgentSmoke())
 }
 if arguments.contains("--smoke-worktree") {
     exit(runWorktreeSmoke())

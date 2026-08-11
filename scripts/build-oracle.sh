@@ -36,11 +36,36 @@ before=$(cd "$ruuah" && git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
 echo "building libghostty-vt"
 echo "  source $ruuah (read-only)"
 echo "  prefix $prefix"
+# THE ZIG BUILD'S EXIT CODE IS NOT THE VERDICT; the artefact is. `-Demit-lib-vt` also emits an
+# `xcframework`, and that step shells out to `xcodebuild`, which refuses to run until somebody has
+# accepted the Xcode licence - so on a machine with Xcode installed and unlicensed the build
+# reports 62 of 64 steps succeeded and exits 1 while `libghostty-vt.a` and every header sit
+# correctly in the prefix. Measured 2026-08-11 restoring the oracle after the format.
+#
+# mind2t needs `lib/libghostty-vt.a` and `include/` and NOTHING else: `crates/ghostty/build.rs`
+# checks for exactly that archive and bindgen reads those headers. The xcframework is a Ghostty
+# distribution artefact for Apple platforms and nothing here has ever consumed it.
+#
+# So the failure is captured rather than propagated, and the check below - which already existed -
+# becomes the real gate. `set -e` is suspended only across this one command; a build that fails
+# for any reason that MATTERS still fails, because it will not leave the archive behind.
+set +e
 ( cd "$ruuah" && "$ZIG" build -Demit-lib-vt --prefix "$prefix" --cache-dir "$cache" )
+zig_status=$?
+set -e
 
 if [[ ! -f "$prefix/lib/libghostty-vt.a" ]]; then
-  echo "error: the build reported success but produced no libghostty-vt.a" >&2
+  echo "error: no libghostty-vt.a in the prefix (zig exited $zig_status)" >&2
   exit 1
+fi
+if [[ ! -d "$prefix/include/ghostty" ]]; then
+  echo "error: no headers in the prefix (zig exited $zig_status); bindgen has nothing to read" >&2
+  exit 1
+fi
+if [[ "$zig_status" -ne 0 ]]; then
+  echo "note: zig exited $zig_status but the archive and headers are present." >&2
+  echo "      The usual cause is the xcframework step, which needs an accepted Xcode licence" >&2
+  echo "      (sudo xcodebuild -license accept) and which mind2t does not consume." >&2
 fi
 
 after=$(cd "$ruuah" && git status --porcelain 2>/dev/null | wc -l | tr -d ' ')

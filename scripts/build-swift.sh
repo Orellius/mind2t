@@ -30,6 +30,16 @@ fi
 # deleting an agent's unpushed work. Mutant seen red (adding --force fails it).
 .build/release/mind2t-host --smoke-worktree
 
+# Agents. The load-bearing assertion is again the refusal: an approval-bypassing flag must
+# come back REFUSED AND NAMED, through the Swift argv borrow, before anything is spawned. A
+# fake agent on PATH, never a real one -- a build gate must not start authenticated agent
+# processes on the machine it runs on.
+#
+# Two mutants seen red: collapsing the refusal into a generic failure (the operator stops
+# being told which word to remove), and letting the argv borrow dangle - which does not crash,
+# it lets `--yolo` through the guard entirely.
+.build/release/mind2t-host --smoke-agent
+
 # S6 panels. The web build is optional (no bun, no panels), so its absence SKIPS the
 # probe out loud instead of leaving a silently unproven seam. Both directions run: the
 # probe must round-trip a nonce, and the control -- the same document with the receiver

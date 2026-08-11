@@ -53,22 +53,60 @@ final class Session {
     /// free to walk away from where it started.
     let workspace: String?
 
-    init?(
+    convenience init?(
         command: String?, cols: UInt16, rows: UInt16, fontSize: Float, autoDirection: Bool,
         config: OpaquePointer? = nil, title: String, cwd: String? = nil,
         workspace: String? = nil
     ) {
-        self.workspace = workspace
         guard
             let host = spawnHost(
                 cols: cols, rows: rows, fontSize: fontSize, command: command,
                 autoDirection: autoDirection, config: config, cwd: cwd)
         else { return nil }
+        self.init(
+            host: host, cols: cols, rows: rows, title: title,
+            cli: (command ?? "").split(separator: " ").first.map(String.init) ?? "shell",
+            workspace: workspace)
+    }
+
+    /// Spawns an agent CLI instead of a shell, on the same pipeline.
+    ///
+    /// A `Result` rather than an optional, because the three ways this fails are three
+    /// different things for the operator to do: install something, remove a flag, or read a
+    /// real error. An optional collapses them into "nothing happened", which is how a refused
+    /// bypass would look exactly like a missing binary.
+    static func agent(
+        _ agent: Agent, argv: [String] = [], cols: UInt16, rows: UInt16, fontSize: Float,
+        autoDirection: Bool, config: OpaquePointer? = nil, cwd: String? = nil,
+        workspace: String? = nil
+    ) -> Result<Session, AgentLaunchFailure> {
+        spawnAgentHost(
+            id: agent.id, argv: argv, cols: cols, rows: rows, fontSize: fontSize,
+            autoDirection: autoDirection, config: config, cwd: cwd
+        )
+        .map { host in
+            Session(
+                host: host, cols: cols, rows: rows, title: agent.name,
+                // The agent's REGISTRY ID, not the binary's name. It is what the busy-marker
+                // table below is keyed on, and the two differ the moment an agent ships under
+                // more than one binary name -- `antigravity` answers to `agy` on a fresh
+                // install, and a tab keyed on that would silently stop classifying.
+                cli: agent.id, workspace: workspace)
+        }
+    }
+
+    /// The one place a session's fields are set. Both spawn paths funnel here so a field
+    /// added later cannot be filled in on one path and forgotten on the other.
+    private init(
+        host: OpaquePointer, cols: UInt16, rows: UInt16, title: String, cli: String,
+        workspace: String?
+    ) {
         self.host = host
         self.cols = cols
         self.rows = rows
         self.spawnTitle = title
-        self.cli = (command ?? "").split(separator: " ").first.map(String.init) ?? "shell"
+        self.cli = cli
+        self.workspace = workspace
     }
 
     /// Explicit-signal classification, per CLI. Claude Code marks a busy tab title

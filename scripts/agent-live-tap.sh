@@ -14,6 +14,10 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
+# REPOINTED 2026-08-11: this named `-p mind2t`, the Tauri app crate, which was deleted when the
+# host went back to Swift. The test moved with `launch.rs` into the host crate and the script did
+# not, so it had been failing at cargo's package lookup rather than running anything.
+#
 # The bare separator matters: everything after it goes to the TEST harness, not to cargo. Without
 # it cargo reads the ignore flag as its own and refuses.
-exec cargo test -p mind2t --lib launch::tests::a_real_agent -- --ignored --nocapture "$@"
+exec cargo test -p mind2t-vt-host --lib launch::tests::a_real_agent -- --ignored --nocapture "$@"

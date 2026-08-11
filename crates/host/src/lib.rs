@@ -15,6 +15,17 @@
 // The rlib dependency is what carries the 13 `ghostty_*` exports into this staticlib.
 use mind2t_vt as _;
 
+/// The agent registry: which CLIs a pane can launch, how each is spawned and what counts as a
+/// live one. Zero external dependencies - it was in the app crate because the app crate was the
+/// only caller, not because it needed anything from it.
+pub mod agent;
+/// Pane tiling over a rect, and the rect type itself. Imports NOTHING.
+pub mod layout;
+/// A tiled set of panes over one GPU context, built on `layout` and `session`.
+pub mod canvas;
+/// Spawning a pane and deciding whether what came up is actually running, built on `agent`.
+/// `dress` lives here: the ONE place a child's environment and working directory are set.
+pub mod launch;
 /// Selection copy and bracketed paste, over a `session`.
 ///
 /// Moved here from the Tauri crate on 2026-08-11 with `wheel` and `scrollback`, when the host

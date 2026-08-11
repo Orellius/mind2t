@@ -7,9 +7,8 @@
 node_modules/
 # The panel document is a build product (scripts/build-web.sh), like the Rust archives.
 /web/dist
-/chrome/dist
-# Tauri's generated capability schemas - derived from capabilities/ at build time.
-/crates/mind2t/gen
+# SwiftPM's build tree, which now also holds the staged .app bundle.
+/swift/.build
 
 # Local agent and harness configuration. The real files live outside the repository and are
 # symlinked in, so tooling that reads them from the working directory still works while
@@ -37,16 +36,6 @@ node_modules/
 *~
 .DS_Store
 
-# Platform icon sets `cargo tauri icon` generates for targets this project does not ship.
-# It writes Android mipmaps, an iOS AppIcon set and the Windows Store logos whether you want
-# them or not; macOS needs `icon.icns` and the four PNGs, Linux needs the PNGs. Ignored rather
-# than deleted, because the generator recreates them on every run and a repo about to go public
-# should not carry fifty images for platforms it has never built for.
-crates/mind2t/icons/android/
-crates/mind2t/icons/ios/
-crates/mind2t/icons/Square*.png
-crates/mind2t/icons/StoreLogo.png
-crates/mind2t/icons/icon.ico
 
 # Plans of record. Untracked on purpose: working strategy documents that quote
 # the operator directly and name product direction. They are not documentation of

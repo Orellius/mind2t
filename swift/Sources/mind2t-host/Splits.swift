@@ -226,6 +226,26 @@ enum SplitLayout {
         return min(max(floor, raw), available - floor) / available
     }
 
+    /// The grid a pane of this size holds.
+    ///
+    /// Pulled out of `gridForPane`, which read the ONE shared view's bounds. With a single
+    /// pane that is the same answer; with several it hands every pane the focused pane's
+    /// grid, and a pty told it is 200 columns wide inside an 80 column pane wraps in the
+    /// wrong place with nothing logged anywhere. The defect is invisible until a line is
+    /// long enough, which is why it belongs in arithmetic a gate can reach.
+    ///
+    /// The floor of 2 is not cosmetic: a zero-column pty is a division by zero in the
+    /// reflow, and a one-column one cannot render a cursor beside a glyph.
+    static func grid(
+        for rect: NSRect, cellWidth: Int, cellHeight: Int, scale: CGFloat, padding: CGFloat
+    ) -> (cols: UInt16, rows: UInt16) {
+        guard cellWidth > 0, cellHeight > 0 else { return (80, 24) }
+        let inner = rect.insetBy(dx: padding, dy: padding)
+        let cols = Int(max(0, inner.width) * scale) / cellWidth
+        let rows = Int(max(0, inner.height) * scale) / cellHeight
+        return (UInt16(max(2, cols)), UInt16(max(2, rows)))
+    }
+
     /// The pane a focus move lands on: GEOMETRIC, not tree-shaped.
     ///
     /// A tree walk would move focus to a sibling that is nowhere near the arrow the

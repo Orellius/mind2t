@@ -1438,11 +1438,56 @@ func runSplitSmoke() -> Int32 {
         return fail("a container too small for two floors must report the middle")
     }
 
+    // PER-PANE GRIDS. The defect this guards is a single shared derivation handing every
+    // pane the focused pane's grid: a pty told it is 200 columns wide inside an 80 column
+    // pane wraps in the wrong place, silently, and only once a line is long enough.
+    let wide = SplitLayout.tile(
+        .branch(axis: .horizontal, fraction: 0.5, first: .leaf(1), second: .leaf(2)),
+        in: NSRect(x: 0, y: 0, width: 1600, height: 800))
+    let grids = wide.map {
+        SplitLayout.grid(
+            for: $0.rect, cellWidth: 14, cellHeight: 30, scale: 2, padding: 8)
+    }
+    guard grids.count == 2, grids[0].cols == grids[1].cols else {
+        return fail("two equal panes must derive equal grids, got \(grids)")
+    }
+    let whole = SplitLayout.grid(
+        for: NSRect(x: 0, y: 0, width: 1600, height: 800),
+        cellWidth: 14, cellHeight: 30, scale: 2, padding: 8)
+    guard grids[0].cols < whole.cols else {
+        return fail("a half-width pane derived \(grids[0].cols) columns, the same as the"
+            + " whole \(whole.cols) -- every pane is being sized from one shared rect")
+    }
+    // Rows must NOT shrink in a side-by-side split. A derivation that used the wrong axis
+    // would still make cols smaller and would still look plausible in a log.
+    guard grids[0].rows == whole.rows else {
+        return fail("a side-by-side split changed the row count from \(whole.rows) to"
+            + " \(grids[0].rows)")
+    }
+    // The floor: a pane squeezed to nothing still reports a usable grid, because a
+    // zero-column pty is a division by zero in the reflow.
+    let squeezed = SplitLayout.grid(
+        for: NSRect(x: 0, y: 0, width: 1, height: 1), cellWidth: 14, cellHeight: 30,
+        scale: 2, padding: 8)
+    guard squeezed.cols >= 2, squeezed.rows >= 2 else {
+        return fail("a squeezed pane reported \(squeezed), under the 2x2 floor")
+    }
+    // Control: with no cell metrics yet there is nothing to divide by, and the spawn
+    // default is the honest answer rather than a computed 2x2.
+    guard SplitLayout.grid(
+        for: NSRect(x: 0, y: 0, width: 1600, height: 800), cellWidth: 0, cellHeight: 0,
+        scale: 2, padding: 8) == (80, 24)
+    else {
+        return fail("with no cell metrics the grid must be the 80x24 spawn default")
+    }
+
     print(
         "SPLIT SMOKE OK: \(checked) tree/size combinations tile exactly with no overlap and"
             + " full point coverage down to 0x0, first is top and first is left, divider 0"
             + " moves the outer boundary, focus is geometric with no wrap, a collapse hands"
-            + " the whole rect to the survivor, and the drag floor holds")
+            + " the whole rect to the survivor, the drag floor holds, and each pane derives"
+            + " its OWN grid (\(grids[0].cols)x\(grids[0].rows) per half against"
+            + " \(whole.cols)x\(whole.rows) whole)")
     return 0
 }
 

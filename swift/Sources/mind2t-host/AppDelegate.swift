@@ -32,7 +32,31 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// CLI binary has no resource bundle, so the smoke and any tap pass `--web-dir`.
     private let webDir: String?
     private var window: NSWindow!
-    private var view: TerminalView!
+
+    // MARK: panes (P3)
+
+    /// The band the split tree tiles inside. Pane surfaces are its subviews, so the chrome
+    /// arithmetic keeps producing ONE rectangle and the split arithmetic subdivides it -
+    /// two problems that stay separable, and two gates that stay separable with them.
+    private var paneContainer: NSView!
+    /// One live surface per visible pane, keyed by `Session.paneID`. Several exist at once,
+    /// which is the whole feature: a single shared view is what made this a tab strip.
+    private var paneViews: [Int: TerminalView] = [:]
+    /// The resize handles, rebuilt on every layout pass. They are views rather than
+    /// hit-tested rectangles so the cursor can change over them without a tracking area
+    /// per pane.
+    private var dividerViews: [SplitDividerHandle] = []
+    /// Which panes are on screen and how they are arranged. Sessions NOT in this tree are
+    /// background tabs, reachable from the strip; selecting one replaces the tree.
+    private var tree: SplitTree = .leaf(0)
+    private var focusedPaneID = 0
+
+    /// The focused pane's surface.
+    ///
+    /// Computed rather than stored so every existing call site keeps meaning "the surface
+    /// the operator is looking at" without knowing panes are now plural. Nil only before
+    /// the first session exists, which is why the window setup no longer touches it.
+    private var view: TerminalView! { paneViews[focusedPaneID] }
 
     /// B1: present frames on the GPU instead of copying them back and drawing a CGImage.
     ///
@@ -41,10 +65,6 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// proven it becomes the only path and this disappears, whereas a config key would have to
     /// be parsed, defaulted, documented and then deprecated. `MIND2T_GPU_PRESENT=1`.
     private let gpuPresent = ProcessInfo.processInfo.environment["MIND2T_GPU_PRESENT"] == "1"
-    /// The session whose host currently owns the metal layer. Only one can: the layer is a
-    /// single swapchain, and attaching a second host to it would have two renderers presenting
-    /// into the same drawable.
-    private var presentingSession: Session?
     private var tabBar: TabBarView!
     /// The docked workspace list. Docked unless `MIND2T_NO_SIDEBAR=1` -- an env switch
     /// rather than a config key for the same reason `gpuPresent` is one: it exists so the
@@ -62,7 +82,11 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     private var timer: Timer?
 
     private var sessions: [Session] = []
-    private var activeIndex = -1
+    /// Derived from the focused pane, never stored. Two stores for "which session is in
+    /// front" is how a strip highlights one pane while the keyboard talks to another.
+    private var activeIndex: Int {
+        sessions.firstIndex { $0.paneID == focusedPaneID } ?? -1
+    }
     private var spawnCount = 0
     private var windowSized = false
     private var tick: UInt64 = 0
@@ -104,78 +128,140 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         }
     }
 
-    /// Puts one polled frame on screen, whichever path is live.
-    ///
-    /// While presenting there IS no image - the host leaves `pixels` null so the frame never
-    /// crosses the bus - so the argument is nil every time and the work is a present call.
-    private func showFrame(_ image: CGImage?) {
-        if let session = activeSession, session.presenting {
-            let ok = session.present()
-            if !ok, !presentReported {
-                presentReported = true
-                FileHandle.standardError.write(Data("MIND2T_PRESENT=failed\n".utf8))
-            }
-            // The CGImage path is NOT run as a fallback here on purpose. Drawing the old way
-            // when a present fails would hide the failure behind a working-looking window,
-            // which is the whole class of bug this instrumentation exists to expose.
-            return
-        }
-        if let image {
-            view.contentLayer.contents = image
-        }
-    }
-
     /// One report per run. A present that fails does so every frame, and 60 lines a second
     /// buries the message it is trying to deliver.
     private var presentReported = false
 
-    /// Moves the metal layer to whichever session is active, when presenting is switched on.
+    /// Builds one pane's surface and binds it to its session.
     ///
-    /// One layer means one swapchain, so exactly one host may own it; attaching a second would
-    /// have two renderers writing the same drawable. The previous owner is detached first,
-    /// which also restores its readback path, so a failed attach leaves a working session
-    /// rather than a blank one.
-    private func syncPresentTarget(to session: Session?) {
-        guard gpuPresent, presentingSession !== session else { return }
-        presentingSession?.detachLayer()
-        presentingSession = nil
-        // The outgoing session's last image would otherwise sit on top of the metal layer
-        // forever, which looks exactly like a frozen terminal.
-        view.contentLayer.contents = nil
-        guard let session else { return }
-        // Size the layer BEFORE attaching. Activation can run before any layout pass, and an
-        // unsized CAMetalLayer reports a zero drawable which the swapchain clamps to 1x1 - an
-        // attach that succeeds and then shows nothing, while the stale CGImage underneath
-        // makes the window look correct. Measured 2026-08-04: the first live run reported
-        // `attach=ok drawable=1x1` and the picture on screen was the old path's.
-        view.layoutSubtreeIfNeeded()
-        let size = view.presentLayer.drawableSize
-        let ok = session.attachLayer(
-            view.presentLayer, width: Int(size.width), height: Int(size.height))
-        // Reported on FAILURE only. A failed attach falls back to the readback path and the
-        // window looks EXACTLY the same, so silence there would let "it drew something" pass
-        // as proof the GPU path ran. Success needs no announcement; the zero-readback test
-        // covers that side.
-        if !ok {
-            let report = "MIND2T_PRESENT_ATTACH=failed "
-                + "drawable=\(Int(size.width))x\(Int(size.height))\n"
-            FileHandle.standardError.write(Data(report.utf8))
+    /// Every line here used to run ONCE, in `applicationDidFinishLaunching`, against the
+    /// single shared view. It is a factory now because a pane is no longer a singleton, and
+    /// the thing that made this worth extracting rather than copying is the binding: the
+    /// POINTER handlers resolve to the pane they are over, not to the focused one.
+    ///
+    /// Keys are different and correctly so. AppKit delivers a key event to the first
+    /// responder, and only the focused pane is ever first responder, so `activeSession` is
+    /// already the right answer there. A wheel or a click is delivered to whatever view is
+    /// under the pointer, so routing those through the focused session would scroll a pane
+    /// the operator is not pointing at - which looks like the scroll wheel being broken.
+    private func makePaneView(for session: Session) -> TerminalView {
+        let pane = TerminalView(frame: .zero)
+        pane.wantsLayer = true
+        let id = session.paneID
+
+        pane.onPresentResize = { [weak self] width, height in
+            guard let self, let owner = self.session(for: id) else { return }
+            owner.resizeLayer(width: Int(width), height: Int(height))
         }
-        if ok {
-            presentingSession = session
-            // Push the size again now that an owner exists. `onPresentResize` fires from
-            // layout, and a layout that ran while nothing was attached delivered its size to
-            // nobody - so ordering alone decided whether the swapchain was ever correct.
-            session.resizeLayer(width: Int(size.width), height: Int(size.height))
+
+        pane.layer?.backgroundColor = NSColor.black.cgColor
+        // Below the content layer: the metal layer carries the frame, the content layer keeps
+        // its sublayers (the ghost suggestion) and its geometry, and overlays stay on top.
+        // Device and pixel format are deliberately NOT set here - the surface owns them, and a
+        // layer configured with one device while the renderer draws on another is a black
+        // window with no error anywhere.
+        pane.presentLayer.isOpaque = true
+        pane.presentLayer.contentsScale = window.backingScaleFactor
+        pane.layer?.addSublayer(pane.presentLayer)
+        pane.layer?.addSublayer(pane.contentLayer)
+        pane.contentLayer.contentsScale = window.backingScaleFactor
+        pane.contentLayer.magnificationFilter = .nearest
+        // A frame is NEVER scaled to fit its layer. The default gravity is `.resize`,
+        // which stretches whatever was last drawn across the new bounds -- so during a
+        // resize, before the pty has caught up, the terminal renders as soft, oversized
+        // glyphs with the previous frame's edges smeared over the gap. Anchoring at the
+        // top-left leaves a stale frame at its true pixel size with the background
+        // showing past it, which is what every terminal does mid-drag and reads as
+        // "not repainted yet" instead of "broken". (Operator-reported, 2026-08-02.)
+        pane.contentLayer.contentsGravity = .topLeft
+
+        // Standalone CALayers implicitly ANIMATE property changes -- a 0.25s crossfade on
+        // every `contents` swap. At a 60 Hz blit the overlapping fades read as typing at
+        // five frames a second (found live, 2026-07-29). A terminal frame is a hard cut.
+        let hardCut: [String: CAAction] = [
+            "contents": NSNull(), "backgroundColor": NSNull(),
+            "bounds": NSNull(), "position": NSNull(),
+        ]
+        pane.contentLayer.actions = hardCut
+        pane.layer?.actions = hardCut
+
+        // Typing and pasting snap the view to the live bottom first -- the standard
+        // terminal policy, applied here because the C surface deliberately leaves it
+        // to the embedder. A no-op when already at the bottom.
+        pane.onKey = { [weak self] action, key, mods, consumed, text, unshifted in
+            guard let session = self?.activeSession else { return false }
+            // Typing snaps to the live bottom, the policy the C surface leaves to the
+            // embedder -- presses only, so a held modifier's release doesn't snap.
+            if action != 0 {
+                session.scroll(Int32.min)
+            }
+            return session.key(
+                action: action, key: key, mods: mods, consumedMods: consumed,
+                text: text, unshiftedCodepoint: unshifted)
         }
+        pane.onPaste = { [weak self] bytes in
+            guard let session = self?.activeSession else { return }
+            session.scroll(Int32.min)
+            session.paste(bytes)
+        }
+        // Pointer handlers: THIS pane's session, resolved by id.
+        pane.onScroll = { [weak self] rows in self?.session(for: id)?.scroll(rows) }
+        pane.onMouse = { [weak self] action, button, mods, x, y in
+            self?.session(for: id)?
+                .mouse(action: action, button: button, mods: mods, x: x, y: y) ?? false
+        }
+        pane.onWheel = { [weak self] x, y, ticks, mods in
+            self?.session(for: id)?.wheel(x: x, y: y, ticks: ticks, mods: mods) ?? false
+        }
+        // A click anywhere in a pane focuses it BEFORE the press is forwarded, so the
+        // first click into an unfocused pane is not swallowed by the focus change.
+        pane.onFocusRequest = { [weak self] in self?.focus(paneID: id) }
+        pane.onAcceptSuggestion = { [weak self] in
+            guard let self, !self.ghostRemainder.isEmpty,
+                let session = self.activeSession
+            else { return false }
+            // The paste path types the remainder; bracketed mode is its concern.
+            session.paste(self.ghostRemainder)
+            self.hideGhost()
+            return true
+        }
+        // Geometry goes to every session: it is per-host state, and a background
+        // session must not come to the front with a stale (or never-set) view size.
+        pane.onMouseGeometry = { [weak self] width, height, inset in
+            self?.session(for: id)?
+                .mouseGeometry(width: width, height: height, inset: inset)
+        }
+        pane.onNewSession = { [weak self] in self?.newSession() }
+        pane.onPalette = { [weak self] in self?.togglePalette() }
+        pane.onSplitRight = { [weak self] in self?.split(axis: .horizontal) }
+        pane.onSplitDown = { [weak self] in self?.split(axis: .vertical) }
+        pane.onFocusMove = { [weak self] axis, forward in
+            self?.moveFocus(axis: axis, forward: forward)
+        }
+        if mind2t_config_panels(config) {
+            pane.onDiffPanel = { [weak self] in self?.toggleDiffPanel() }
+        }
+        pane.onCloseSession = { [weak self] in
+            guard let self else { return }
+            self.closePane(id)
+        }
+        pane.onBlockClick = { [weak self] block, event in
+            self?.showBlockMenu(block, with: event)
+        }
+        pane.onCommandClick = { [weak self] point in self?.openLink(at: point) }
+        pane.onZoomIn = { [weak self] in self?.zoom(by: 1.1) }
+        pane.onZoomOut = { [weak self] in self?.zoom(by: 1 / 1.1) }
+        pane.onZoomReset = { [weak self] in self?.zoom(to: 1.0) }
+        return pane
+    }
+
+    private func session(for paneID: Int) -> Session? {
+        sessions.first { $0.paneID == paneID }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        view = TerminalView(frame: .zero)
-        view.wantsLayer = true
-        view.onPresentResize = { [weak self] width, height in
-            self?.presentingSession?.resizeLayer(width: Int(width), height: Int(height))
-        }
+        paneContainer = NSView(frame: .zero)
+        paneContainer.autoresizesSubviews = false
 
         tabBar = TabBarView(frame: .zero)
         tabBar.delegate = self
@@ -199,7 +285,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         let content = NSView(frame: window.contentLayoutRect)
         content.autoresizesSubviews = true
         content.addSubview(tabBar)
-        content.addSubview(view)
+        content.addSubview(paneContainer)
         // Added AFTER the terminal view deliberately. The pane and the sidebar tile
         // exactly, so ordering is not load-bearing for correctness -- but if the tiling
         // arithmetic is ever wrong, a sidebar added last draws ON TOP and the defect is
@@ -211,94 +297,24 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         window.delegate = self
         window.center()
         window.makeKeyAndOrderFront(nil)
+
+        setupSuggestions()
+        newSession()
+        guard !sessions.isEmpty else {
+            NSApp.terminate(nil)
+            return
+        }
+        // AFTER the first pane exists, not before: `view` is the focused pane's surface
+        // now, and there is no surface until a session has one.
+        attachGhost()
         window.makeFirstResponder(view)
         NSApp.activate(ignoringOtherApps: true)
 
-        // Native resolution: the renderer rasterizes at backing scale, the layer declares
-        // it, and one buffer pixel is one device pixel.
-        view.layer?.backgroundColor = NSColor.black.cgColor
-        // Below the content layer: the metal layer carries the frame, the content layer keeps
-        // its sublayers (the ghost suggestion) and its geometry, and overlays stay on top.
-        // Device and pixel format are deliberately NOT set here - the surface owns them, and a
-        // layer configured with one device while the renderer draws on another is a black
-        // window with no error anywhere.
-        view.presentLayer.isOpaque = true
-        view.presentLayer.contentsScale = window.backingScaleFactor
-        view.layer?.addSublayer(view.presentLayer)
-        view.layer?.addSublayer(view.contentLayer)
-        view.contentLayer.contentsScale = window.backingScaleFactor
-        view.contentLayer.magnificationFilter = .nearest
-        // A frame is NEVER scaled to fit its layer. The default gravity is `.resize`,
-        // which stretches whatever was last drawn across the new bounds -- so during a
-        // resize, before the pty has caught up, the terminal renders as soft, oversized
-        // glyphs with the previous frame's edges smeared over the gap. Anchoring at the
-        // top-left leaves a stale frame at its true pixel size with the background
-        // showing past it, which is what every terminal does mid-drag and reads as
-        // "not repainted yet" instead of "broken". (Operator-reported, 2026-08-02.)
-        view.contentLayer.contentsGravity = .topLeft
-
-        // Standalone CALayers implicitly ANIMATE property changes -- a 0.25s crossfade on
-        // every `contents` swap. At a 60 Hz blit the overlapping fades read as typing at
-        // five frames a second (found live, 2026-07-29). A terminal frame is a hard cut.
-        let hardCut: [String: CAAction] = [
-            "contents": NSNull(), "backgroundColor": NSNull(),
-            "bounds": NSNull(), "position": NSNull(),
-        ]
-        view.contentLayer.actions = hardCut
-        view.layer?.actions = hardCut
-
-        // Typing and pasting snap the view to the live bottom first -- the standard
-        // terminal policy, applied here because the C surface deliberately leaves it
-        // to the embedder. A no-op when already at the bottom.
-        view.onKey = { [weak self] action, key, mods, consumed, text, unshifted in
-            guard let session = self?.activeSession else { return false }
-            // Typing snaps to the live bottom, the policy the C surface leaves to the
-            // embedder -- presses only, so a held modifier's release doesn't snap.
-            if action != 0 {
-                session.scroll(Int32.min)
-            }
-            return session.key(
-                action: action, key: key, mods: mods, consumedMods: consumed,
-                text: text, unshiftedCodepoint: unshifted)
-        }
-        view.onPaste = { [weak self] bytes in
-            guard let session = self?.activeSession else { return }
-            session.scroll(Int32.min)
-            session.paste(bytes)
-        }
-        view.onScroll = { [weak self] rows in self?.activeSession?.scroll(rows) }
-        view.onAcceptSuggestion = { [weak self] in
-            guard let self, !self.ghostRemainder.isEmpty,
-                let session = self.activeSession
-            else { return false }
-            // The paste path types the remainder; bracketed mode is its concern.
-            session.paste(self.ghostRemainder)
-            self.hideGhost()
-            return true
-        }
-        view.onMouse = { [weak self] action, button, mods, x, y in
-            self?.activeSession?.mouse(action: action, button: button, mods: mods, x: x, y: y)
-                ?? false
-        }
-        view.onWheel = { [weak self] x, y, ticks, mods in
-            self?.activeSession?.wheel(x: x, y: y, ticks: ticks, mods: mods) ?? false
-        }
-        // Geometry goes to every session: it is per-host state, and a background
-        // session must not come to the front with a stale (or never-set) view size.
-        view.onMouseGeometry = { [weak self] width, height, inset in
-            self?.sessions.forEach { $0.mouseGeometry(width: width, height: height, inset: inset) }
-        }
-        view.onNewSession = { [weak self] in self?.newSession() }
-        view.onPalette = { [weak self] in self?.togglePalette() }
-        // Left nil when panels are off, so the chord falls through to the child rather
-        // than being swallowed by a feature that is not there.
+        // The live-tap hooks (SCAR-014). A panel and a workspace are GUI seams, and proving
+        // them means seeing them in a real window. Opening from the environment is what
+        // lets that be a scripted capture instead of synthesized keystrokes into whatever
+        // the operator happens to be doing.
         if mind2t_config_panels(config) {
-            view.onDiffPanel = { [weak self] in self?.toggleDiffPanel() }
-            // The live-tap hook (SCAR-014): a panel is a GUI seam, and proving it means
-            // seeing it in a real window. Opening it from the environment is what lets
-            // that be a scripted capture instead of synthesized keystrokes into
-            // whatever the operator happens to be doing.
-            // "1"/"diff" opens the review card.
             let open = ProcessInfo.processInfo.environment["MIND2T_PANEL_OPEN"]
             if open == "1" || open == "diff" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
@@ -306,8 +322,6 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
                 }
             }
         }
-        // The S5 live tap, same reasoning: drives createWorkspace directly so a capture
-        // exercises the real worktree + cwd + pill path without synthesizing a modal.
         if let branch = ProcessInfo.processInfo.environment["MIND2T_WORKSPACE_TAP"],
             !branch.isEmpty
         {
@@ -318,23 +332,14 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
                 self.createWorkspace(root: root, branch: branch)
             }
         }
-        view.onCloseSession = { [weak self] in
-            guard let self, self.activeIndex >= 0 else { return }
-            self.closeSession(index: self.activeIndex)
-        }
-        view.onBlockClick = { [weak self] block, event in
-            self?.showBlockMenu(block, with: event)
-        }
-        view.onCommandClick = { [weak self] point in self?.openLink(at: point) }
-        view.onZoomIn = { [weak self] in self?.zoom(by: 1.1) }
-        view.onZoomOut = { [weak self] in self?.zoom(by: 1 / 1.1) }
-        view.onZoomReset = { [weak self] in self?.zoom(to: 1.0) }
-
-        setupSuggestions()
-        newSession()
-        guard !sessions.isEmpty else {
-            NSApp.terminate(nil)
-            return
+        // Splits have the same problem and the same answer: `MIND2T_SPLIT_TAP=right` or
+        // `=down` opens a second pane so a capture can show a real tiling.
+        if let where0 = ProcessInfo.processInfo.environment["MIND2T_SPLIT_TAP"],
+            !where0.isEmpty
+        {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                self?.split(axis: where0 == "down" ? .vertical : .horizontal)
+            }
         }
 
         // For screenshots: `screencapture -l` takes this id. Written unbuffered, because a
@@ -374,7 +379,9 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             sidebarWidth: sidebarDocked ? SidebarView.preferredWidth : nil)
         tabBar.frame = layout.tabBar
         tabBar.autoresizingMask = [.width, .minYMargin]
-        view.frame = layout.pane
+        paneContainer.frame = layout.pane
+        paneContainer.autoresizingMask = []
+        tilePanes()
         // Manual frame for the same reason the pane takes one: the sidebar's width is a
         // REMAINDER of the pane's floor, which an autoresizing mask cannot express.
         if let rect = layout.sidebar {
@@ -382,10 +389,168 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             sidebar.autoresizingMask = []
             sidebar.needsLayout = true
         }
-        // Manual frames, still: `gridForPane` derives cols and rows from `view.bounds`, so the
-        // frame set here is what resizes the pty. An autoresizing mask would let AppKit move it
-        // behind that derivation's back.
-        view.autoresizingMask = []
+    }
+
+    /// Puts every visible pane where the split tree says it goes, and resizes its pty to
+    /// match.
+    ///
+    /// Manual frames throughout: each pane's grid is derived from ITS OWN rect, so the
+    /// frame set here is what resizes that pty. An autoresizing mask would let AppKit move
+    /// a pane behind that derivation's back and the child would be told a size it does not
+    /// have.
+    private func tilePanes() {
+        guard paneContainer != nil else { return }
+        let rect = paneContainer.bounds
+        let panes = SplitLayout.tile(tree, in: rect)
+
+        for pane in panes {
+            guard let surface = paneViews[pane.id] else { continue }
+            surface.frame = pane.rect
+            surface.autoresizingMask = []
+            if surface.superview !== paneContainer { paneContainer.addSubview(surface) }
+            if let session = session(for: pane.id) { fit(session, to: pane.rect) }
+        }
+        // A surface for a pane no longer in the tree is a background tab's: off screen,
+        // still alive, still polled at the background rate.
+        let visible = Set(panes.map(\.id))
+        for (id, surface) in paneViews where !visible.contains(id) {
+            surface.removeFromSuperview()
+        }
+
+        // Handles are rebuilt rather than repositioned. There is one per branch and the
+        // tree changes shape, so a pool would have to be reconciled against it - and a
+        // stale handle drags a divider that is no longer there.
+        for handle in dividerViews { handle.removeFromSuperview() }
+        dividerViews = SplitLayout.dividers(tree, in: rect).map { divider in
+            let handle = SplitDividerHandle(divider: divider)
+            handle.onDrag = { [weak self] point in
+                guard let self else { return }
+                self.tree = self.tree.adjusting(
+                    dividerAt: divider.index,
+                    to: SplitLayout.fraction(for: divider, at: point))
+                self.tilePanes()
+            }
+            paneContainer.addSubview(handle)
+            return handle
+        }
+        refreshFocusRing()
+    }
+
+    /// The focused pane wears a ring. Without it a split is a picture of two terminals with
+    /// no way to tell which one the keyboard is talking to, and the operator finds out by
+    /// typing into the wrong one.
+    private func refreshFocusRing() {
+        guard paneViews.count > 1 else {
+            paneViews.values.forEach { $0.setFocused(false) }
+            return
+        }
+        for (id, surface) in paneViews { surface.setFocused(id == focusedPaneID) }
+    }
+
+    private func fit(_ session: Session, to rect: NSRect) {
+        guard session.cellWidth != 0, windowSized else { return }
+        let (cols, rows) = SplitLayout.grid(
+            for: rect, cellWidth: session.cellWidth, cellHeight: session.cellHeight,
+            scale: window.backingScaleFactor, padding: TerminalView.padding)
+        session.resize(cols: cols, rows: rows)
+    }
+
+    // MARK: splits (P3)
+
+    /// Splits the focused pane, putting a fresh session beside or below it.
+    private func split(axis: SplitAxis) {
+        guard let current = activeSession else { return }
+        spawnCount += 1
+        let word = command?.split(separator: " ").first.map(String.init) ?? "zsh"
+        let title = word == "sh" ? "session \(spawnCount)" : "\(word) \(spawnCount)"
+        // The new pane inherits the focused pane's directory, which is what every terminal
+        // does and the only behaviour that makes a split useful mid-task.
+        let scale = Float(window.backingScaleFactor)
+        let (cols, rows) = (current.cols, current.rows)
+        guard let session = Session(
+            command: command, cols: cols, rows: rows,
+            fontSize: baseFontSize * scale * fontScale,
+            autoDirection: autoDirection, config: config, title: title,
+            cwd: directory(of: current))
+        else {
+            warn("Could not split", "The pty or the renderer refused a new pane.")
+            return
+        }
+        guard let grown = tree.splitting(current.paneID, with: session.paneID, axis: axis)
+        else {
+            // The focused pane was not in the tree, which means the tree and the focus
+            // disagree. Closing the new session is the honest response: leaking a pty to
+            // paper over an inconsistency is how one becomes several.
+            session.close()
+            return
+        }
+        sessions.append(session)
+        paneViews[session.paneID] = makePaneView(for: session)
+        tree = grown
+        focusedPaneID = session.paneID
+        layoutChrome()
+        attachPresent(session)
+        refreshChrome()
+        window.makeFirstResponder(paneViews[session.paneID])
+    }
+
+    /// Moves focus to the pane in a direction, or does nothing when there is none. It
+    /// deliberately does NOT wrap: focus arriving on the far side of the window is
+    /// disorienting, and every terminal that does it gets complained about.
+    private func moveFocus(axis: SplitAxis, forward: Bool) {
+        let panes = SplitLayout.tile(tree, in: paneContainer.bounds)
+        guard let next = SplitLayout.neighbor(
+            of: focusedPaneID, among: panes, axis: axis, forward: forward)
+        else { return }
+        focus(paneID: next)
+    }
+
+    private func focus(paneID: Int) {
+        guard paneID != focusedPaneID, paneViews[paneID] != nil else { return }
+        focusedPaneID = paneID
+        if let session = session(for: paneID) {
+            session.markSeen()
+            window.title = session.title
+            applyBackground(of: session)
+        }
+        hideGhost()
+        attachGhost()
+        lastInputLine = ""
+        refreshFocusRing()
+        refreshChrome()
+        window.makeFirstResponder(paneViews[paneID])
+    }
+
+    /// Closes one pane. The last pane closes the window; any other collapses out of the
+    /// tree and hands its space to its sibling.
+    private func closePane(_ paneID: Int) {
+        guard let index = sessions.firstIndex(where: { $0.paneID == paneID }) else { return }
+        let wasVisible = tree.leaves.contains(paneID)
+        sessions[index].close()
+        sessions.remove(at: index)
+        paneViews[paneID]?.removeFromSuperview()
+        paneViews.removeValue(forKey: paneID)
+
+        if wasVisible, let pruned = tree.removing(paneID) {
+            tree = pruned
+            if focusedPaneID == paneID { focusedPaneID = pruned.leaves.first ?? -1 }
+        } else if wasVisible {
+            // The tree is empty. Fall back to any surviving session as a single pane
+            // rather than terminating: a background tab is still a terminal the operator
+            // has open, and closing the window under it would lose it.
+            guard let survivor = sessions.first else {
+                NSApp.terminate(nil)
+                return
+            }
+            tree = .leaf(survivor.paneID)
+            focusedPaneID = survivor.paneID
+            if paneViews[survivor.paneID] == nil {
+                paneViews[survivor.paneID] = makePaneView(for: survivor)
+            }
+        }
+        layoutChrome()
+        refreshChrome()
+        if let surface = paneViews[focusedPaneID] { window.makeFirstResponder(surface) }
     }
 
     private var activeSession: Session? {
@@ -394,6 +559,8 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     // MARK: session lifecycle
 
+    /// Opens a session as a new TAB: a single pane replacing the current tiling. Splitting
+    /// is `split(axis:)`, which keeps what is on screen and divides it.
     private func newSession() {
         spawnCount += 1
         let word = command?.split(separator: " ").first.map(String.init) ?? "zsh"
@@ -755,37 +922,39 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         alert.runModal()
     }
 
+    /// Index-addressed close, kept for the strip and the palette, which both think in
+    /// positions. It DELEGATES rather than duplicating: one place removes a session, so a
+    /// close can never leave a pane view bound to a dead pty or a tree holding an id that
+    /// no longer resolves.
     private func closeSession(index: Int) {
         guard index >= 0 && index < sessions.count else { return }
-        sessions[index].close()
-        sessions.remove(at: index)
-        if sessions.isEmpty {
-            NSApp.terminate(nil)
-            return
-        }
-        if activeIndex >= index {
-            activate(index: max(0, activeIndex - 1))
-        } else {
-            refreshChrome()
-        }
+        closePane(sessions[index].paneID)
     }
 
+    /// Brings one session to the front as a SINGLE pane, replacing whatever tiling was on
+    /// screen. That is what picking a tab means: the strip lists sessions, the tree lists
+    /// the ones currently visible, and choosing from the strip is choosing a new tree.
     private func activate(index: Int) {
         guard index >= 0 && index < sessions.count else { return }
-        activeIndex = index
         let session = sessions[index]
+        if paneViews[session.paneID] == nil {
+            paneViews[session.paneID] = makePaneView(for: session)
+        }
+        tree = .leaf(session.paneID)
+        focusedPaneID = session.paneID
+        layoutChrome()
         session.markSeen()
         window.title = session.title
         refreshChrome()
-        fitToPane(session)
-        syncPresentTarget(to: session)
-        showFrame(session.poll() ?? session.lastImage)
+        attachPresent(session)
+        blit(session)
         applyBackground(of: session)
         // Mouse geometry is per-host state; a session activated (or just spawned)
         // after the last layout pass has never seen the view's size.
         view.pushMouseGeometry()
         // The ghost and its input tracking belong to the outgoing session's grid.
         hideGhost()
+        attachGhost()
         lastInputLine = ""
         window.makeFirstResponder(view)
     }
@@ -793,8 +962,61 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// The margin around the grid wears the terminal's own background, so a future
     /// theme colors it without any app-side change.
     private func applyBackground(of session: Session) {
-        guard let background = session.background else { return }
-        view.layer?.backgroundColor = background
+        guard let background = session.background,
+            let surface = paneViews[session.paneID]
+        else { return }
+        // The session's OWN surface. Painting the focused pane with a background sampled
+        // from a different session is how two panes running different themes end up
+        // wearing each other's margins.
+        surface.layer?.backgroundColor = background
+    }
+
+    /// Puts one session's newest frame on its own pane.
+    ///
+    /// While presenting there IS no image - the host leaves `pixels` null so the frame
+    /// never crosses the bus - and the work is a present call on that pane's own
+    /// swapchain. The CGImage path is NOT run as a fallback: drawing the old way when a
+    /// present fails would hide the failure behind a working-looking window.
+    @discardableResult
+    private func blit(_ session: Session) -> Bool {
+        guard let surface = paneViews[session.paneID] else { return false }
+        if session.presenting {
+            let ok = session.present()
+            if !ok, !presentReported {
+                presentReported = true
+                FileHandle.standardError.write(Data("MIND2T_PRESENT=failed\n".utf8))
+            }
+            return ok
+        }
+        if let image = session.poll() ?? session.lastImage {
+            surface.contentLayer.contents = image
+            return true
+        }
+        return false
+    }
+
+    /// Attaches a session's renderer to ITS OWN pane's metal layer.
+    ///
+    /// The single-view host could only ever have one owner, because one layer is one
+    /// swapchain and two renderers presenting into the same drawable is a race. With a
+    /// layer per pane that constraint dissolves: each session owns its own, permanently,
+    /// and nothing is detached on a focus change.
+    private func attachPresent(_ session: Session) {
+        guard gpuPresent, let surface = paneViews[session.paneID] else { return }
+        // Size the layer BEFORE attaching. An unsized CAMetalLayer reports a zero drawable
+        // which the swapchain clamps to 1x1 - an attach that succeeds and then shows
+        // nothing, while a stale CGImage underneath makes the window look correct.
+        surface.layoutSubtreeIfNeeded()
+        let size = surface.presentLayer.drawableSize
+        let ok = session.attachLayer(
+            surface.presentLayer, width: Int(size.width), height: Int(size.height))
+        if !ok {
+            let report = "MIND2T_PRESENT_ATTACH=failed "
+                + "drawable=\(Int(size.width))x\(Int(size.height))\n"
+            FileHandle.standardError.write(Data(report.utf8))
+            return
+        }
+        session.resizeLayer(width: Int(size.width), height: Int(size.height))
     }
 
     private func refreshChrome() {
@@ -858,36 +1080,41 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     private func pollTick() {
         tick += 1
-        guard let session = activeSession else { return }
-        if session.presenting {
-            session.present()
-            applyBackground(of: session)
+        // EVERY visible pane, not just the focused one. A split whose unfocused halves are
+        // polled at the background rate is a split where the other panes update twice a
+        // second, and the operator reads that as the terminal being slow rather than as a
+        // polling policy. They are all on screen, so they are all live.
+        let visible = tree.leaves
+        for paneID in visible {
+            guard let session = session(for: paneID) else { continue }
+            let focused = paneID == focusedPaneID
+            if blit(session) { applyBackground(of: session) }
+            // Outside the new-frame branch deliberately: a child that prints once and goes
+            // quiet never yields another image, and a view left at cellHeight 0 has no
+            // wheel handling at all (found by the SGR-mouse live tap). updateGutter's own
+            // change guard makes the every-tick call free.
+            paneViews[paneID]?.updateGutter(
+                blocks: computeBlocks(session.rowClasses),
+                cellHeightDevice: session.cellHeight)
+            // Events BEFORE the suggestion pass: the 133;C event and the cursor's move to
+            // the fresh prompt land in the SAME polled frame, so recording must read the
+            // previous tick's input line before captureAndSuggest overwrites it (the tap
+            // caught exactly this race as an empty history file).
+            apply(events: session.drainEvents(), to: session)
+            // The ghost belongs to the pane being typed into. Running it for every visible
+            // pane would have three suggestions competing for one `ghostRemainder`.
+            if focused { captureAndSuggest(session) }
+            if !windowSized && session.cellWidth != 0 {
+                windowSized = true
+                sizeWindowToGrid(session)
+            }
         }
-        if let image = session.poll() {
-            view.contentLayer.contents = image
-            applyBackground(of: session)
-        }
-        // Outside the new-frame branch deliberately: a child that prints once and goes
-        // quiet never yields another image, and a view left at cellHeight 0 has no
-        // wheel handling at all (found by the SGR-mouse live tap). updateGutter's own
-        // change guard makes the every-tick call free.
-        view.updateGutter(
-            blocks: computeBlocks(session.rowClasses),
-            cellHeightDevice: session.cellHeight)
-        // Events BEFORE the suggestion pass: the 133;C event and the cursor's move to
-        // the fresh prompt land in the SAME polled frame, so recording must read the
-        // previous tick's input line before captureAndSuggest overwrites it (the tap
-        // caught exactly this race as an empty history file).
-        apply(events: session.drainEvents(), to: session)
-        captureAndSuggest(session)
-        if !windowSized && session.cellWidth != 0 {
-            windowSized = true
-            sizeWindowToGrid(session)
-        }
-        if session.exited {
-            closeSession(index: activeIndex)
-            return
-        }
+        // Collected first, closed after: closePane mutates the tree, and mutating it while
+        // iterating its own leaves is how one exit takes a neighbour with it.
+        let finished = visible.filter { session(for: $0)?.exited == true }
+        for paneID in finished { closePane(paneID) }
+        if !finished.isEmpty { return }
+
         if tick % HostAppDelegate.backgroundEvery == 0 {
             reapBackgroundSessions()
         }
@@ -955,17 +1182,22 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// Low-rate sweep over the sessions not on screen: keep their images warm and drop
     /// the ones whose child exited. Walked backwards so removal keeps indices honest.
     private func reapBackgroundSessions() {
+        // Every VISIBLE pane is polled at full rate by pollTick; this is for the ones off
+        // screen. Skipping only the focused one would poll a split's other halves twice
+        // here and 60 times a second there.
+        let visible = Set(tree.leaves)
         for index in stride(from: sessions.count - 1, through: 0, by: -1)
-        where index != activeIndex {
+        where !visible.contains(sessions[index].paneID) {
             let session = sessions[index]
             session.poll()
             // Background sessions still ring, notify and set the clipboard -- the
             // program asked; being off-screen is not a veto.
             apply(events: session.drainEvents(), to: session)
             if session.exited {
-                sessions[index].close()
-                sessions.remove(at: index)
-                if activeIndex > index { activeIndex -= 1 }
+                // Through closePane so the tree, the surfaces and the strip all learn
+                // about it. A bare `sessions.remove` here would leave a pane view bound
+                // to a dead session and the tiling would keep a rectangle for it.
+                closePane(session.paneID)
             }
         }
         refreshChrome()
@@ -975,22 +1207,24 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     /// The grid that fits the terminal pane right now, or the spawn default before any
     /// cell metrics exist.
+    /// The grid a NEW session should spawn with: the focused pane's rect if there is one,
+    /// otherwise the whole container.
+    ///
+    /// Routed through `SplitLayout.grid` rather than repeating the arithmetic, because the
+    /// version that lived here read one shared view's bounds - correct while there was one
+    /// pane and wrong for every pane after the first.
     private func gridForPane() -> (UInt16, UInt16) {
         guard let metrics = sessions.first(where: { $0.cellWidth != 0 }) else {
             return (80, 24)
         }
-        let scale = window.backingScaleFactor
-        let inner = view.bounds.insetBy(dx: TerminalView.padding, dy: TerminalView.padding)
-        let cols = UInt16(max(2, Int(inner.width * scale) / metrics.cellWidth))
-        let rows = UInt16(max(2, Int(inner.height * scale) / metrics.cellHeight))
-        return (cols, rows)
+        let panes = SplitLayout.tile(tree, in: paneContainer.bounds)
+        let rect = panes.first { $0.id == focusedPaneID }?.rect ?? paneContainer.bounds
+        return SplitLayout.grid(
+            for: rect, cellWidth: metrics.cellWidth, cellHeight: metrics.cellHeight,
+            scale: window.backingScaleFactor, padding: TerminalView.padding)
     }
 
-    private func fitToPane(_ session: Session) {
-        guard session.cellWidth != 0, windowSized else { return }
-        let (cols, rows) = gridForPane()
-        session.resize(cols: cols, rows: rows)
-    }
+
 
     /// Sizes the window once so the terminal pane is exactly the spawn grid, in points.
     private func sizeWindowToGrid(_ session: Session) {
@@ -1132,7 +1366,25 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         ]
         ghost.foregroundColor = NSColor(white: 1, alpha: 0.35).cgColor
         ghost.isHidden = true
-        view.contentLayer.addSublayer(ghost)
+        // NOT attached here. This runs before the first pane exists, so there is no
+        // surface to attach to yet - and there is more than one surface afterwards. The
+        // ghost belongs to whichever pane is being typed into, so it FOLLOWS focus.
+        //
+        // Attaching it here crashed the app on launch, every time, with
+        // "Unexpectedly found nil while implicitly unwrapping" - caught by running the
+        // build rather than by any gate, because the gates stop below AppKit.
+    }
+
+    /// Moves the ghost suggestion layer onto the focused pane.
+    ///
+    /// A CALayer has exactly one superlayer, so this is a move and not a copy: adding it
+    /// to a second pane silently removes it from the first. That is the behaviour wanted -
+    /// there is one suggestion and it belongs where the typing is.
+    private func attachGhost() {
+        guard let surface = view else { return }
+        guard ghost.superlayer !== surface.contentLayer else { return }
+        ghost.removeFromSuperlayer()
+        surface.contentLayer.addSublayer(ghost)
     }
 
     /// The typed text on the caret's row -- input-marked cells only, so the prompt
@@ -1473,10 +1725,15 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// running with its own geometry, and one that missed the dock would repaint at the
     /// old width the moment it is activated.
     private func refitAll() {
+        // Visible panes take their own rect from the tiling. A background session has no
+        // rect at all, so it is fitted to the whole container - the size it will get the
+        // moment it is brought forward as a single pane.
+        let panes = SplitLayout.tile(tree, in: paneContainer.bounds)
         for session in sessions {
-            fitToPane(session)
+            let rect = panes.first { $0.id == session.paneID }?.rect ?? paneContainer.bounds
+            fit(session, to: rect)
         }
-        showFrame(activeSession?.poll() ?? activeSession?.lastImage)
+        if let session = activeSession { blit(session) }
     }
 
 

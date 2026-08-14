@@ -1192,9 +1192,266 @@ func runSSHDialogShot(_ path: String, dark: Bool) -> Int32 {
     return 0
 }
 
+/// `--smoke-split`: the split tiling arithmetic, with no window and no pty.
+///
+/// The chrome gate already paid for this lesson once: a sidebar computed as a CONSTANT
+/// (`x = width - 260`) tiles perfectly at 1120 and overlaps the pane at 300, so a gate that
+/// only tests a comfortable window passes the wrong implementation. Splits have the same
+/// shape with more places to put it, so the odd and narrow sizes are the whole point.
+///
+/// Three assertions that exact tiling CANNOT make on its own, and each guards a defect that
+/// tiles perfectly while being wrong:
+///
+/// - **Order.** A vertical split with `first` at the bottom tiles exactly. AppKit's origin
+///   is bottom-left, so the top pane is the HIGH y, and getting it backwards puts a new
+///   split above the pane it was made from.
+/// - **Divider indices.** The walk emits a branch's divider before descending; if
+///   `adjusting(dividerAt:)` counted the other way, a drag would resize a different
+///   divider than the one under the pointer, and both orders tile.
+/// - **Focus geometry.** A tree walk finds a sibling that is correct by the data structure
+///   and nowhere near the arrow that was pressed.
+///
+/// Mutants, measured 2026-08-14: five run, four killed, **one survivor recorded**.
+/// Removing the `overlap > 0` FILTER from `neighbor` changes no answer this layout can
+/// produce, because `overlap` is also the tie-break and every candidate at the minimum
+/// distance in a guillotine tiling shares the same boundary. No case built here kills it
+/// and none was faked to look like it did. The filter stays as defence for a layout that
+/// is not a guillotine tiling; it is NOT evidence, and this note is the point.
+func runSplitSmoke() -> Int32 {
+    func fail(_ why: String) -> Int32 {
+        FileHandle.standardError.write(Data("split smoke: \(why)\n".utf8))
+        return 1
+    }
+
+    /// Every pane accounted for, nothing overlapping, nothing outside, and every point of
+    /// the rect either in a pane or in a divider. The last clause is what catches a seam:
+    /// area alone is satisfied by a tiling that loses a column here and gains one there.
+    func tilesExactly(_ tree: SplitTree, _ rect: NSRect) -> String? {
+        let panes = SplitLayout.tile(tree, in: rect)
+        let dividers = SplitLayout.dividers(tree, in: rect)
+        guard panes.count == tree.leaves.count else {
+            return "expected \(tree.leaves.count) panes, got \(panes.count)"
+        }
+        for pane in panes {
+            if pane.rect.width < 0 || pane.rect.height < 0 {
+                return "pane \(pane.id) has a negative side: \(pane.rect)"
+            }
+            if !NSContainsRect(NSIntegralRect(rect), pane.rect), !pane.rect.isEmpty {
+                return "pane \(pane.id) at \(pane.rect) escapes \(rect)"
+            }
+        }
+        for (a, b) in pairs(panes) where NSIntersectsRect(a.rect, b.rect) {
+            return "panes \(a.id) and \(b.id) OVERLAP: \(a.rect) vs \(b.rect)"
+        }
+        // Point coverage on a lattice, not an area sum. Every integer point of the rect
+        // belongs to exactly one pane or to a divider.
+        let whole = NSIntegralRect(rect)
+        var x = whole.minX
+        while x < whole.maxX {
+            var y = whole.minY
+            while y < whole.maxY {
+                let point = NSPoint(x: x + 0.5, y: y + 0.5)
+                let inPane = panes.filter { NSPointInRect(point, $0.rect) }.count
+                let inDivider = dividers.filter { NSPointInRect(point, $0.rect) }.count
+                if inPane + inDivider != 1 {
+                    return "point \(point) is covered \(inPane + inDivider) times"
+                }
+                y += 1
+            }
+            x += 1
+        }
+        return nil
+    }
+
+    func pairs(_ panes: [SplitPane]) -> [(SplitPane, SplitPane)] {
+        var out: [(SplitPane, SplitPane)] = []
+        for i in panes.indices {
+            for j in panes.indices where j > i { out.append((panes[i], panes[j])) }
+        }
+        return out
+    }
+
+    // A single leaf takes everything. The CONTROL: without it, "tiles exactly" is also
+    // satisfied by an implementation that subtracts a divider it never drew.
+    let alone = SplitLayout.tile(.leaf(1), in: NSRect(x: 0, y: 0, width: 801, height: 457))
+    guard alone.count == 1, alone[0].rect == NSRect(x: 0, y: 0, width: 801, height: 457)
+    else {
+        return fail("one pane must take the whole rect, got \(alone)")
+    }
+    guard SplitLayout.dividers(.leaf(1), in: NSRect(x: 0, y: 0, width: 801, height: 457))
+        .isEmpty
+    else {
+        return fail("a single pane must have no dividers")
+    }
+
+    // Four trees, ten sizes each, deliberately odd and deliberately narrow. 61x37 cannot
+    // hold four panes at any sane floor, and that is the case that has to stay exact.
+    let deep = SplitTree.branch(
+        axis: .horizontal, fraction: 0.5,
+        first: .branch(axis: .vertical, fraction: 0.5, first: .leaf(1), second: .leaf(2)),
+        second: .branch(
+            axis: .vertical, fraction: 0.33,
+            first: .leaf(3),
+            second: .branch(
+                axis: .horizontal, fraction: 0.5, first: .leaf(4), second: .leaf(5))))
+    let trees: [(String, SplitTree)] = [
+        ("one", .leaf(1)),
+        ("side by side", .branch(
+            axis: .horizontal, fraction: 0.5, first: .leaf(1), second: .leaf(2))),
+        ("stacked", .branch(
+            axis: .vertical, fraction: 0.5, first: .leaf(1), second: .leaf(2))),
+        ("five deep", deep),
+    ]
+    let sizes: [NSSize] = [
+        NSSize(width: 1120, height: 700), NSSize(width: 801, height: 457),
+        NSSize(width: 300, height: 200), NSSize(width: 137, height: 99),
+        NSSize(width: 61, height: 37), NSSize(width: 13, height: 9),
+        NSSize(width: 7, height: 5), NSSize(width: 1, height: 1),
+        NSSize(width: 0, height: 0), NSSize(width: 240, height: 61),
+    ]
+    // Fractional origins and sizes, because a real content rect is one. Without these the
+    // integralisation is never exercised: every size above is already whole, so removing
+    // `NSIntegralRect` changes nothing and the gate cannot see it. Measured 2026-08-14 -
+    // that mutant survived the first version of this gate.
+    let awkward: [NSRect] = [
+        NSRect(x: 0.5, y: 0.25, width: 800.7, height: 456.3),
+        NSRect(x: 0, y: 0, width: 137.5, height: 99.5),
+        NSRect(x: 2.75, y: 1.1, width: 61.4, height: 37.9),
+    ]
+    var checked = 0
+    for (name, tree) in trees {
+        for rect in awkward {
+            if let why = tilesExactly(tree, rect) {
+                return fail("\(name) at fractional \(rect): \(why)")
+            }
+            checked += 1
+        }
+        for size in sizes {
+            let rect = NSRect(x: 0, y: 0, width: size.width, height: size.height)
+            if let why = tilesExactly(tree, rect) {
+                return fail("\(name) at \(Int(size.width))x\(Int(size.height)): \(why)")
+            }
+            checked += 1
+        }
+    }
+
+    // ORDER. `first` is the top pane, and the top pane is the high y.
+    let stacked = SplitLayout.tile(
+        .branch(axis: .vertical, fraction: 0.5, first: .leaf(1), second: .leaf(2)),
+        in: NSRect(x: 0, y: 0, width: 400, height: 300))
+    guard let top = stacked.first(where: { $0.id == 1 }),
+        let bottom = stacked.first(where: { $0.id == 2 }), top.rect.minY > bottom.rect.minY
+    else {
+        return fail("in a vertical split the FIRST pane must sit above the second, got"
+            + " \(stacked)")
+    }
+    // And left is left.
+    let beside = SplitLayout.tile(
+        .branch(axis: .horizontal, fraction: 0.5, first: .leaf(1), second: .leaf(2)),
+        in: NSRect(x: 0, y: 0, width: 400, height: 300))
+    guard let left = beside.first(where: { $0.id == 1 }),
+        let right = beside.first(where: { $0.id == 2 }), left.rect.minX < right.rect.minX
+    else {
+        return fail("in a horizontal split the FIRST pane must sit left of the second")
+    }
+
+    // DIVIDER INDEX. Adjusting divider 0 of the five-pane tree must move the outer
+    // boundary and nothing else. Both index orders tile, so only this can tell them apart.
+    let frame = NSRect(x: 0, y: 0, width: 1000, height: 600)
+    let baseline = SplitLayout.tile(deep, in: frame)
+    let nudged = SplitLayout.tile(deep.adjusting(dividerAt: 0, to: 0.8), in: frame)
+    guard let wideLeft = nudged.first(where: { $0.id == 1 }),
+        let baseLeft = baseline.first(where: { $0.id == 1 }),
+        wideLeft.rect.width > baseLeft.rect.width
+    else {
+        return fail("adjusting divider 0 did not widen the left half -- the walk and"
+            + " adjusting() disagree about which divider is which")
+    }
+    if let why = tilesExactly(deep.adjusting(dividerAt: 0, to: 0.8), frame) {
+        return fail("an adjusted tree stopped tiling: \(why)")
+    }
+
+    // FOCUS. From pane 1 (top left), right must reach the right half and down must reach
+    // pane 2 directly below - never pane 3, which is correct by the tree and wrong by eye.
+    guard SplitLayout.neighbor(of: 1, among: baseline, axis: .vertical, forward: true) == 2
+    else {
+        return fail("down from pane 1 must land on pane 2, got"
+            + " \(String(describing: SplitLayout.neighbor(of: 1, among: baseline, axis: .vertical, forward: true)))")
+    }
+    guard SplitLayout.neighbor(of: 1, among: baseline, axis: .horizontal, forward: true) == 3
+    else {
+        return fail("right from pane 1 must land on pane 3, got"
+            + " \(String(describing: SplitLayout.neighbor(of: 1, among: baseline, axis: .horizontal, forward: true)))")
+    }
+    // The control: there is nothing left of the left column, and a mover that returns
+    // *something* there would wrap focus around the screen.
+    guard SplitLayout.neighbor(of: 1, among: baseline, axis: .horizontal, forward: false)
+        == nil
+    else {
+        return fail("there is nothing to the left of pane 1")
+    }
+
+    // TREE EDITS. Splitting adds exactly one leaf and keeps the rest; removing collapses
+    // the branch so the survivor takes the whole rectangle rather than keeping a divider
+    // with nothing on the far side.
+    guard let split = SplitTree.leaf(1).splitting(1, with: 2, axis: .horizontal),
+        split.leaves == [1, 2]
+    else {
+        return fail("splitting a lone leaf must give two leaves in order")
+    }
+    guard SplitTree.leaf(1).splitting(99, with: 2, axis: .horizontal) == nil else {
+        return fail("splitting an absent pane must refuse, not silently no-op")
+    }
+    guard let pruned = deep.removing(4), pruned.leaves == [1, 2, 3, 5] else {
+        return fail("removing pane 4 must leave [1,2,3,5], got"
+            + " \(String(describing: deep.removing(4)?.leaves))")
+    }
+    guard let collapsed = SplitTree
+        .branch(axis: .horizontal, fraction: 0.5, first: .leaf(1), second: .leaf(2))
+        .removing(2), collapsed == .leaf(1)
+    else {
+        return fail("removing one of two panes must COLLAPSE the branch to a bare leaf")
+    }
+    let survivor = SplitLayout.tile(collapsed, in: frame)
+    guard survivor.count == 1, survivor[0].rect == frame else {
+        return fail("after a collapse the survivor must take the whole rect, got"
+            + " \(survivor)")
+    }
+    guard SplitTree.leaf(1).removing(1) == nil else {
+        return fail("removing the last pane must give an empty tree")
+    }
+
+    // The drag floor, and its honest limit: a container that cannot hold two floors
+    // reports the middle rather than clamping to a side it cannot satisfy.
+    let handle = SplitLayout.dividers(
+        .branch(axis: .horizontal, fraction: 0.5, first: .leaf(1), second: .leaf(2)),
+        in: frame)[0]
+    let dragged = SplitLayout.fraction(for: handle, at: NSPoint(x: 5, y: 300))
+    guard dragged * (frame.width - SplitLayout.divider) >= SplitLayout.minimumWidth else {
+        return fail("a drag to x=5 must stop at the \(Int(SplitLayout.minimumWidth))pt"
+            + " floor, gave fraction \(dragged)")
+    }
+    let tiny = SplitLayout.dividers(
+        .branch(axis: .horizontal, fraction: 0.5, first: .leaf(1), second: .leaf(2)),
+        in: NSRect(x: 0, y: 0, width: 100, height: 100))[0]
+    guard SplitLayout.fraction(for: tiny, at: NSPoint(x: 1, y: 50)) == 0.5 else {
+        return fail("a container too small for two floors must report the middle")
+    }
+
+    print(
+        "SPLIT SMOKE OK: \(checked) tree/size combinations tile exactly with no overlap and"
+            + " full point coverage down to 0x0, first is top and first is left, divider 0"
+            + " moves the outer boundary, focus is geometric with no wrap, a collapse hands"
+            + " the whole rect to the survivor, and the drag floor holds")
+    return 0
+}
+
 let arguments = CommandLine.arguments
 if arguments.contains("--smoke") {
     exit(runSmoke())
+}
+if arguments.contains("--smoke-split") {
+    exit(runSplitSmoke())
 }
 if arguments.contains("--smoke-ssh-layout") {
     exit(runSSHLayoutSmoke())

@@ -69,6 +69,18 @@ fi
 # assertion cannot answer "does it look right", and that question is what found this.
 .build/release/mind2t-host --smoke-ssh-layout
 
+# Split tiling. Pure arithmetic, no window, no pty -- `SplitLayout` exists apart from the
+# views for exactly the reason `ChromeLayout` does. The failure it guards is silent: a
+# tiling one point out looks fine at 1120 and leaves a seam, or an overlap, at 300. It
+# checks POINT COVERAGE on a lattice rather than summing areas, because an area sum is
+# satisfied by a tiling that loses a column here and gains one there, and it feeds
+# fractional rects because a real content rect is one - with whole numbers only, removing
+# the integralisation changes nothing and the gate cannot see it (measured: that mutant
+# survived the first version of this gate). Three things exact tiling CANNOT see are
+# asserted separately: first is top, divider indices agree with the walk, and focus is
+# geometric rather than tree-shaped.
+.build/release/mind2t-host --smoke-split
+
 # S5 workspaces. The load-bearing assertion is the REFUSAL: remove() never passes
 # --force, and a dirty worktree surviving is what stands between this feature and
 # deleting an agent's unpushed work. Mutant seen red (adding --force fails it).

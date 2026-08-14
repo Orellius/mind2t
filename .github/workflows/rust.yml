@@ -8,18 +8,19 @@ name: Rust
 #   * the differential corpus links the REAL libghostty-vt, which means a Ghostty checkout and
 #     Zig 0.16.0 exactly. `crates/ghostty` and `crates/difftest` are the only crates that need
 #     it, and they are excluded here rather than faked.
-#   * `scripts/smoke-mind2t.sh` drives AppKit, WebKit and the Tauri IPC in a real window.
+#   * `scripts/build-swift.sh` drives AppKit and WebKit in a real window across six smoke
+#     stages. (It replaced `smoke-mind2t.sh`, which died with Tauri on 2026-08-11.)
 #   * the GPU backend needs a device wgpu will accept.
 #
 # So CI runs the part that is pure: the parser, the grid, the frame handoff, and the Unicode
 # bidi conformance suite. That last one is the crown jewel and it is fully portable, which is
 # the happy accident of keeping bidi out of the core.
 #
-# One job here is NOT a subset of the local gate, and is the only place its property can be
-# checked at all: `linux-host` compiles the product crate for Linux. A Mac cannot fail that
-# check, so a Mac cannot gate it either.
-#
 # Everything else stays a local gate, and README says so.
+#
+# A job was removed here on 2026-08-14; the reasoning is kept below where it stood rather than
+# only in a commit message, because "why is there no Linux job" is a question somebody will ask
+# with a workflow file open and no git blame to hand.
 
 on:
   push:
@@ -85,55 +86,34 @@ jobs:
           -p mind2t-vt-frame
           --all-targets
 
-  linux-host:
-    name: the host compiles off macOS (Linux)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install the pinned toolchain
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-
-      # Tauri v2's Debian prerequisites, verified 2026-08-08 against
-      # https://v2.tauri.app/start/prerequisites/ rather than recalled. Without them the wry and
-      # tauri build scripts fail in pkg-config and the job goes red for a reason that has nothing
-      # to do with our own portability.
-      - name: Tauri system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            build-essential curl wget file \
-            libxdo-dev libssl-dev \
-            libayatana-appindicator3-dev librsvg2-dev
-
-      - uses: Swatinem/rust-cache@v2
-
-      # `chrome/dist` is gitignored, and the host embeds it at COMPILE time - so without this
-      # step `tauri::generate_context!` panics with "frontendDist is set to ../../chrome/dist but
-      # this path doesn't exist" and the job fails for a reason that has nothing to do with
-      # portability. Found by the job's second run, which is the job earning its keep twice:
-      # first on a real cfg defect, then on its own missing prerequisite.
-      #
-      # `bun run build` is `tsc --noEmit && vite build`, so this also typechecks the chrome. That
-      # is a free gain, not the reason it is here.
-      - uses: oven-sh/setup-bun@v2
-      - name: Build the chrome bundle the host embeds
-        run: bun install --cwd chrome --frozen-lockfile && bun run --cwd chrome build
-
-      # THIS JOB IS THE DEFINITION OF DONE FOR T1, and it is the only thing that can be.
-      # `block2` and `objc2` sat in the portable `[dependencies]` table until 2026-08-08, so the
-      # product crate could not compile off macOS at all - and nothing on a Mac can notice that,
-      # because every target a developer here builds for resolves them happily. The gate has to
-      # live on a runner that is not a Mac or it does not exist.
-      #
-      # `check`, not `test`: the tests in this crate open a window and drive AppKit. What is
-      # being asserted here is that the source COMPILES for Linux, which is the property that
-      # regresses silently every time a macOS path is added without a cfg.
-      - name: The product crate compiles for Linux
-        run: cargo check -p mind2t --all-targets
+  # THE `linux-host` JOB WAS RETIRED 2026-08-14. Read this before adding it back.
+  #
+  # It guarded one property: the Tauri PRODUCT CRATE compiles off macOS. `block2` and `objc2`
+  # sat in its portable `[dependencies]` table until 2026-08-08, and nothing on a Mac can
+  # notice that, so the gate had to live on a runner that is not a Mac.
+  #
+  # Tauri was deleted on 2026-08-11 (PRs #45-#53) and `crates/mind2t` went with it. Every one
+  # of the job's three steps then referenced something that no longer exists:
+  #
+  #   * it apt-installed webkit2gtk and friends for wry's build script - no wry.
+  #   * it ran `bun install --cwd chrome` - `chrome/` was deleted in the same change, and this
+  #     is the step that actually went red: "failed to change directory to chrome: ENOENT".
+  #   * it ran `cargo check -p mind2t` - measured 2026-08-14: "error: package ID specification
+  #     `mind2t` did not match any packages". It would have failed next.
+  #
+  # THE COST OF LEAVING IT: main was red on every single merge from PR #57 through #61, and
+  # five merges landed anyway. A permanently red gate is worse than a missing one, because it
+  # trains everyone to merge past red and then the next real failure lands in the same silence.
+  #
+  # NOTHING TRUE IS LOST BY REMOVING IT. Portability for the crates that actually claim it is
+  # already gated by the `core` job above, which runs core, snapshot, vte and frame on
+  # ubuntu-latest and passes. `render` and `pty` carry one macOS cfg each and `host` is the
+  # host library; no one has ever asserted those build on Linux, and post-Tauri nothing
+  # requires it - the host is Swift and macOS-only by definition.
+  #
+  # WHEN TO BRING IT BACK: the day Linux or Windows hosting becomes a real target. Point it at
+  # `render`, `pty` and `host` then, and expect it red on day one - that redness would be
+  # information, not a defect, and it must be treated as a blocker rather than merged past.
 
   macos:
     name: pty and renderer (macOS)

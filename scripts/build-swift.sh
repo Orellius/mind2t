@@ -56,6 +56,19 @@ fi
 # append, a 0644 create, and the form's Port and User fields swapped.
 .build/release/mind2t-host --smoke-ssh-write
 
+# The connection dialog's GEOMETRY, and it exists because v0.28.0 shipped this form with
+# two controls collapsed to 0pt and a dialog 590pt tall hanging off an 816x510 window,
+# with all five gates green. The gates stop at Session by design, so nothing above it was
+# ever measured. What makes this one able to see the defect is WHERE it is rooted: the
+# form measured on its own reports every field at a correct 320pt in the broken build,
+# because the collapse happens when the container re-frames it. It walks the container's
+# tree instead, and asserts the height against a ceiling derived from the smallest window
+# this host opens. Faults are reported together, not one per build.
+#
+# `--shot-ssh-dialog <path>` beside it renders the same dialog to a PNG. Not a gate: an
+# assertion cannot answer "does it look right", and that question is what found this.
+.build/release/mind2t-host --smoke-ssh-layout
+
 # S5 workspaces. The load-bearing assertion is the REFUSAL: remove() never passes
 # --force, and a dirty worktree surviving is what stands between this feature and
 # deleting an agent's unpushed work. Mutant seen red (adding --force fails it).

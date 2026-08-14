@@ -41,6 +41,126 @@ struct SSHHost: Equatable {
     }
 }
 
+/// Everything the connection form collects. A value type: nothing here is stored by the
+/// app, it is either spawned immediately or written into the operator's own config.
+///
+/// THERE IS NO PASSWORD FIELD AND THERE WILL NOT BE ONE. `ssh` accepts no password on its
+/// command line, so a field would mean either holding a secret in app memory or piping one
+/// into a pty, and both are worse than letting ssh prompt. `identityFile` is a PATH, which
+/// is exactly what `ssh_config` itself stores, so it carries no key material either.
+struct SSHConnection {
+    var alias: String = ""
+    var hostName: String = ""
+    var user: String = ""
+    var port: String = ""
+    var identityFile: String = ""
+    var proxyJump: String = ""
+    /// Raw `-o` entries, one `Keyword=value` per line as typed.
+    var options: String = ""
+    var remoteCommand: String = ""
+
+    /// Why this cannot be written or dialled, in the operator's terms, or nil when it can.
+    ///
+    /// The newline check is the load-bearing one and it is a SECURITY check, not tidiness:
+    /// a "hostname" containing a newline followed by `Host *` and `User root` would append
+    /// a global block to the operator's config that applies to every machine they own.
+    /// Every field is checked, not just the obvious ones, because the injection works from
+    /// any of them. `options` is exempt because it is multi-line BY DESIGN, and it is the
+    /// one field whose every line is re-validated on the way out (see `optionList`).
+    var refusal: String? {
+        for (name, value) in [
+            ("Name", alias), ("Host", hostName), ("User", user), ("Port", port),
+            ("Identity file", identityFile), ("Jump host", proxyJump),
+            ("Command", remoteCommand),
+        ] where value.contains("\n") || value.contains("\r") {
+            return "\(name) contains a line break. That would write a second block into "
+                + "your ssh config, so it is refused rather than stripped."
+        }
+        if hostName.trimmingCharacters(in: .whitespaces).isEmpty {
+            return "A host is required. Everything else is optional."
+        }
+        if hostName.contains(where: { $0.isWhitespace }) {
+            return "A host cannot contain spaces."
+        }
+        if !alias.isEmpty && !SSHConfig.isOfferable(alias) {
+            return "A name cannot contain spaces or the pattern characters * ? !, because "
+                + "ssh would read it as a rule for other hosts rather than as one machine."
+        }
+        if !port.isEmpty, Int(port).map({ $0 < 1 || $0 > 65535 }) ?? true {
+            return "Port must be a number from 1 to 65535."
+        }
+        return nil
+    }
+
+    /// The words handed to the child, for a connection that is dialled without being saved.
+    ///
+    /// Built as argv rather than a shell string so nothing here is ever word-split or glob
+    /// expanded: a path with a space in it stays one argument.
+    var arguments: [String] {
+        var argv = ["ssh"]
+        if !port.isEmpty { argv += ["-p", port] }
+        if !identityFile.isEmpty {
+            argv += ["-i", NSString(string: identityFile).expandingTildeInPath]
+        }
+        if !proxyJump.isEmpty { argv += ["-J", proxyJump] }
+        for option in optionList { argv += ["-o", option] }
+        argv.append(user.isEmpty ? hostName : "\(user)@\(hostName)")
+        if !remoteCommand.isEmpty { argv.append(remoteCommand) }
+        return argv
+    }
+
+    /// One `Keyword=value` per non-empty line, trimmed.
+    var optionList: [String] {
+        options.split(whereSeparator: { $0 == "\n" || $0 == "\r" })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// The `ssh_config` stanza this becomes, or nil when there is nothing to name it.
+    ///
+    /// `Host` takes the alias when one was given and the hostname otherwise, because a
+    /// block whose alias IS its hostname is still the normal, useful shape.
+    var configBlock: String? {
+        let name = alias.isEmpty ? hostName : alias
+        guard !name.isEmpty else { return nil }
+        var lines = ["# added by mind2t", "Host \(name)"]
+        if name != hostName { lines.append("    HostName \(hostName)") }
+        if !user.isEmpty { lines.append("    User \(user)") }
+        if !port.isEmpty { lines.append("    Port \(port)") }
+        if !identityFile.isEmpty { lines.append("    IdentityFile \(identityFile)") }
+        if !proxyJump.isEmpty { lines.append("    ProxyJump \(proxyJump)") }
+        for option in optionList {
+            // `-o Keyword=value` on the command line is `Keyword value` in a config file.
+            lines.append("    " + option.replacingOccurrences(of: "=", with: " "))
+        }
+        if !remoteCommand.isEmpty {
+            lines.append("    RemoteCommand \(remoteCommand)")
+            // Without this, RemoteCommand is accepted and silently does nothing, which is
+            // the worst of both: the file looks right and the command never runs.
+            lines.append("    RequestTTY yes")
+        }
+        return lines.joined(separator: "\n")
+    }
+}
+
+/// Why a save did not happen. Each case is a different thing for the operator to do.
+enum SSHWriteFailure: Error {
+    case invalid(String)
+    case aliasExists(String)
+    case unwritable(String)
+
+    var summary: String {
+        switch self {
+        case .invalid(let why): return why
+        case .aliasExists(let alias):
+            return "\(alias) is already in your ssh config. Nothing was written -- a second "
+                + "block with the same name would be shadowed by the first and look like it "
+                + "had no effect. Pick another name, or edit the existing entry yourself."
+        case .unwritable(let why): return "Could not write your ssh config: \(why)"
+        }
+    }
+}
+
 /// Reads the OpenSSH client config the way `ssh` reads it, for the subset that names a
 /// host worth offering.
 ///
@@ -97,7 +217,7 @@ enum SSHConfig {
             guard let (keyword, value) = directive(in: String(rawLine)) else { continue }
             switch keyword {
             case "host":
-                open = words(in: value).filter(isConcrete)
+                open = words(in: value).filter(isOfferable)
                 for alias in open where fields[alias] == nil {
                     fields[alias] = [:]
                     order.append(alias)
@@ -155,8 +275,78 @@ enum SSHConfig {
     /// `*` and `?` are matchers and `!` is a negation; every one of them describes a RULE
     /// for other hosts rather than a host. Offering `Host *` as a row would spawn
     /// `ssh *`, which is a connection attempt to a literal asterisk.
-    private static func isConcrete(_ pattern: String) -> Bool {
-        !pattern.isEmpty && !pattern.contains(where: { $0 == "*" || $0 == "?" || $0 == "!" })
+    static func isOfferable(_ pattern: String) -> Bool {
+        !pattern.isEmpty
+            && !pattern.contains(where: { $0 == "*" || $0 == "?" || $0 == "!" || $0.isWhitespace })
+    }
+
+    /// Appends `connection` to the config as a new `Host` block.
+    ///
+    /// APPEND ONLY, and that is the whole safety argument. This is the operator's file and
+    /// not one this app authored, so no byte already in it is ever rewritten: the block is
+    /// handed to a single `write` at the end of the file. The alternative shape - read,
+    /// modify, write to a temp file, rename over the original - fails much worse, because
+    /// a bug anywhere in that sequence replaces the entire config with whatever the buggy
+    /// copy produced. The realistic worst case here is a truncated trailing block, which
+    /// ssh reports as a syntax error on a line the operator can see and delete, and which
+    /// leaves every host above it untouched.
+    ///
+    /// A duplicate alias is REFUSED rather than appended. ssh takes the first value it
+    /// obtains, so a second block with the same name is silently shadowed by the first -
+    /// the operator would see a saved host that behaves as if their settings were ignored.
+    @discardableResult
+    static func append(
+        _ connection: SSHConnection, configPath: String = defaultPath
+    ) -> Result<String, SSHWriteFailure> {
+        if let why = connection.refusal { return .failure(.invalid(why)) }
+        guard let block = connection.configBlock else {
+            return .failure(.invalid("A host is required."))
+        }
+        let name = connection.alias.isEmpty ? connection.hostName : connection.alias
+        if hosts(configPath: configPath).contains(where: { $0.alias == name }) {
+            return .failure(.aliasExists(name))
+        }
+
+        let manager = FileManager.default
+        let directory = (configPath as NSString).deletingLastPathComponent
+        do {
+            if !manager.fileExists(atPath: directory) {
+                // 0700 because this is `~/.ssh`. Creating it world-readable once is enough
+                // for ssh to refuse keys placed in it later, with an error that names the
+                // key rather than the directory.
+                try manager.createDirectory(
+                    atPath: directory, withIntermediateDirectories: true,
+                    attributes: [.posixPermissions: 0o700])
+            }
+            if !manager.fileExists(atPath: configPath) {
+                guard
+                    manager.createFile(
+                        atPath: configPath, contents: nil,
+                        attributes: [.posixPermissions: 0o600])
+                else { return .failure(.unwritable("could not create \(configPath)")) }
+            }
+            // The last byte is probed through its OWN read handle. A handle opened for
+            // writing cannot be read from - it fails with EBADF, which arrives dressed as
+            // Cocoa's "The file couldn't be opened" and points at nothing real.
+            var separator = ""
+            let reader = try FileHandle(forReadingFrom: URL(fileURLWithPath: configPath))
+            let end = try reader.seekToEnd()
+            if end > 0 {
+                try reader.seek(toOffset: end - 1)
+                // A leading newline only when the file does not already end in one, so an
+                // existing last line is never joined onto `# added by mind2t`.
+                separator = (try reader.read(upToCount: 1) == Data("\n".utf8)) ? "\n" : "\n\n"
+            }
+            try? reader.close()
+
+            let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: configPath))
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: Data((separator + block + "\n").utf8))
+        } catch {
+            return .failure(.unwritable("\(error)"))
+        }
+        return .success(name)
     }
 
     /// Resolves one `Include` argument to real paths: tilde, then relative to the

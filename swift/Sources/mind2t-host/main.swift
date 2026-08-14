@@ -758,9 +758,165 @@ func runSSHSmoke() -> Int32 {
     return 0
 }
 
+/// `--smoke-ssh-write`: the connection form's writer, against a fixture config.
+///
+/// This gate guards a MUTATION of a file the app did not author, in a credential
+/// directory, so its assertions are about damage rather than about features. In order of
+/// how bad the failure is: a newline smuggled through any field would append a second
+/// block to the operator's config (a `Host *` stanza applies to every machine they own);
+/// a rewrite instead of an append would put every existing host at the mercy of this
+/// code; a duplicate alias would produce a saved host that behaves as though its settings
+/// were ignored, because ssh takes the first value it obtains.
+///
+/// It also asserts the file mode, because `~/.ssh/config` created world-readable is a
+/// problem that surfaces much later as ssh refusing a key with an error naming the key.
+func runSSHWriteSmoke() -> Int32 {
+    func fail(_ why: String) -> Int32 {
+        FileHandle.standardError.write(Data("ssh write smoke: \(why)\n".utf8))
+        return 1
+    }
+
+    let root = NSTemporaryDirectory() + "mind2t-ssh-write-smoke-\(getpid())"
+    let path = root + "/config"
+    defer { try? FileManager.default.removeItem(atPath: root) }
+    let existing = """
+        Host already-here
+        \tHostName first.example.net
+        \tUser first
+        """
+    do {
+        try FileManager.default.createDirectory(
+            atPath: root, withIntermediateDirectories: true)
+        // Deliberately written with NO trailing newline: appending to a file whose last
+        // line is unterminated is the case that joins two directives into one.
+        try existing.write(toFile: path, atomically: true, encoding: .utf8)
+    } catch {
+        return fail("could not write the fixture: \(error)")
+    }
+
+    // THE INJECTION CASE. Refused, not sanitised: silently stripping the newline would
+    // save something other than what was typed, and the operator would not be told.
+    var attack = SSHConnection()
+    attack.alias = "innocent"
+    attack.hostName = "box.example.net\nHost *\n    User root"
+    if case .success = SSHConfig.append(attack, configPath: path) {
+        return fail("a hostname carrying a newline was ACCEPTED -- that appends a global "
+            + "Host * block to the operator's config")
+    }
+    // Every field, not just the obvious one: the injection works from any of them.
+    for (name, mutate) in [
+        ("user", { (c: inout SSHConnection) in c.user = "me\nHost *" }),
+        ("identityFile", { (c: inout SSHConnection) in c.identityFile = "k\nHost *" }),
+        ("proxyJump", { (c: inout SSHConnection) in c.proxyJump = "j\nHost *" }),
+        ("remoteCommand", { (c: inout SSHConnection) in c.remoteCommand = "ls\nHost *" }),
+    ] {
+        var probe = SSHConnection()
+        probe.alias = "probe-\(name)"
+        probe.hostName = "box.example.net"
+        mutate(&probe)
+        if case .success = SSHConfig.append(probe, configPath: path) {
+            return fail("a newline in \(name) was accepted")
+        }
+    }
+
+    // A duplicate alias must be refused. ssh takes the FIRST value, so a second block is
+    // shadowed and looks like settings that did nothing.
+    var duplicate = SSHConnection()
+    duplicate.alias = "already-here"
+    duplicate.hostName = "second.example.net"
+    if case .success = SSHConfig.append(duplicate, configPath: path) {
+        return fail("a duplicate alias was appended; ssh would shadow it silently")
+    }
+
+    // Nothing above should have touched the file at all.
+    guard let afterRefusals = try? String(contentsOfFile: path, encoding: .utf8),
+        afterRefusals == existing
+    else { return fail("a REFUSED write still modified the file") }
+
+    var good = SSHConnection()
+    good.alias = "prod"
+    good.hostName = "prod.example.net"
+    good.user = "orel"
+    good.port = "2222"
+    good.identityFile = "~/.ssh/id_prod"
+    good.proxyJump = "bastion"
+    good.options = "ForwardAgent=yes\n\nServerAliveInterval=30\n"
+    good.remoteCommand = "tmux attach"
+    switch SSHConfig.append(good, configPath: path) {
+    case .failure(let why):
+        return fail("a valid connection was refused: \(why.summary)")
+    case .success(let saved) where saved != "prod":
+        return fail("saved under \(saved), expected prod")
+    case .success:
+        break
+    }
+
+    guard let written = try? String(contentsOfFile: path, encoding: .utf8) else {
+        return fail("the config vanished")
+    }
+    // APPEND, not rewrite: every original byte still leads the file.
+    if !written.hasPrefix(existing) {
+        return fail("the existing config was rewritten rather than appended to")
+    }
+    // The unterminated last line must not have been joined onto the new block.
+    if written.contains("User firstHost") || written.contains("first# added") {
+        return fail("the new block was joined onto the previous unterminated line")
+    }
+    for expected in [
+        "Host prod", "HostName prod.example.net", "User orel", "Port 2222",
+        "IdentityFile ~/.ssh/id_prod", "ProxyJump bastion", "ForwardAgent yes",
+        "ServerAliveInterval 30", "RemoteCommand tmux attach", "RequestTTY yes",
+    ] where !written.contains(expected) {
+        return fail("the written block is missing \(expected)")
+    }
+
+    // Round trip: the parser must see what the writer wrote, or the two halves of this
+    // feature disagree and the saved host never appears in the sidebar.
+    let hosts = SSHConfig.hosts(configPath: path)
+    guard let prod = hosts.first(where: { $0.alias == "prod" }),
+        prod.hostName == "prod.example.net", prod.user == "orel", prod.port == 2222
+    else { return fail("the writer's own output did not survive the reader") }
+    if hosts.count != 2 {
+        return fail("expected 2 hosts after the append, got \(hosts.count)")
+    }
+
+    // A fresh file must be created 0600. Created world-readable, this surfaces much later
+    // as ssh refusing a key, with an error that names the key and not the directory.
+    let fresh = root + "/fresh/config"
+    guard case .success = SSHConfig.append(good, configPath: fresh) else {
+        return fail("could not create a config that did not exist")
+    }
+    let mode = (try? FileManager.default.attributesOfItem(atPath: fresh)[.posixPermissions])
+    if (mode as? NSNumber)?.intValue != 0o600 {
+        return fail("a freshly created config is mode \(mode ?? "unknown"), expected 0600")
+    }
+
+    // The dialled path, which shares nothing with the written path: argv, so a path with a
+    // space in it stays one argument instead of being word-split by a shell.
+    var spaced = SSHConnection()
+    spaced.hostName = "box"
+    spaced.user = "orel"
+    spaced.identityFile = "/tmp/my key"
+    spaced.port = "2200"
+    if spaced.arguments != ["ssh", "-p", "2200", "-i", "/tmp/my key", "orel@box"] {
+        return fail("argv was \(spaced.arguments)")
+    }
+
+    print(
+        "SSH WRITE SMOKE OK: newline injection refused in 5 fields, duplicate alias"
+            + " refused, refusals left the file byte-identical, the append preserved every"
+            + " existing byte and did not join the unterminated last line, the writer's"
+            + " output round-tripped through the reader, a fresh config is 0600, and a"
+            + " spaced identity path stayed one argv word")
+    return 0
+}
+
 let arguments = CommandLine.arguments
 if arguments.contains("--smoke") {
     exit(runSmoke())
+}
+if arguments.contains("--smoke-ssh-write") {
+    exit(runSSHWriteSmoke())
 }
 if arguments.contains("--smoke-chrome") {
     exit(runChromeSmoke())

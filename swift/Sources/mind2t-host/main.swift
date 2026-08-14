@@ -514,9 +514,127 @@ func runAgentSmoke() -> Int32 {
     return fail("the agent never appeared on the grid within 15s")
 }
 
+/// Chrome geometry: the pane and the docked sidebar must TILE the content exactly.
+///
+/// Pure arithmetic, no window and no views, which is the whole reason `ChromeLayout` was
+/// extracted from `layoutChrome` in the first place. The failure it guards is SILENT: a
+/// pane that keeps its full width while a sidebar is docked simply draws underneath it,
+/// and the terminal looks fine until you notice the right-hand columns are covered.
+///
+/// The narrow cases are the discriminating ones. A sidebar computed as a CONSTANT
+/// (`x = width - 260`) tiles perfectly at 1120 and overlaps the pane at 300, so a gate
+/// that only tests a comfortable window passes on the wrong implementation.
+func runChromeSmoke() -> Int32 {
+    func fail(_ why: String) -> Int32 {
+        FileHandle.standardError.write(Data("chrome smoke: \(why)\n".utf8))
+        return 1
+    }
+
+    let tabHeight = TabBarView.height
+    let requested = SidebarView.preferredWidth
+    // 1120 is the shipped default. 380 puts the pane just above its floor. 300 forces the
+    // floor to win. 100 is narrower than the floor itself, where the pane must clamp
+    // rather than the sidebar going negative.
+    let widths: [CGFloat] = [1120, 800, 380, 300, 200, 100]
+    let heights: [CGFloat] = [700, 200, tabHeight, 10]
+
+    for width in widths {
+        for height in heights {
+            let size = NSSize(width: width, height: height)
+            let layout = ChromeLayout.compute(
+                content: size, tabHeight: tabHeight, sidebarWidth: requested)
+            guard let sidebar = layout.sidebar else {
+                return fail("no sidebar rect at \(width)x\(height) with a width requested")
+            }
+            let pane = layout.pane
+
+            // Horizontal: no gap, no overlap, and the pair spans the content exactly.
+            if pane.minX != 0 {
+                return fail("pane starts at \(pane.minX), not 0, at \(width)x\(height)")
+            }
+            if pane.maxX != sidebar.minX {
+                return fail(
+                    "pane ends at \(pane.maxX) and sidebar starts at \(sidebar.minX)"
+                        + " at \(width)x\(height) -- "
+                        + (pane.maxX > sidebar.minX ? "OVERLAP" : "GAP"))
+            }
+            if sidebar.maxX != width {
+                return fail(
+                    "sidebar ends at \(sidebar.maxX), content is \(width) wide"
+                        + " at \(width)x\(height)")
+            }
+            if pane.width < 0 || sidebar.width < 0 {
+                return fail(
+                    "negative width at \(width)x\(height):"
+                        + " pane \(pane.width), sidebar \(sidebar.width)")
+            }
+            // The floor is a floor, not a suggestion -- except where the content itself
+            // is narrower than the floor, in which case the pane takes everything and the
+            // sidebar is zero-width. Both are correct; a pane BELOW the floor while the
+            // sidebar still has width is not.
+            if pane.width < ChromeLayout.minimumPaneWidth && sidebar.width > 0 {
+                return fail(
+                    "pane \(pane.width) is under the \(ChromeLayout.minimumPaneWidth) floor"
+                        + " while the sidebar still holds \(sidebar.width) at \(width)x\(height)")
+            }
+
+            // Vertical: the strip owns the top band, the pane and the sidebar share the
+            // rest, and nothing is left over.
+            let below = max(0, height - tabHeight)
+            if layout.tabBar.maxY != height {
+                return fail("tab strip ends at \(layout.tabBar.maxY), content is \(height) tall")
+            }
+            if pane.minY != 0 || pane.maxY != below {
+                return fail(
+                    "pane spans \(pane.minY)..\(pane.maxY), expected 0..\(below)"
+                        + " at \(width)x\(height)")
+            }
+            if sidebar.minY != pane.minY || sidebar.maxY != pane.maxY {
+                return fail(
+                    "sidebar spans \(sidebar.minY)..\(sidebar.maxY) but the pane spans"
+                        + " \(pane.minY)..\(pane.maxY) at \(width)x\(height)")
+            }
+        }
+    }
+
+    // THE CONTROL. Without it every assertion above could be satisfied by a layout that
+    // always docks, and "undocked" would be untested while looking covered.
+    let undocked = ChromeLayout.compute(
+        content: NSSize(width: 1120, height: 700), tabHeight: tabHeight, sidebarWidth: nil)
+    if undocked.sidebar != nil {
+        return fail("a sidebar rect exists with no width requested")
+    }
+    if undocked.pane.width != 1120 {
+        return fail(
+            "undocked pane is \(undocked.pane.width) wide, not the full 1120 -- the pane"
+                + " is still paying for a sidebar that is not there")
+    }
+
+    // The row limit this file documents, asserted rather than trusted. A sidebar 700pt
+    // tall minus a 26pt header, at 46pt a row, holds 14.
+    let view = SidebarView(frame: NSRect(x: 0, y: 0, width: requested, height: 700))
+    let capacity = view.visibleRowCapacity
+    if capacity != 14 {
+        return fail("row capacity is \(capacity) at 700pt, expected 14")
+    }
+    if SidebarView(frame: .zero).visibleRowCapacity != 0 {
+        return fail("a zero-height sidebar claims it can show rows")
+    }
+
+    print(
+        "CHROME SMOKE OK: pane and sidebar tile exactly at \(widths.count)x\(heights.count)"
+            + " sizes down to 100pt, the \(Int(ChromeLayout.minimumPaneWidth))pt pane floor"
+            + " wins over the \(Int(requested))pt request, undocked gives the pane all"
+            + " 1120, capacity \(capacity) rows at 700pt")
+    return 0
+}
+
 let arguments = CommandLine.arguments
 if arguments.contains("--smoke") {
     exit(runSmoke())
+}
+if arguments.contains("--smoke-chrome") {
+    exit(runChromeSmoke())
 }
 if arguments.contains("--smoke-agent") {
     exit(runAgentSmoke())

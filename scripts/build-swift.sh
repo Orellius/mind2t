@@ -25,6 +25,15 @@ if [ "${1:-}" = "--no-smoke" ]; then
 fi
 .build/release/mind2t-host --smoke
 
+# Chrome geometry. Pure arithmetic, no window, so it costs milliseconds. The failure it
+# guards is SILENT: a pane at full width under a docked sidebar looks correct until the
+# right-hand columns turn out to be covered. The narrow sizes are the discriminating
+# ones - a sidebar computed as a constant rather than a remainder tiles perfectly at
+# 1120 and overlaps at 300, so a gate that only tests a comfortable window passes on the
+# wrong implementation. Carries its own control: undocked must give the pane the whole
+# width, or "docked" and "undocked" would be the same assertion wearing two names.
+.build/release/mind2t-host --smoke-chrome
+
 # S5 workspaces. The load-bearing assertion is the REFUSAL: remove() never passes
 # --force, and a dirty worktree surviving is what stands between this feature and
 # deleting an agent's unpushed work. Mutant seen red (adding --force fails it).

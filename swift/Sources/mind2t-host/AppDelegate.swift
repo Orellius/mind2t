@@ -10,7 +10,7 @@ import CMind2tHost
 import UserNotifications
 
 final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
-    TabBarDelegate
+    TabBarDelegate, SidebarDelegate
 {
     private let command: String?
     private let autoDirection: Bool
@@ -46,6 +46,19 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// into the same drawable.
     private var presentingSession: Session?
     private var tabBar: TabBarView!
+    /// The docked workspace list. Docked unless `MIND2T_NO_SIDEBAR=1` -- an env switch
+    /// rather than a config key for the same reason `gpuPresent` is one: it exists so the
+    /// smoke gate can drive BOTH geometries and compare them, and a config key would have
+    /// to be parsed, defaulted, documented and then deprecated.
+    private var sidebar: SidebarView!
+    private let sidebarDocked = ProcessInfo.processInfo.environment["MIND2T_NO_SIDEBAR"] != "1"
+    /// Branch per directory, computed on miss and never invalidated within a run.
+    ///
+    /// `git rev-parse` costs a process, and `refreshChrome` is driven by title and progress
+    /// events that a busy agent emits several times a second. Uncached, this would spawn git
+    /// at that rate on the main thread. The stated cost of never invalidating: a branch
+    /// switched underneath a running session shows stale until the session moves directory.
+    private var branchCache: [String: String] = [:]
     private var timer: Timer?
 
     private var sessions: [Session] = []
@@ -166,6 +179,8 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
         tabBar = TabBarView(frame: .zero)
         tabBar.delegate = self
+        sidebar = SidebarView(frame: .zero)
+        sidebar.delegate = self
 
         // The bar owns the title-bar band: transparent titlebar + full-size content,
         // traffic lights inline at its left -- the reference's chrome.
@@ -185,6 +200,12 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         content.autoresizesSubviews = true
         content.addSubview(tabBar)
         content.addSubview(view)
+        // Added AFTER the terminal view deliberately. The pane and the sidebar tile
+        // exactly, so ordering is not load-bearing for correctness -- but if the tiling
+        // arithmetic is ever wrong, a sidebar added last draws ON TOP and the defect is
+        // visible, whereas added first it hides under the pane and looks like a sidebar
+        // that failed to appear. Fail loudly.
+        if sidebarDocked { content.addSubview(sidebar) }
         window.contentView = content
         layoutChrome()
         window.delegate = self
@@ -349,10 +370,18 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     private func layoutChrome() {
         guard let content = window.contentView else { return }
         let layout = ChromeLayout.compute(
-            content: content.bounds.size, tabHeight: TabBarView.height)
+            content: content.bounds.size, tabHeight: TabBarView.height,
+            sidebarWidth: sidebarDocked ? SidebarView.preferredWidth : nil)
         tabBar.frame = layout.tabBar
         tabBar.autoresizingMask = [.width, .minYMargin]
         view.frame = layout.pane
+        // Manual frame for the same reason the pane takes one: the sidebar's width is a
+        // REMAINDER of the pane's floor, which an autoresizing mask cannot express.
+        if let rect = layout.sidebar {
+            sidebar.frame = rect
+            sidebar.autoresizingMask = []
+            sidebar.needsLayout = true
+        }
         // Manual frames, still: `gridForPane` derives cols and rows from `view.bounds`, so the
         // frame set here is what resizes the pty. An autoresizing mask would let AppKit move it
         // behind that derivation's back.
@@ -582,7 +611,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         if activeIndex >= index {
             activate(index: max(0, activeIndex - 1))
         } else {
-            refreshTabBar()
+            refreshChrome()
         }
     }
 
@@ -592,7 +621,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         let session = sessions[index]
         session.markSeen()
         window.title = session.title
-        refreshTabBar()
+        refreshChrome()
         fitToPane(session)
         syncPresentTarget(to: session)
         showFrame(session.poll() ?? session.lastImage)
@@ -613,11 +642,12 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         view.layer?.backgroundColor = background
     }
 
-    private func refreshTabBar() {
+    private func refreshChrome() {
         // A workspace session is labelled by its workspace, prefixed so the strip groups
-        // by eye without a second row. The backlog assumed a sidebar to group in; that
-        // sidebar was replaced by this strip on 2026-07-30 and deleted outright on
-        // 2026-08-11, so this strip is the only place a workspace is named.
+        // by eye without a second row. The strip carried this alone between 2026-07-30 and
+        // 2026-08-14, while there was no sidebar to group in; it still does, because a
+        // sidebar row and a tab pill are read at different moments and the pill is the one
+        // visible when the sidebar is undocked.
         let titles = sessions.map { session -> String in
             guard let workspace = session.workspace else { return session.title }
             return "\u{2387} \(workspace)"
@@ -626,6 +656,47 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
             titles: titles,
             states: sessions.map(\.workState),
             activeIndex: activeIndex)
+        guard sidebarDocked else { return }
+        sidebar.update(rows: sessions.map(sidebarRow(for:)), activeIndex: activeIndex)
+    }
+
+    /// One session's row. The title half falls back to the session title so an ordinary
+    /// shell is not a blank row; the subtitle half is allowed to be empty, because a
+    /// session with no shell integration reports no directory and inventing one would be
+    /// worse than showing none.
+    private func sidebarRow(for session: Session) -> SidebarRow {
+        let directory = directory(of: session)
+        var parts: [String] = []
+        if let directory, let branch = branch(in: directory) { parts.append(branch) }
+        if let directory { parts.append(abbreviate(directory)) }
+        return SidebarRow(
+            title: session.workspace ?? session.title,
+            subtitle: parts.joined(separator: " · "),
+            state: session.workState)
+    }
+
+    /// `$HOME/x` renders as `~/x`. Purely cosmetic, and it is here rather than in the view
+    /// because the view must not know what a home directory is.
+    private func abbreviate(_ path: String) -> String {
+        let home = NSHomeDirectory()
+        guard path == home || path.hasPrefix(home + "/") else { return path }
+        return "~" + path.dropFirst(home.count)
+    }
+
+    /// The branch checked out in `directory`, or nil when it is not a work tree.
+    ///
+    /// Cached forever within a run; see `branchCache`. A detached HEAD answers `HEAD`,
+    /// which is git's own word for it and is left as-is rather than translated.
+    private func branch(in directory: String) -> String? {
+        if let cached = branchCache[directory] { return cached.isEmpty ? nil : cached }
+        let result = Git.run(["rev-parse", "--abbrev-ref", "HEAD"], in: directory)
+        let name =
+            result.status == 0
+            ? result.out.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        // The empty string is cached too, so a non-repository directory costs one process
+        // rather than one per refresh. This is the whole point of the cache.
+        branchCache[directory] = name
+        return name.isEmpty ? nil : name
     }
 
     // MARK: polling
@@ -693,14 +764,16 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
                 // typed command. Reading the row now would race the shell's redraw.
                 recordExecutedCommand(of: session)
             case .pwd:
-                // The session already stored it (`pwdRaw`); nothing to do here. Kept as
-                // an explicit case so a future consumer -- a tab showing the directory --
-                // has an obvious place to hang, rather than a silent default.
-                break
+                // The session already stored it (`pwdRaw`). The consumer the old comment
+                // here anticipated now exists: the sidebar's second line is the directory,
+                // so a `cd` must repaint the chrome. Without this, a row keeps showing the
+                // directory the session STARTED in, which is wrong in the one way that is
+                // hardest to notice -- it is a real path, just not the current one.
+                chromeChanged = true
             }
         }
         if chromeChanged {
-            refreshTabBar()
+            refreshChrome()
             if session === activeSession {
                 window.title = session.title
             }
@@ -740,7 +813,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
                 if activeIndex > index { activeIndex -= 1 }
             }
         }
-        refreshTabBar()
+        refreshChrome()
     }
 
     // MARK: geometry
@@ -1134,12 +1207,22 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     // MARK: diff review panel (S6)
 
     /// The active session's working directory, decoded.
+    private func activeDirectory() -> String? {
+        guard let session = activeSession else { return nil }
+        return directory(of: session)
+    }
+
+    /// Any session's working directory, decoded.
     ///
     /// Decoded by the RUST side (`mind2t_cwd_path`), never here: the percent-decode and
     /// the `file://host` strip already exist in one place, and a second copy in Swift
     /// is exactly the drift the OSC 7 slice was written to avoid.
-    private func activeDirectory() -> String? {
-        guard let session = activeSession, !session.pwdRaw.isEmpty else { return nil }
+    ///
+    /// Generalised from `activeDirectory` for the sidebar, which needs the directory of
+    /// every session rather than one. The decoding is untouched; only the session it
+    /// reads from became a parameter.
+    private func directory(of session: Session) -> String? {
+        guard !session.pwdRaw.isEmpty else { return nil }
         var length = 0
         let raw = session.pwdRaw
         let sized = raw.withUnsafeBufferPointer { pointer in
@@ -1424,6 +1507,15 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     func tabBarDidRequestClose(index: Int) {
         closeSession(index: index)
+    }
+
+    // MARK: SidebarDelegate
+
+    /// Selection only. A sidebar row deliberately does NOT close or create: the strip
+    /// already owns both, and two places to destroy a session is how one of them ends up
+    /// with a stale index after the other has renumbered.
+    func sidebarDidSelect(index: Int) {
+        activate(index: index)
     }
 
 }

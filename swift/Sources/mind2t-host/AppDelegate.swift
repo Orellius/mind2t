@@ -544,7 +544,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// config is wrong and the operator finds out immediately rather than the next time
     /// they use scp.
     private func promptSSHConnection() {
-        switch SSHConnect.prompt() {
+        switch SSHConnect.prompt(over: window) {
         case .cancelled:
             return
         case .connect(let connection):

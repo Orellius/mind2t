@@ -985,9 +985,222 @@ func runSSHWriteSmoke() -> Int32 {
     return 0
 }
 
+/// `--smoke-ssh-layout`: the connection dialog's GEOMETRY, with no window shown.
+///
+/// This exists because the form shipped in v0.28.0 looking broken and nothing could tell.
+/// Two controls in it had collapsed to slivers and the whole dialog stood 590pt tall over
+/// an 816x510 window, and every gate was green, because the gates drive `Session` and stop
+/// at the AppKit layer. A screenshot found it. A screenshot is not a gate.
+///
+/// The two failures it guards are the two that happened, and both are silent:
+///
+/// 1. **A control with no intrinsic width collapses inside `NSGridView`.** An `NSTextField`
+///    is stretched by a fixed column width; an `NSScrollView` or an `NSStackView` is not,
+///    because they report `noIntrinsicMetric` and the default placement is leading. The
+///    result is a field that renders as a 30pt stub next to a correct-looking label, and
+///    nothing in the layout is an error.
+/// 2. **A dialog taller than the window it belongs to.** There is no clamp anywhere in
+///    AppKit for this; the panel simply hangs off the window and reads as a leak.
+///
+/// It walks the real view tree rather than asking the form what it built, so a field
+/// renamed, re-parented or dropped is visible to it. The COUNTS are the control: an
+/// assertion about widths alone passes a dialog that lost half its fields.
+func runSSHLayoutSmoke() -> Int32 {
+    func fail(_ why: String) -> Int32 {
+        FileHandle.standardError.write(Data("ssh layout smoke: \(why)\n".utf8))
+        return 1
+    }
+
+    // AppKit refuses to lay out a view tree without an application object, and a
+    // `.prohibited` policy keeps this off the Dock and out of the operator's way.
+    let probeApp = NSApplication.shared
+    probeApp.setActivationPolicy(.prohibited)
+
+    func descendants(of view: NSView) -> [NSView] {
+        view.subviews.flatMap { [$0] + descendants(of: $0) }
+    }
+
+    // The CONTAINER's tree, never the bare form. The form measured on its own reports
+    // every field at 320pt in the exact build that shipped two collapsed controls, so an
+    // oracle rooted at the form is a check placed before the thing it guards.
+    let (dialogSize, root) = SSHConnect.measureDialog()
+    let inside = descendants(of: root)
+
+    // An editable NSTextField is an input; the labels in column 0 are not, and neither is
+    // the placeholder cell AppKit parks inside a scroll view.
+    let inputs = inside.compactMap { $0 as? NSTextField }.filter { $0.isEditable }
+    let scrollers = inside.compactMap { $0 as? NSScrollView }
+    let buttons = inside.compactMap { $0 as? NSButton }
+
+    guard inputs.count == 7 else {
+        return fail("expected 7 editable fields, found \(inputs.count) -- the width"
+            + " assertions below are vacuous on a form that lost fields")
+    }
+    guard scrollers.count == 1 else {
+        return fail("expected 1 scroll view for Options, found \(scrollers.count)")
+    }
+    // Found by title rather than by count, because the container contributes its own
+    // action buttons to this tree. Their presence is asserted too: a dialog measured
+    // without its buttons is measured too short, which is the direction that hides a leak.
+    guard let choose = buttons.first(where: { $0.title.hasPrefix("Choose") }) else {
+        return fail("the Choose... button is not in the dialog's view tree")
+    }
+    for title in ["Save & Connect", "Connect", "Cancel"] where
+        !buttons.contains(where: { $0.title == title })
+    {
+        return fail("the dialog has no \(title) button -- its height is being measured"
+            + " without the button row")
+    }
+    // Exactly one Return and exactly one Escape. Zero means a dialog the keyboard cannot
+    // finish; two means Return fires whichever button AppKit reaches first, which is a
+    // coin flip between saving to the operator's ssh config and not.
+    let byReturn = buttons.filter { $0.keyEquivalent == "\r" }
+    let byEscape = buttons.filter { $0.keyEquivalent == "\u{1b}" }
+    guard byReturn.count == 1, byReturn[0].title == "Save & Connect" else {
+        return fail("Return maps to \(byReturn.map(\.title)), expected exactly"
+            + " [Save & Connect]")
+    }
+    guard byEscape.count == 1, byEscape[0].title == "Cancel" else {
+        return fail("Escape maps to \(byEscape.map(\.title)), expected exactly [Cancel]")
+    }
+    // Asserted as a property, not read off a screenshot. macOS dims accent colour in a
+    // window that is not key, and the capture mode's window never is (making it key would
+    // mean activating the app over whatever the operator is using). So the picture cannot
+    // answer "is the primary action marked" and this can.
+    guard byReturn[0].bezelColor != nil else {
+        return fail("the primary action carries no bezel tint -- all three buttons render"
+            + " identically and nothing marks which one Return performs")
+    }
+
+    // Every check below runs, and they are reported together. A gate that returns on the
+    // first geometry failure costs one full build per defect, and these arrive in groups:
+    // the two collapsed controls here had one cause and would have taken two rounds.
+    var faults: [String] = []
+
+    // The measurements themselves, always, pass or fail. A geometry gate that prints only
+    // a verdict makes the next person re-instrument it to learn anything, and the numbers
+    // are the part worth reading.
+    for (index, field) in inputs.enumerated() {
+        print(String(
+            format: "  field[%d] %4dx%-3d", index,
+            Int(field.frame.width), Int(field.frame.height)))
+    }
+    print(String(
+        format: "  options  %4dx%-3d   choose %4dx%-3d",
+        Int(scrollers[0].frame.width), Int(scrollers[0].frame.height),
+        Int(choose.frame.width), Int(choose.frame.height)))
+    print(String(
+        format: "  dialog   %4dx%-3d", Int(dialogSize.width), Int(dialogSize.height)))
+
+    // 150pt is not a taste threshold. It is well below any laid-out field in a 320pt
+    // column and well above the ~30pt stub a collapsed control produces, so it separates
+    // the two states and says nothing about the ones in between.
+    let floor: CGFloat = 150
+    for field in inputs where field.frame.width < floor {
+        faults.append("an editable field is \(Int(field.frame.width))pt wide, under"
+            + " \(Int(floor))pt -- a control with no intrinsic width collapsed in the grid")
+    }
+    if scrollers[0].frame.width < floor {
+        faults.append("the Options field is \(Int(scrollers[0].frame.width))pt wide, under"
+            + " \(Int(floor))pt -- NSScrollView reports no intrinsic width and the grid"
+            + " left it at its stub size")
+    }
+    if scrollers[0].frame.height < 40 {
+        faults.append("the Options field is \(Int(scrollers[0].frame.height))pt tall")
+    }
+    if choose.frame.width < 60 {
+        faults.append("the Choose... button is \(Int(choose.frame.width))pt wide")
+    }
+
+    // The leak. 460 is derived, not chosen: the smallest window this host will open is
+    // 510pt tall (the 120pt pane floor plus chrome at the sizes `--smoke-chrome` covers),
+    // and a dialog must sit inside its own window with room for the title bar.
+    let ceiling: CGFloat = 460
+    let size = dialogSize
+    if size.height > ceiling {
+        faults.append("the dialog stands \(Int(size.height))pt tall, over the"
+            + " \(Int(ceiling))pt ceiling -- it hangs off the bottom of the window it"
+            + " belongs to")
+    }
+    if size.width > 620 {
+        faults.append("the dialog is \(Int(size.width))pt wide, over 620pt")
+    }
+
+    guard faults.isEmpty else {
+        return fail("\(faults.count) fault(s)\n  - " + faults.joined(separator: "\n  - "))
+    }
+
+    print(
+        "SSH LAYOUT SMOKE OK: 7 fields, the Options box and the Choose button all laid out"
+            + " above the collapse floor, dialog \(Int(size.width))x\(Int(size.height))pt"
+            + " inside the \(Int(ceiling))pt ceiling")
+    return 0
+}
+
+/// `--shot-ssh-dialog <path>`: renders the connection dialog to a PNG and exits.
+///
+/// Not a gate. It is the reason the gate above exists at all: the v0.28.0 form was proven
+/// by five green gates and was visibly broken, and the only thing that found it was
+/// looking at a screenshot of the operator's screen. This makes that loop available
+/// without a window, without his screen, and without raising anything.
+///
+/// `--smoke-ssh-layout` answers "is any control collapsed"; this answers "does it look
+/// right", which is a different question and not one an assertion can hold.
+func runSSHDialogShot(_ path: String, dark: Bool) -> Int32 {
+    let probeApp = NSApplication.shared
+    // `.accessory`, never `.prohibited`: a prohibited app's windows are not composited, so
+    // the capture below comes back empty or partial. No Dock icon either way.
+    probeApp.setActivationPolicy(.accessory)
+    probeApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+
+    let dialog = SSHConnectDialog()
+    dialog.layoutSubtreeIfNeeded()
+
+    // A REAL window, ordered front, parked far outside any display. `cacheDisplay` and
+    // `dataWithPDF` both silently drop layer-backed controls: the first attempt at this
+    // produced an image with the seven text fields and NOTHING else - no labels, no
+    // buttons, no title - which is a picture that would have sent the next session
+    // hunting a layout bug that does not exist. The window server's own composite is the
+    // only capture that shows what the operator would see.
+    let host = SSHConnect.makeSheet(dialog)
+    host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+    host.setFrameOrigin(NSPoint(x: -8000, y: -8000))
+    host.orderFrontRegardless()
+    host.displayIfNeeded()
+    // The window server needs a turn of the loop before the surface holds anything.
+    RunLoop.current.run(until: Date().addingTimeInterval(0.4))
+
+    guard let shot = CGWindowListCreateImage(
+        .null, .optionIncludingWindow, CGWindowID(host.windowNumber),
+        [.boundsIgnoreFraming, .bestResolution]), shot.width > 1
+    else {
+        FileHandle.standardError.write(Data("the window server returned no image\n".utf8))
+        return 1
+    }
+    let rep = NSBitmapImageRep(cgImage: shot)
+    guard let png = rep.representation(using: .png, properties: [:]) else {
+        FileHandle.standardError.write(Data("could not encode a PNG\n".utf8))
+        return 1
+    }
+    do {
+        try png.write(to: URL(fileURLWithPath: path))
+    } catch {
+        FileHandle.standardError.write(Data("could not write \(path): \(error)\n".utf8))
+        return 1
+    }
+    print("wrote \(path) at \(rep.pixelsWide)x\(rep.pixelsHigh)")
+    return 0
+}
+
 let arguments = CommandLine.arguments
 if arguments.contains("--smoke") {
     exit(runSmoke())
+}
+if arguments.contains("--smoke-ssh-layout") {
+    exit(runSSHLayoutSmoke())
+}
+if let index = arguments.firstIndex(of: "--shot-ssh-dialog"), index + 1 < arguments.count {
+    exit(runSSHDialogShot(arguments[index + 1], dark: !arguments.contains("--light")))
 }
 if arguments.contains("--smoke-ssh-write") {
     exit(runSSHWriteSmoke())

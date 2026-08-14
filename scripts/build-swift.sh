@@ -34,6 +34,15 @@ fi
 # width, or "docked" and "undocked" would be the same assertion wearing two names.
 .build/release/mind2t-host --smoke-chrome
 
+# SSH hosts. Parses a fixture ssh_config it writes itself - never the operator's, because
+# ~/.ssh is a credential directory and a gate that read it would print its contents into
+# CI output the first time it failed. The discriminating cases are the ones a naive line
+# splitter gets wrong: a wildcard pattern is not a host, a duplicate block must LOSE to
+# first-value-wins, a Match block's keys must not stick to the host above it. All three
+# mutants seen red 2026-08-14, each with its own message. Carries its own control: a
+# missing config must read as an empty list, not as a failure.
+.build/release/mind2t-host --smoke-ssh
+
 # S5 workspaces. The load-bearing assertion is the REFUSAL: remove() never passes
 # --force, and a dirty worktree surviving is what stands between this feature and
 # deleting an agent's unpushed work. Mutant seen red (adding --force fails it).

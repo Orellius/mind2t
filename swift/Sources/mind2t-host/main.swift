@@ -629,12 +629,144 @@ func runChromeSmoke() -> Int32 {
     return 0
 }
 
+/// `--smoke-ssh`: parses a fixture ssh_config and asserts what the palette will offer.
+///
+/// It writes its own config tree rather than reading the operator's, for two reasons. The
+/// obvious one is determinism. The other is that `~/.ssh` is a credential directory and a
+/// gate that reads it would print its contents into CI output the first time it failed.
+///
+/// The discriminating cases are the ones a naive line-splitter gets wrong: a wildcard
+/// pattern is not a host, a second block for the same alias must LOSE, a `Match` block's
+/// keys must not stick to the host above it, and an `Include` must be followed in place.
+/// A parser that simply collected every `Host` word would pass none of them, and a parser
+/// that collected the LAST value for each keyword would pass everything except one line.
+func runSSHSmoke() -> Int32 {
+    func fail(_ why: String) -> Int32 {
+        FileHandle.standardError.write(Data("ssh smoke: \(why)\n".utf8))
+        return 1
+    }
+
+    let root = NSTemporaryDirectory() + "mind2t-ssh-smoke-\(getpid())"
+    let includes = root + "/includes"
+    defer { try? FileManager.default.removeItem(atPath: root) }
+    do {
+        try FileManager.default.createDirectory(
+            atPath: includes, withIntermediateDirectories: true)
+        // Written with real tabs and a `Key=Value` line because both appear in configs
+        // people actually have, and both are places a hand-rolled split goes wrong.
+        try """
+            # a comment, then a blank line
+
+            Host bastion
+            \tHostName bastion.example.net
+            \tUser orel
+            \tPort 2222
+
+            Host *.internal !secret.internal
+            \tUser nobody
+
+            Host=compact
+            \tHostName=10.0.0.9
+
+            Include includes/*.conf
+
+            Host bastion
+            \tUser loser
+            \tPort 9999
+
+            Host tail
+            \tHostName tail.example.net
+
+            Match host tail
+            \tUser stranger
+
+            Host *
+            \tUser everyone
+            """.write(toFile: root + "/config", atomically: true, encoding: .utf8)
+        try """
+            Host inner
+            \tHostName inner.example.net
+            \tUser innerguy
+            \tPort 22
+            """.write(toFile: includes + "/extra.conf", atomically: true, encoding: .utf8)
+    } catch {
+        return fail("could not write the fixture: \(error)")
+    }
+
+    let hosts = SSHConfig.hosts(configPath: root + "/config")
+
+    // Order AND membership in one assertion. `*.internal` and `!secret.internal` are
+    // matchers, `*` is a matcher, and `inner` proves the Include was followed at the
+    // point it appeared rather than appended at the end.
+    let aliases = hosts.map(\.alias)
+    if aliases != ["bastion", "compact", "inner", "tail"] {
+        return fail("aliases were \(aliases), expected [bastion, compact, inner, tail]")
+    }
+
+    guard let bastion = hosts.first(where: { $0.alias == "bastion" }) else {
+        return fail("bastion missing after the alias check passed")
+    }
+    // The second `Host bastion` block says loser/9999. ssh takes the FIRST value.
+    if bastion.user != "orel" || bastion.port != 2222 {
+        return fail(
+            "bastion resolved to user \(bastion.user ?? "nil") port"
+                + " \(bastion.port.map(String.init) ?? "nil") -- the later duplicate block won,"
+                + " so first-value-wins is inverted")
+    }
+    if bastion.hostName != "bastion.example.net" {
+        return fail("bastion hostname is \(bastion.hostName ?? "nil")")
+    }
+
+    guard let compact = hosts.first(where: { $0.alias == "compact" }),
+        compact.hostName == "10.0.0.9"
+    else { return fail("the Key=Value form did not parse") }
+
+    guard let inner = hosts.first(where: { $0.alias == "inner" }),
+        inner.user == "innerguy", inner.hostName == "inner.example.net"
+    else { return fail("the included host parsed without its fields") }
+
+    guard let tail = hosts.first(where: { $0.alias == "tail" }) else {
+        return fail("tail missing")
+    }
+    // Two separate leaks land on this one host: the `Match` block directly below it, and
+    // the trailing `Host *`. Either one attaching would put a stranger's name on the row.
+    if tail.user != nil {
+        return fail(
+            "tail picked up user \(tail.user ?? "") -- a Match block or a wildcard Host"
+                + " attached its keys to the host above it")
+    }
+
+    // The subtitle is what the operator actually reads, so it is asserted, not assumed.
+    if bastion.summary != "orel@bastion.example.net:2222" {
+        return fail("bastion summary is \(bastion.summary)")
+    }
+    if inner.summary != "innerguy@inner.example.net" {
+        return fail("inner summary is \(inner.summary) -- port 22 should be left unsaid")
+    }
+
+    // THE CONTROL. Not having an ssh config is the normal state of a machine, and it must
+    // read as an empty list rather than as a failure. Without this the whole feature could
+    // be crashing on a fresh machine while every assertion above passed.
+    if !SSHConfig.hosts(configPath: root + "/does-not-exist").isEmpty {
+        return fail("a missing config produced hosts")
+    }
+
+    print(
+        "SSH SMOKE OK: \(hosts.count) hosts from a config with an Include, wildcard and"
+            + " negation patterns refused, a duplicate block lost to first-value-wins,"
+            + " a Match block stayed off the host above it, missing config gave nothing")
+    return 0
+}
+
 let arguments = CommandLine.arguments
 if arguments.contains("--smoke") {
     exit(runSmoke())
 }
 if arguments.contains("--smoke-chrome") {
     exit(runChromeSmoke())
+}
+if arguments.contains("--smoke-ssh") {
+    exit(runSSHSmoke())
 }
 if arguments.contains("--smoke-agent") {
     exit(runAgentSmoke())

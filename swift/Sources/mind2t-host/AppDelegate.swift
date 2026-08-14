@@ -465,6 +465,53 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         }
     }
 
+    // MARK: ssh hosts
+
+    /// One palette row per concrete host in `~/.ssh/config`.
+    ///
+    /// Read at every palette open rather than cached: a host added to the config while the
+    /// app is running should appear on the next cmd+K, and a cache here would be the copy
+    /// that goes stale. The file is small and the palette is not a hot path.
+    ///
+    /// Nothing is offered when the file is absent, which is the normal state of a machine
+    /// that has never used ssh. An empty section is better than a section of one dead row
+    /// explaining what an ssh config is.
+    private func sshPaletteItems() -> [PaletteItem] {
+        SSHConfig.hosts().map { host in
+            PaletteItem(
+                title: "SSH: \(host.alias)", subtitle: host.summary, workflowIndex: nil,
+                action: { [weak self] in self?.newSSHSession(host) })
+        }
+    }
+
+    /// Opens a pane running `ssh <alias>`.
+    ///
+    /// The ALIAS is spawned, never the resolved hostname, user or port. Rebuilding an
+    /// `ssh -p 2222 orel@host` line out of parsed fields would quietly drop every other
+    /// directive the operator wrote - ProxyJump, IdentityFile, ForwardAgent - and it would
+    /// drop them silently, so the connection either fails for no visible reason or, worse,
+    /// succeeds over a path they did not intend.
+    ///
+    /// The alias is also not shell-quoted here because it is not going through a shell:
+    /// `command` is the child's own line and the concrete-pattern filter has already
+    /// refused anything with a glob character in it.
+    private func newSSHSession(_ host: SSHHost) {
+        spawnCount += 1
+        let (cols, rows) = gridForPane()
+        let scale = Float(window.backingScaleFactor)
+        guard
+            let session = Session(
+                command: "ssh \(host.alias)", cols: cols, rows: rows,
+                fontSize: baseFontSize * scale * fontScale,
+                autoDirection: autoDirection, config: config, title: host.alias)
+        else {
+            warn("Could not open a pane for \(host.alias)", "The pty or the renderer refused.")
+            return
+        }
+        sessions.append(session)
+        activate(index: sessions.count - 1)
+    }
+
     // MARK: workspaces (S5)
 
     /// Spawns a session placed in `directory`, labelled with its workspace.
@@ -1091,6 +1138,7 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         // Above workspaces: launching an agent is the thing this terminal exists for, and a
         // palette is read from the top.
         items.append(contentsOf: agentPaletteItems())
+        items.append(contentsOf: sshPaletteItems())
         items.append(
             PaletteItem(
                 title: "New Workspace", subtitle: "a git worktree and a session in it",

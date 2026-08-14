@@ -465,6 +465,103 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
         }
     }
 
+    // MARK: the sidebar's plus
+
+    /// The `+` menu. Everything that opens a pane, in one visible place.
+    ///
+    /// A MENU rather than straight to the form, because four of the five things this
+    /// offers need no form at all and going through one to reach them would be worse than
+    /// the palette it is replacing. The saved hosts are listed here for the same reason
+    /// the `+` exists: a feature reachable only from a fuzzy search box is invisible to
+    /// anyone who has not been told it is there.
+    func sidebarDidRequestNew(from view: NSView) {
+        let menu = NSMenu()
+        menu.addItem(withTitle: "New Session", action: #selector(menuNewSession), keyEquivalent: "")
+        menu.addItem(
+            withTitle: "New Workspace...", action: #selector(menuNewWorkspace), keyEquivalent: "")
+        menu.addItem(.separator())
+
+        let hosts = SSHConfig.hosts()
+        if hosts.isEmpty {
+            let empty = NSMenuItem(title: "No hosts in ~/.ssh/config", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+        }
+        for host in hosts.prefix(HostAppDelegate.sshMenuLimit) {
+            let item = NSMenuItem(
+                title: host.alias, action: #selector(menuSSHHost(_:)), keyEquivalent: "")
+            item.target = self
+            // The subtitle the palette shows, as a tooltip: a menu row is one line, and
+            // two aliases pointing at the same box are otherwise indistinguishable here.
+            item.toolTip = host.summary
+            item.representedObject = host.alias
+            menu.addItem(item)
+        }
+        if hosts.count > HostAppDelegate.sshMenuLimit {
+            // Stated, not silently truncated. A menu that quietly drops hosts reads as a
+            // config that lost them.
+            let more = NSMenuItem(
+                title: "\(hosts.count - HostAppDelegate.sshMenuLimit) more in cmd+K",
+                action: nil, keyEquivalent: "")
+            more.isEnabled = false
+            menu.addItem(more)
+        }
+
+        menu.addItem(.separator())
+        menu.addItem(
+            withTitle: "SSH Connection...", action: #selector(menuSSHConnect), keyEquivalent: "")
+        for item in menu.items where item.action != nil && item.target == nil {
+            item.target = self
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: view.bounds.minY - 4), in: view)
+    }
+
+    /// How many saved hosts the menu shows before deferring to the palette. A menu longer
+    /// than the screen scrolls, and a scrolling menu is worse than a search box.
+    private static let sshMenuLimit = 12
+
+    @objc private func menuNewSession() { newSession() }
+
+    @objc private func menuNewWorkspace() {
+        // After the menu has torn itself down. A modal run from inside a dismissing menu
+        // swallows its own keys, which is the same trap the palette hit.
+        DispatchQueue.main.async { [weak self] in self?.newWorkspace() }
+    }
+
+    @objc private func menuSSHHost(_ item: NSMenuItem) {
+        guard let alias = item.representedObject as? String else { return }
+        openSSH(argv: ["ssh", alias], title: alias)
+    }
+
+    @objc private func menuSSHConnect() {
+        DispatchQueue.main.async { [weak self] in self?.promptSSHConnection() }
+    }
+
+    /// The connection form, and what happens to what it collects.
+    ///
+    /// On save the ALIAS is dialled, not the assembled argv, so the pane runs the same
+    /// thing a later `ssh <alias>` from any shell would run. If the two ever disagree, the
+    /// config is wrong and the operator finds out immediately rather than the next time
+    /// they use scp.
+    private func promptSSHConnection() {
+        switch SSHConnect.prompt() {
+        case .cancelled:
+            return
+        case .connect(let connection):
+            openSSH(
+                argv: connection.arguments,
+                title: connection.alias.isEmpty ? connection.hostName : connection.alias)
+        case .saveAndConnect(let connection):
+            switch SSHConfig.append(connection) {
+            case .failure(let why):
+                warn("Nothing was saved", why.summary)
+            case .success(let alias):
+                report("ssh: appended Host \(alias) to \(SSHConfig.defaultPath)")
+                openSSH(argv: ["ssh", alias], title: alias)
+            }
+        }
+    }
+
     // MARK: ssh hosts
 
     /// One palette row per concrete host in `~/.ssh/config`.
@@ -496,16 +593,27 @@ final class HostAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     /// `command` is the child's own line and the concrete-pattern filter has already
     /// refused anything with a glob character in it.
     private func newSSHSession(_ host: SSHHost) {
+        openSSH(argv: ["ssh", host.alias], title: host.alias)
+    }
+
+    /// The ONE place an ssh child is spawned, and the one place its words are quoted.
+    ///
+    /// It takes argv, never a command line, because the host hands the string to
+    /// `/bin/sh -c` and a caller that assembles its own line is one interpolation away from
+    /// running an alias's semicolon. Every path in - a saved host, the form's Connect, the
+    /// form's Save & Connect - comes through here so there is exactly one place that can
+    /// be wrong about it.
+    private func openSSH(argv: [String], title: String) {
         spawnCount += 1
         let (cols, rows) = gridForPane()
         let scale = Float(window.backingScaleFactor)
         guard
             let session = Session(
-                command: "ssh \(host.alias)", cols: cols, rows: rows,
+                command: SSHConnection.shellQuoted(argv), cols: cols, rows: rows,
                 fontSize: baseFontSize * scale * fontScale,
-                autoDirection: autoDirection, config: config, title: host.alias)
+                autoDirection: autoDirection, config: config, title: title)
         else {
-            warn("Could not open a pane for \(host.alias)", "The pty or the renderer refused.")
+            warn("Could not open a pane for \(title)", "The pty or the renderer refused.")
             return
         }
         sessions.append(session)

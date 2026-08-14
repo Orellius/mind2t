@@ -43,6 +43,19 @@ fi
 # missing config must read as an empty list, not as a failure.
 .build/release/mind2t-host --smoke-ssh
 
+# The connection form's WRITER, and it guards a mutation of a file this app did not author
+# rather than a feature, so its assertions are about damage. The load-bearing one is shell
+# quoting: the host runs a pane's command through `/bin/sh -c`, so an alias carrying a
+# semicolon runs as two commands, and no validator upstream has any reason to reject a
+# semicolon. It is proven against `/bin/sh` itself - five payloads re-split by a real shell
+# must come back as the same five words - because inspecting the quoting proves nothing
+# about what the shell does with it. Next after that: a newline in ANY field would append a
+# second block to the operator's ssh config, a refused write must leave the file
+# byte-identical, and a fresh config must be 0600. Mutants seen red 2026-08-14: a naive
+# join, a disabled newline check, an allowed duplicate alias, a truncate instead of an
+# append, a 0644 create, and the form's Port and User fields swapped.
+.build/release/mind2t-host --smoke-ssh-write
+
 # S5 workspaces. The load-bearing assertion is the REFUSAL: remove() never passes
 # --force, and a dirty worktree surviving is what stands between this feature and
 # deleting an agent's unpushed work. Mutant seen red (adding --force fails it).

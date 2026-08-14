@@ -140,6 +140,30 @@ final class TerminalView: NSView {
     /// resolution, and half resolution looks soft rather than broken, so nothing catches it.
     var onPresentResize: ((UInt32, UInt32) -> Void)?
 
+    // MARK: splits (P3)
+
+    /// A press landed in this pane. Raised BEFORE the press is forwarded, so the first
+    /// click into an unfocused pane focuses it AND reaches the child, rather than being
+    /// eaten by the focus change - which reads as a pane that ignores its first click.
+    var onFocusRequest: (() -> Void)?
+    var onSplitRight: (() -> Void)?
+    var onSplitDown: (() -> Void)?
+    /// (axis, forward). Forward is right for horizontal and DOWN for vertical.
+    var onFocusMove: ((SplitAxis, Bool) -> Void)?
+
+    /// Whether this pane wears the focus ring. With one pane there is nothing to
+    /// disambiguate and the ring is off; with several, a split is otherwise a picture of
+    /// two terminals with no way to tell which one the keyboard is talking to.
+    private var focusRingOn = false
+
+    func setFocused(_ focused: Bool) {
+        guard focused != focusRingOn else { return }
+        focusRingOn = focused
+        guard let layer else { return }
+        layer.borderWidth = focused ? 1 : 0
+        layer.borderColor = focused ? NSColor.controlAccentColor.cgColor : nil
+    }
+
     override func layout() {
         super.layout()
         let content = bounds.insetBy(dx: TerminalView.padding, dy: TerminalView.padding)
@@ -375,6 +399,10 @@ final class TerminalView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        // Focus FIRST, then let the press through. Focusing on mouseUp instead would make
+        // the first click into an unfocused pane do nothing visible, and returning early
+        // here would eat it - both read as a pane that ignores its first click.
+        onFocusRequest?()
         let point = convert(event.locationInWindow, from: nil)
         if event.modifierFlags.contains(.command) {
             onCommandClick?(point)
@@ -422,6 +450,31 @@ final class TerminalView: NSView {
         // the terminal stole from every program running in it.
         if mods == [.command, .shift], event.keyCode == 2, let onDiffPanel {
             onDiffPanel()
+            return true
+        }
+        // cmd+\ splits right, cmd+shift+\ splits down.
+        //
+        // NOT cmd+D, which every other terminal uses: the comment above is why, and it
+        // still holds - bare cmd+D is EOF-adjacent muscle memory that belongs to the
+        // child, and cmd+shift+D is already the diff panel. `\` is VS Code's split chord,
+        // it is not muscle memory for anything in a shell, and both halves were free.
+        //
+        // keyCode 42 is kVK_ANSI_Backslash, the PHYSICAL key. Matching the character
+        // would die silently under a Hebrew layout, where nothing logs and the feature is
+        // simply absent.
+        if event.keyCode == 42 {
+            if mods == [.command] {
+                onSplitRight?()
+                return true
+            }
+            if mods == [.command, .shift] {
+                onSplitDown?()
+                return true
+            }
+        }
+        // cmd+opt+arrow moves focus between panes. Arrow keyCodes are layout-independent.
+        if mods == [.command, .option], let move = TerminalView.focusMove(for: event.keyCode) {
+            onFocusMove?(move.axis, move.forward)
             return true
         }
         guard mods == [.command] || (mods == [.command, .shift] && zoomKey)
@@ -501,6 +554,20 @@ final class TerminalView: NSView {
         forwardKey(event, action: action, textOverride: [])
     }
 
+    /// Which focus move an arrow keyCode names. `forward` is right for the horizontal axis
+    /// and DOWN for the vertical one, matching the arrow rather than the coordinate space:
+    /// AppKit's y grows upward, and a mover that inherited that would send focus up when
+    /// the operator pressed down.
+    private static func focusMove(for keyCode: UInt16) -> (axis: SplitAxis, forward: Bool)? {
+        switch keyCode {
+        case 123: return (.horizontal, false)  // kVK_LeftArrow
+        case 124: return (.horizontal, true)  // kVK_RightArrow
+        case 125: return (.vertical, true)  // kVK_DownArrow
+        case 126: return (.vertical, false)  // kVK_UpArrow
+        default: return nil
+        }
+    }
+
     /// Which modifier a flagsChanged keyCode names (left/right pairs share a flag).
     private static func modifierFlag(for keyCode: UInt16) -> NSEvent.ModifierFlags? {
         switch keyCode {
@@ -569,5 +636,51 @@ final class TerminalView: NSView {
             unshifted = scalar.value
         }
         return onKey?(action, key, mods, consumed, text, unshifted) ?? false
+    }
+}
+
+/// The draggable band between two panes.
+///
+/// A view rather than a hit-tested rectangle so the cursor can change over it without a
+/// tracking area on every pane, and so AppKit's own drag loop carries the gesture: a
+/// hand-rolled one has to guess when the mouse leaves the window, and it always guesses
+/// wrong on the fast drag that ends outside it.
+///
+/// It refuses first responder for the reason every chrome view here does: the grid holds
+/// it, and a strip that accepts it swallows the next keystroke into nothing, which reads
+/// as the terminal having frozen rather than as a focus bug.
+final class SplitDividerHandle: NSView {
+    private let divider: SplitDivider
+    /// Called with the pointer in the SUPERVIEW's coordinates, which is where the layout
+    /// arithmetic works. Converting inside the drag loop instead would use this view's
+    /// own space, and this view moves while the drag is happening.
+    var onDrag: ((NSPoint) -> Void)?
+
+    init(divider: SplitDivider) {
+        self.divider = divider
+        super.init(frame: divider.rect)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.black.cgColor
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override var acceptsFirstResponder: Bool { false }
+
+    override func resetCursorRects() {
+        addCursorRect(
+            bounds,
+            cursor: divider.axis == .horizontal ? .resizeLeftRight : .resizeUpDown)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let superview else { return }
+        // AppKit's own drag loop. `.leftMouseDragged` plus `.leftMouseUp` only: adding
+        // `.periodic` here would deliver timer events this code has no branch for and the
+        // loop would spin on them.
+        while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            if next.type == .leftMouseUp { break }
+            onDrag?(superview.convert(next.locationInWindow, from: nil))
+        }
     }
 }

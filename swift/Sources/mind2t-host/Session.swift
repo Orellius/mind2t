@@ -8,6 +8,16 @@ import AppKit
 import CMind2tHost
 
 final class Session {
+    /// A stable handle, unique for the life of the process.
+    ///
+    /// The split tree refers to panes by this and NEVER by an index into `sessions`,
+    /// because closing a pane shifts every index after it: a tree holding indices would
+    /// silently re-point at a neighbour, and the operator would watch a pane they did not
+    /// close change into a different program. Assigned here rather than by the host so
+    /// there is one source of ids and no way to mint a duplicate.
+    let paneID: Int = { Session.nextPaneID += 1; return Session.nextPaneID }()
+    private nonisolated(unsafe) static var nextPaneID = 0
+
     /// The spawn label; shown until the program sets a real title (OSC 0/2).
     let spawnTitle: String
     /// The live title, program-set. The tab strip reads this.

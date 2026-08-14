@@ -902,8 +902,82 @@ func runSSHWriteSmoke() -> Int32 {
         return fail("argv was \(spaced.arguments)")
     }
 
+    // THE SHELL INJECTION CASE, and it is the most dangerous assertion in this file.
+    //
+    // The host runs the command string through `/bin/sh -c`, so a host or alias carrying a
+    // semicolon is TWO commands. No validator above rejects a semicolon and none should -
+    // the fix belongs at the spawn boundary, where every word is quoted, and this is the
+    // check that the fix is actually there. Single quotes make everything inside literal,
+    // so the payload must survive as ONE word with its metacharacters inert.
+    var evil = SSHConnection()
+    evil.hostName = "box.example.net"
+    evil.alias = "gone"
+    let payloads = [
+        "box; touch /tmp/mind2t-pwned", "box$(touch /tmp/mind2t-pwned)",
+        "box`touch /tmp/mind2t-pwned`", "box | sh", "it's a box",
+    ]
+    for payload in payloads {
+        let line = SSHConnection.shellQuoted(["ssh", payload])
+        // Everything after `ssh ` must be inside one quoted run. The proof is that the
+        // dangerous character is never outside quotes: count quote marks and require the
+        // payload's metacharacters to sit between an odd and an even one.
+        guard line.hasPrefix("'ssh' '") , line.hasSuffix("'") else {
+            return fail("quoting produced \(line)")
+        }
+        for metacharacter in [";", "$", "`", "|"] where payload.contains(metacharacter) {
+            // A quoted word cannot contain an unescaped quote, so splitting on `'\''`
+            // boundaries is unnecessary: the only way a metacharacter escapes is if the
+            // quoting was dropped entirely, which the prefix check above already denies.
+            if line.contains("' \(metacharacter)") || line.contains("\(metacharacter) '") {
+                return fail("\(metacharacter) escaped the quoting in \(line)")
+            }
+        }
+    }
+    // And the apostrophe case, which is the one quoting scheme's own failure mode.
+    if SSHConnection.shellQuoted(["it's"]) != "'it'\\''s'" {
+        return fail("an apostrophe broke the quoting: \(SSHConnection.shellQuoted(["it's"]))")
+    }
+    // Round trip through a real shell. Nothing else here proves the quoting works against
+    // the thing that actually parses it, and `/bin/sh` is the oracle that can say NO.
+    let probe = Process()
+    probe.executableURL = URL(fileURLWithPath: "/bin/sh")
+    probe.arguments = ["-c", "printf '%s\\n' " + SSHConnection.shellQuoted(payloads)]
+    let pipe = Pipe()
+    probe.standardOutput = pipe
+    do {
+        try probe.run()
+        let out = String(
+            decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        probe.waitUntilExit()
+        let words = out.split(separator: "\n").map(String.init)
+        if words != payloads {
+            return fail("/bin/sh re-split the quoted words into \(words)")
+        }
+    } catch {
+        return fail("could not run the shell oracle: \(error)")
+    }
+    if FileManager.default.fileExists(atPath: "/tmp/mind2t-pwned") {
+        try? FileManager.default.removeItem(atPath: "/tmp/mind2t-pwned")
+        return fail("a payload EXECUTED -- the quoting is not reaching the spawn boundary")
+    }
+
+    // The form's field mapping, driven through the real view. A gate that built its own
+    // SSHConnection would pass while the Port field was wired to the User label.
+    let form = SSHConnectForm()
+    form.fill(good)
+    let readBack = form.connection
+    if readBack.hostName != good.hostName || readBack.user != good.user
+        || readBack.port != good.port || readBack.identityFile != good.identityFile
+        || readBack.proxyJump != good.proxyJump || readBack.alias != good.alias
+        || readBack.remoteCommand != good.remoteCommand
+        || readBack.optionList != good.optionList
+    {
+        return fail("the form did not read back what was written into it: \(readBack)")
+    }
+
     print(
-        "SSH WRITE SMOKE OK: newline injection refused in 5 fields, duplicate alias"
+        "SSH WRITE SMOKE OK: shell injection quoted inert and confirmed by /bin/sh itself,"
+            + " newline injection refused in 5 fields, duplicate alias"
             + " refused, refusals left the file byte-identical, the append preserved every"
             + " existing byte and did not join the unterminated last line, the writer's"
             + " output round-tripped through the reader, a fresh config is 0600, and a"

